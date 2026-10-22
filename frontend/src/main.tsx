@@ -1,3 +1,5 @@
+// Must stay the first import: other modules use crypto.randomUUID while loading.
+import './polyfills';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './app/App';
