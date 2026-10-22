@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Installs a new Quick ERP release built by Jenkins, with a database backup first and automatic rollback.
+# Jenkins runs it through sudo:  sudo /usr/local/bin/quickerp-deploy <backend.jar> <frontend-dist-folder>
+set -euo pipefail
+
+JAR="${1:-}"
+DIST="${2:-}"
+WORKSPACES=/var/lib/jenkins/workspace/
+APP_JAR=/opt/quickerp/quick-erp-backend.jar
+WEB=/var/www/quickerp
+BACKUPS=/var/backups/quickerp
+RELEASES=/opt/quickerp/releases
+STAMP="$(date +%Y%m%d-%H%M%S)"
+
+fail() { echo "DEPLOY FAILED: $1" >&2; exit 1; }
+
+# Only files built by Jenkins may be installed.
+JAR="$(realpath -e "$JAR" 2>/dev/null)" || fail "backend jar not found"
+DIST="$(realpath -e "$DIST" 2>/dev/null)" || fail "frontend folder not found"
+case "$JAR" in "$WORKSPACES"*) ;; *) fail "the jar must come from a Jenkins workspace" ;; esac
+case "$DIST" in "$WORKSPACES"*) ;; *) fail "the frontend must come from a Jenkins workspace" ;; esac
+[ -f "$DIST/index.html" ] || fail "the frontend build has no index.html"
+
+mkdir -p "$BACKUPS" "$RELEASES"
+
+echo "==> 1/4 Backing up the database"
+sudo -u postgres pg_dump -Fc quickerp > "$BACKUPS/pre-deploy-$STAMP.dump"
+ls -1t "$BACKUPS"/pre-deploy-*.dump 2>/dev/null | tail -n +11 | xargs -r rm -f || true   # keep the last 10
+
+echo "==> 2/4 Installing the backend"
+if [ -f "$APP_JAR" ]; then cp "$APP_JAR" "$RELEASES/backend-$STAMP.jar"; fi
+install -o quickerp -g quickerp -m 0644 "$JAR" "$APP_JAR"
+systemctl restart quickerp-backend
+
+echo -n "==> 3/4 Waiting for the backend"
+healthy=false
+for _ in $(seq 1 90); do
+  if curl -fs http://127.0.0.1:8000/api/v1/health >/dev/null; then healthy=true; break; fi
+  echo -n "."; sleep 2
+done
+echo
+if [ "$healthy" != true ]; then
+  echo "The new backend did not start; restoring the previous one." >&2
+  if [ -f "$RELEASES/backend-$STAMP.jar" ]; then
+    install -o quickerp -g quickerp -m 0644 "$RELEASES/backend-$STAMP.jar" "$APP_JAR"
+    systemctl restart quickerp-backend
+  fi
+  fail "backend health check failed (see: journalctl -u quickerp-backend -n 100)"
+fi
+ls -1t "$RELEASES"/backend-*.jar 2>/dev/null | tail -n +6 | xargs -r rm -f || true   # keep the last 5
+
+echo "==> 4/4 Publishing the frontend"
+rm -rf "$WEB.new" "$WEB.old"
+cp -a "$DIST" "$WEB.new"
+chown -R root:root "$WEB.new"
+chmod -R a+rX "$WEB.new"
+if [ -d "$WEB" ]; then mv "$WEB" "$WEB.old"; fi
+mv "$WEB.new" "$WEB"
+rm -rf "$WEB.old"
+
+echo "Deployed release $STAMP."

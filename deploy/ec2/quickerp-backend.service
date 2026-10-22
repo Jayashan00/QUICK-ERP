@@ -1,0 +1,22 @@
+[Unit]
+Description=Quick ERP backend (Spring Boot)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=quickerp
+Group=quickerp
+WorkingDirectory=/opt/quickerp
+EnvironmentFile=/etc/quickerp/backend.env
+ExecStart=/usr/bin/java -XX:MaxRAMPercentage=60 -jar /opt/quickerp/quick-erp-backend.jar
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

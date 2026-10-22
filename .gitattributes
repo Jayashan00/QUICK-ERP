@@ -1,0 +1,7 @@
+﻿* text=auto
+*.sh text eol=lf
+mvnw text eol=lf
+Jenkinsfile text eol=lf
+deploy/ec2/quickerp-deploy text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

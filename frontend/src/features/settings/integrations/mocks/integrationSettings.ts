@@ -1,0 +1,6 @@
+import type { EmailIntegrationSettings, SettlementBankAccountSettings, SmsIntegrationSettings, WhatsAppIntegrationSettings } from '@/features/settings/integrations/types/integration-settings';
+const updatedAt = '2026-09-20T08:30:00.000Z';
+export const mockEmailIntegration: EmailIntegrationSettings = { tenantId: 'tenant-001', senderName: 'Acme Corporation', senderEmail: 'notifications@acme.example', replyToEmail: 'support@acme.example', enabled: true, serviceIncluded: true, updatedAt };
+export const mockSmsIntegration: SmsIntegrationSettings = { tenantId: 'tenant-001', businessPhoneNumber: '+94112345678', senderId: 'ACMEERP', enabled: false, useForNotifications: false, serviceIncluded: true, updatedAt };
+export const mockWhatsAppIntegration: WhatsAppIntegrationSettings = { tenantId: 'tenant-001', businessPhoneNumber: '+94770000000', displayName: 'Acme Support', enabled: false, useForNotifications: false, serviceIncluded: true, updatedAt };
+export const mockSettlementBankAccount: SettlementBankAccountSettings = { tenantId: 'tenant-001', accountHolderName: 'Acme Corporation', bankName: 'Commercial Bank of Ceylon', branchName: 'Colombo Main', bankCode: '7056', branchCode: '001', currency: 'LKR', status: 'pending_verification', hasAccountNumber: true, accountNumberMasked: '**** 5678', updatedAt };

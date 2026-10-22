@@ -1,0 +1,270 @@
+# Quick ERP backend configuration.
+# Every value can be overridden with the environment variable shown in ${NAME:default}.
+
+server:
+  port: ${PORT:8000}
+  # Behind a reverse proxy or load balancer, use the client address from X-Forwarded-For
+  # (only trusted from private-network proxies), so rate limits apply per visitor.
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:native}
+  servlet:
+    context-path: /api/v1
+  compression:
+    enabled: true
+    mime-types: application/json
+    min-response-size: 2048
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: quick-erp-backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/quickerp}
+    username: ${DB_USERNAME:quickerp}
+    password: ${DB_PASSWORD:quickerp}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: 10000
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 21MB
+  # Email (password reset links). Configure with environment variables, for example:
+  # SPRING_MAIL_HOST=smtp.gmail.com SPRING_MAIL_PORT=587 SPRING_MAIL_USERNAME=... SPRING_MAIL_PASSWORD=...
+  # SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=true SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true
+  # Without SPRING_MAIL_HOST, reset messages are written to the backend log instead.
+
+app:
+  # "development" or "production". In production the server refuses to start with unsafe settings
+  # (default passwords, missing JWT secret, demo data, wildcard CORS, ...).
+  environment: ${APP_ENVIRONMENT:development}
+  jwt:
+    # At least 32 characters. If empty, a random secret is generated at start-up
+    # (everyone must sign in again after a restart).
+    secret: ${JWT_SECRET:}
+    ttl-hours: ${JWT_TTL_HOURS:24}
+  cors:
+    # Comma-separated list of frontend origins allowed to call the API.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173}
+  seed:
+    # Creates the starter tenant and users on an empty database.
+    enabled: ${SEED_ENABLED:true}
+    # true: the starter tenant gets the full demo data. false: configuration only (roles, branches,
+    # settings, chart of accounts, ...), with empty business data. Use false in production.
+    demo-data: ${SEED_DEMO_DATA:true}
+    default-password: ${SEED_DEFAULT_PASSWORD:QuickERP123!}
+  users:
+    # Password given to users created from Settings > Users. Leave empty in production: new users then
+    # use "Forgot password", or an administrator sets their password (POST /users/{id}/password).
+    initial-password: ${NEW_USER_INITIAL_PASSWORD:ChangeMe123!}
+  mail:
+    from: ${MAIL_FROM:no-reply@quickerp.local}
+    # Frontend page that receives the reset token (?token=...).
+    password-reset-url: ${PASSWORD_RESET_URL:http://localhost:3000/reset-password}
+  files:
+    max-bytes: 20971520
+  limits:
+    # Largest JSON request body (bytes). The frontend sends at most about 3 MB per batch.
+    max-json-bytes: ${MAX_JSON_BYTES:16777216}
+  security:
+    max-login-failures: ${MAX_LOGIN_FAILURES:10}
+    lock-minutes: ${LOGIN_LOCK_MINUTES:15}
+  state:
+    max-record-bytes: 5242880
+    max-batch-changes: 1000
+    history-enabled: true
+    # Collections that the Super Admin console reads across all tenants.
+    shared-collections:
+      - support.tickets
+  public-shop:
+    writes-per-minute: 30
+    # Collections the public web shop may read (no sign-in).
+    readable-collections:
+      - products.records
+      - products.variants
+      - products.images
+      - products.specifications
+      - products.categories
+      - products.brands
+      - products.uoms
+      - products.attributes
+      - products.priceLists
+      - products.priceRules
+      - products.bundles
+      - products.related
+      - inventory.warehouses
+      - inventory.locations
+      - inventory.balances
+      - settings.general
+      - settings.localization
+      - settings.taxes
+      - settings.company
+      - sales.flashSales
+      - storefront.reviews
+      - core.branches
+      - pos.settings
+    # Collections the public web shop may add records to.
+    writable-collections:
+      - storefront.orders
+      - storefront.reviews
+  provision:
+    # Configuration copied from the template tenant when a new tenant is created.
+    copy-collections:
+      - core.roles
+      - core.branches
+      - settings.company
+      - settings.general
+      - settings.localization
+      - settings.financialYear
+      - settings.periods
+      - settings.taxes
+      - settings.paymentTerms
+      - settings.paymentMethods
+      - settings.sequences
+      - settings.notificationPreferences
+      - settings.departments
+      - settings.designations
+      - settings.devices.scanner
+      - settings.devices.printer
+      - settings.devices.cashDrawer
+      - settings.devices.customerDisplay
+      - settings.devices.biometric
+      - products.categories
+      - products.brands
+      - products.uoms
+      - products.attributes
+      - inventory.warehouses
+      - inventory.locations
+      - inventory.settings
+      - accounting.accounts
+      - accounting.postingDefaults
+      - hr.leaveTypes
+      - hr.shifts
+      - documents.categories
+      - notifications.templates
+      - pos.settings
+
+  # ------------------------------------------------------------------------------------------
+  # Server-side access rules for tenant data (enforced on GET /state, /state/changes, /state/batch).
+  #   collection     exact name, or a prefix ending in "*"; an exact rule wins over a prefix rule
+  #   read           permissions needed to read (any one of them); empty = every signed-in user
+  #   write          permissions needed to write (any one); empty = everyone who can read
+  #   append-only    existing records cannot be changed; deletions are ignored (audit trails)
+  #   redact-fields  fields hidden from users without one of the redact-unless permissions
+  #   platform-only  only the Super Admin console
+  # "*" inside a permission matches any characters ("settings.*.edit"). A role with "*" passes every rule.
+  # Collections without a rule are open to every signed-in user of the tenant, because the browser
+  # updates them as side effects of other modules (a POS sale updates stock, sales handoffs, ...).
+  # Give read-restricted collections exact names, so users who cannot see them are told they exist.
+  # ------------------------------------------------------------------------------------------
+  access:
+    # Only the server creates these (starter data, tenant provisioning); browsers can never seed them.
+    server-seeded-collections: [core.roles, core.users]
+    # Settings the screens create with default values the first time they are read for a tenant or branch
+    # (POS reads printer and receipt settings, for example). Anyone who can read them may add that first
+    # record; changing or removing existing records still needs the write permissions below.
+    # Found by calling every read method of the frontend services for a new tenant and branch.
+    default-creatable-collections: [settings.general, settings.localization, settings.financialYear, settings.company,
+                                    "settings.integrations.*", "settings.devices.*"]
+    rules:
+      # --- Security and organisation ---
+      - collection: core.roles
+        write: [roles.manage, roles.create, roles.edit, roles.delete, settings.roles.create, settings.roles.edit,
+                settings.roles.delete, settings.roles.configure, settings.permissions.create, settings.permissions.edit,
+                settings.permissions.delete, settings.permissions.configure]
+      - collection: core.branches
+        write: [settings.branches.create, settings.branches.edit, settings.branches.delete, settings.branches.configure]
+      - collection: core.securityProfiles
+        read: [users.manage, users.edit, "settings.users.*", "settings.login_activity.*"]
+        write: [users.manage, users.edit, settings.users.edit, settings.users.configure, settings.login_activity.configure]
+      - collection: core.auditEvents
+        append-only: true
+      - collection: platform.foundation
+        platform-only: true
+      # --- Settings: administrators only, except screens every user has ---
+      - collection: "settings.*"
+        write: ["settings.*.create", "settings.*.edit", "settings.*.delete", "settings.*.configure", "settings.*.test"]
+      - collection: settings.notificationPreferences
+        write: [notificationPreferences.manage, "settings.notification_preferences.edit", "settings.notification_preferences.configure"]
+      - collection: settings.loginSessions
+      # --- Accounting: finance users (and auditors, read only) ---
+      - collection: accounting.accounts
+        write: [finance.chart_of_accounts.create, finance.chart_of_accounts.edit, finance.chart_of_accounts.delete]
+      - collection: accounting.postingDefaults
+        write: ["finance.*.edit", "finance.*.configure"]
+      - collection: accounting.journals
+        read: ["finance.*", audit.sensitive.view]
+        write: ["finance.*.create", "finance.*.edit", "finance.*.delete", "finance.*.approve", "finance.*.post", "finance.*.reconcile"]
+      - collection: accounting.openingBalances
+        read: ["finance.*", audit.sensitive.view]
+        write: ["finance.*.create", "finance.*.edit", "finance.*.delete", "finance.*.approve", "finance.*.post", "finance.*.reconcile"]
+      - collection: accounting.settlements
+        read: ["finance.*", audit.sensitive.view]
+        write: ["finance.*.create", "finance.*.edit", "finance.*.delete", "finance.*.approve", "finance.*.post", "finance.*.reconcile"]
+      - collection: accounting.bankLines
+        read: ["finance.*", audit.sensitive.view]
+        write: ["finance.*.create", "finance.*.edit", "finance.*.delete", "finance.*.approve", "finance.*.post", "finance.*.reconcile"]
+      - collection: accounting.expenses
+        read: ["finance.*", audit.sensitive.view]
+        write: ["finance.*.create", "finance.*.edit", "finance.*.delete", "finance.*.approve", "finance.*.post", "finance.*.reconcile"]
+      - collection: accounting.vatReturns
+        read: ["finance.*", audit.sensitive.view]
+        write: ["finance.*.create", "finance.*.edit", "finance.*.delete", "finance.*.approve", "finance.*.post", "finance.*.reconcile"]
+      - collection: accounting.withholding
+        read: ["finance.*", audit.sensitive.view]
+        write: ["finance.*.create", "finance.*.edit", "finance.*.delete", "finance.*.approve", "finance.*.post", "finance.*.reconcile"]
+      - collection: accounting.fxPositions
+        read: ["finance.*", audit.sensitive.view]
+        write: ["finance.*.create", "finance.*.edit", "finance.*.delete", "finance.*.approve", "finance.*.post", "finance.*.reconcile"]
+      - collection: accounting.referenceRecords
+        read: ["finance.*", audit.sensitive.view]
+        write: ["finance.*.create", "finance.*.edit", "finance.*.delete", "finance.*.approve", "finance.*.post", "finance.*.reconcile"]
+      - collection: accounting.audit
+        read: ["finance.*", audit.sensitive.view]
+        write: ["finance.*.create", "finance.*.edit", "finance.*.delete", "finance.*.approve", "finance.*.post", "finance.*.reconcile"]
+        append-only: true
+      # --- HR: HR users write; payroll data is visible to payroll users only ---
+      - collection: "hr.*"
+        write: ["hr.*.create", "hr.*.edit", "hr.*.delete", "hr.*.process", "hr.*.approve"]
+      - collection: hr.employees
+        write: ["hr.*.create", "hr.*.edit", "hr.*.delete", "hr.*.process", "hr.*.approve"]
+        redact-fields: [salary, dateOfBirth, address, emergencyContactName, emergencyContactPhone, notes]
+        redact-unless: [hr.employees.view, hr.payroll.view]
+      - collection: hr.payrolls
+        read: ["hr.payroll.*", "hr.payslips.*"]
+        write: [hr.payroll.create, hr.payroll.edit, hr.payroll.process, hr.payroll.approve, hr.payroll.delete]
+      - collection: hr.payItems
+        read: ["hr.payroll.*", "hr.payslips.*"]
+        write: [hr.payroll.create, hr.payroll.edit, hr.payroll.process, hr.payroll.approve, hr.payroll.delete]
+      - collection: hr.revisions
+        read: ["hr.payroll.*", "hr.payslips.*"]
+        write: [hr.payroll.create, hr.payroll.edit, hr.payroll.process, hr.payroll.approve, hr.payroll.delete]
+      - collection: hr.loans
+        read: ["hr.payroll.*", "hr.payslips.*"]
+        write: [hr.payroll.create, hr.payroll.edit, hr.payroll.process, hr.payroll.approve, hr.payroll.delete]
+      - collection: hr.audit
+        write: ["hr.*.create", "hr.*.edit", "hr.*.delete", "hr.*.process", "hr.*.approve"]
+        append-only: true
+      - collection: hr.advanced.logs
+        write: ["hr.*.create", "hr.*.edit", "hr.*.delete", "hr.*.process", "hr.*.approve"]
+        append-only: true
+      # --- Stock: the movement ledger is append-only (balances are checked against it by the server) ---
+      - collection: inventory.movements
+        append-only: true
+      # --- Other audit trails ---
+      - collection: documents.audit
+        append-only: true
+      - collection: projects.audit
+        append-only: true
+
+logging:
+  level:
+    root: INFO
+    com.quickerp: INFO

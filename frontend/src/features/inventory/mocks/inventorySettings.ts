@@ -1,0 +1,46 @@
+import type { InventorySettings } from "../types/inventorySettings";
+
+const createdAt = "2026-01-01T00:00:00Z";
+
+export const mockInventorySettings: InventorySettings[] = [
+  {
+    id: "inventory-settings-tenant-001-branch-001",
+    tenantId: "tenant-001",
+    branchId: "branch-001",
+    defaultWarehouseId: "warehouse-hq-main",
+    defaultLocationId: "loc-hq-main",
+    negativeStockBehavior: "block",
+    reorderAlertsEnabled: true,
+    expiryWarningDays: 30,
+    defaultBatchTracking: false,
+    defaultSerialTracking: false,
+    stockCountFrequency: "weekly",
+    showSystemQuantityDuringCount: true,
+    requireCountReason: true,
+    requireAdjustmentApproval: true,
+    requireTransferApproval: true,
+    requireCountApproval: false,
+    createdAt,
+    updatedAt: createdAt,
+  },
+  {
+    id: "inventory-settings-tenant-002-branch-201",
+    tenantId: "tenant-002",
+    branchId: "branch-201",
+    defaultWarehouseId: "warehouse-t2-main",
+    defaultLocationId: "loc-t2-main",
+    negativeStockBehavior: "block",
+    reorderAlertsEnabled: true,
+    expiryWarningDays: 21,
+    defaultBatchTracking: true,
+    defaultSerialTracking: false,
+    stockCountFrequency: "monthly",
+    showSystemQuantityDuringCount: true,
+    requireCountReason: true,
+    requireAdjustmentApproval: true,
+    requireTransferApproval: true,
+    requireCountApproval: true,
+    createdAt,
+    updatedAt: createdAt,
+  },
+];

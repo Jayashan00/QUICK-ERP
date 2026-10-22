@@ -1,0 +1,17 @@
+﻿# Libraries and build output (rebuilt automatically)
+node_modules/
+frontend/dist/
+backend/target/
+
+# Local settings and secrets: never commit these
+.env
+.env.local
+*.log
+backend/start-backend.bat
+backend/start-backend.sh
+frontend/start-frontend.bat
+
+# Editors
+.idea/
+.vscode/
+*.iml
