@@ -18,10 +18,14 @@ assert.throws(() => svc.validateFile(file('wrong.pdf', 'image/png')));
 assert.throws(() => svc.validateFile({ name: 'large.pdf', type: 'application/pdf', size: MAX_DOCUMENT_BYTES + 1 }));
 assert.throws(() => svc.validateFile({ name: 'empty.pdf', type: 'application/pdf', size: 0 }));
 
-const uploadInput = { title: 'QA contract', category: 'contract', description: 'Test', entityType: 'Customer' as const, entityId: 'cust-001', entityReference: 'CUST-0001', branchId: 'branch-001', expiryDate: '2026-10-20', reminderDate: '2026-10-02' };
+// Dates relative to today, so the expiry and reminder checks never go stale.
+const dayFromToday = (days: number) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+const expirySoon = dayFromToday(10);
+const reminderPast = dayFromToday(-10);
+const uploadInput = { title: 'QA contract', category: 'contract', description: 'Test', entityType: 'Customer' as const, entityId: 'cust-001', entityReference: 'CUST-0001', branchId: 'branch-001', expiryDate: expirySoon, reminderDate: reminderPast };
 await assert.rejects(() => svc.upload(scope, viewOnly, actor, file('qa.pdf', 'application/pdf'), uploadInput), /documents.upload/);
 await assert.rejects(() => svc.upload(scope, all, actor, file('qa.pdf', 'application/pdf'), { ...uploadInput, branchId: 'branch-002' }), /branch access/);
-await assert.rejects(() => svc.upload(scope, all, actor, file('qa.pdf', 'application/pdf'), { ...uploadInput, reminderDate: '2026-10-21' }), /Reminder date/);
+await assert.rejects(() => svc.upload(scope, all, actor, file('qa.pdf', 'application/pdf'), { ...uploadInput, reminderDate: dayFromToday(11) }), /Reminder date/);
 await assert.rejects(() => svc.upload(scope, all.filter((permission) => permission !== P.DOCUMENTS.VIEW_SENSITIVE), actor, file('qa.pdf', 'application/pdf'), { ...uploadInput, sensitive: true }), /view_sensitive/);
 let progress = 0;
 const uploaded = await svc.upload(scope, all, actor, file('qa.pdf', 'application/pdf'), { ...uploadInput, sensitive: true }, (value) => { progress = value; });
@@ -39,7 +43,7 @@ await assert.rejects(() => svc.addVersion(scope, viewOnly, actor, uploaded.id, f
 await svc.addVersion(scope, all, actor, uploaded.id, file('qa-v2.pdf', 'application/pdf'), 'Reviewed');
 assert.equal(svc.get(scope, all, uploaded.id).versions.length, 2);
 assert.equal(svc.download(scope, all, actor, uploaded.id, 1).name, 'qa.pdf');
-svc.update(scope, all, actor, uploaded.id, { title: 'QA contract updated', category: 'contract', description: 'Updated', expiryDate: '2026-10-20', reminderDate: '2026-10-02', sensitive: true });
+svc.update(scope, all, actor, uploaded.id, { title: 'QA contract updated', category: 'contract', description: 'Updated', expiryDate: expirySoon, reminderDate: reminderPast, sensitive: true });
 assert.equal(svc.get(scope, all, uploaded.id).title, 'QA contract updated');
 assert.throws(() => svc.archive(scope, viewOnly, actor, uploaded.id), /documents.archive/);
 svc.archive(scope, all, actor, uploaded.id);

@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const { scripts } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-const suites = Object.entries(scripts).filter(([name]) => name.startsWith('qa:') && name !== 'qa:all');
+// qa:backend is left out: it checks a running backend and is started by hand (npm run qa:backend).
+const excluded = new Set(['qa:all', 'qa:backend']);
+const suites = Object.entries(scripts).filter(([name]) => name.startsWith('qa:') && !excluded.has(name));
 
 // Each suite has a fresh process: mutable mock stores never leak between suites.
 for (const [name, command] of suites) {
