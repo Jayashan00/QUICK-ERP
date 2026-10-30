@@ -80,18 +80,32 @@ export const tenantEntitlementService = {
 const permissionModuleAliases: Record<string, TenantModule> = {
   hr: 'hr', payroll: 'hr', employees: 'hr', inventory: 'inventory', stock: 'stock', warehouses: 'inventory',
   crm: 'crm', leads: 'crm', opportunities: 'crm', customers: 'customers', suppliers: 'suppliers',
-  products: 'products', sales: 'sales', pos: 'pos', purchases: 'purchases', purchasing: 'purchases',
+  products: 'products', sales: 'sales', quotation: 'sales', salesOrder: 'sales', delivery: 'sales', invoice: 'sales', payment: 'sales', salesReturn: 'sales',
+  pos: 'pos', purchases: 'purchases', purchasing: 'purchases', purchase: 'purchases', rfq: 'purchases', grn: 'purchases', purchaseInvoice: 'purchases',
   finance: 'finance', accounting: 'finance', projects: 'projects', storefront: 'web_store', reports: 'reports',
-  documents: 'documents', notifications: 'notifications', notices: 'notifications', settings: 'settings', users: 'settings', roles: 'settings', branches: 'settings',
+  documents: 'documents', notifications: 'notifications', notices: 'notifications', notificationTemplates: 'notifications', notificationPreferences: 'notifications',
+  settings: 'settings', users: 'settings', roles: 'settings', branches: 'settings',
 };
+
+const commonTenantPermissionPrefixes = new Set(['audit', 'support', 'sync']);
+
+export function isCommonTenantPermission(permission: string): boolean {
+  return permission !== '*' && commonTenantPermissionPrefixes.has(permission.split('.')[0]);
+}
 
 export function moduleForPermission(permission: string): TenantModule | null {
   if (permission === '*') return null;
   if (/^(stock\.|inventory\.(stock|movements|batches|serial_numbers|expiry|adjustments|transfers|requests|counts|returns|velocity|reorder))/.test(permission)) return 'stock';
+  if (/^settings\.(departments|designations)\./.test(permission)) return 'hr';
+  if (/^settings\.(financial_year|taxes|payment_terms|payment_methods|settlement_bank)\./.test(permission)) return 'finance';
+  if (/^settings\.(notification_preferences|email_integration|sms_integration|whatsapp_integration)\./.test(permission)) return 'notifications';
+  if (/^settings\.(barcode_scanner|printers|cash_drawer|customer_display)\./.test(permission)) return 'pos';
+  if (/^settings\.biometric_device\./.test(permission)) return 'hr';
   return permissionModuleAliases[permission.split('.')[0]] ?? null;
 }
 
 export function isPermissionEnabled(permission: string, enabledModules: readonly TenantModule[]): boolean {
+  if (permission === '*') return true;
   const required = new Set<TenantModule>();
   const primary = moduleForPermission(permission);
   if (primary) required.add(primary);
@@ -101,11 +115,28 @@ export function isPermissionEnabled(permission: string, enabledModules: readonly
     const categoryModule = permissionModuleAliases[category];
     if (categoryModule && categoryModule !== 'reports') required.add(categoryModule);
   }
+  if (required.size === 0) return isCommonTenantPermission(permission);
   return [...required].every((module) => enabledModules.includes(module));
+}
+
+export function isRoleAssignable(permissions: readonly string[], enabledModules: readonly TenantModule[]): boolean {
+  if (permissions.includes('*')) return true;
+  const modulePermissions = permissions.filter((permission) => moduleForPermission(permission) !== null);
+  if (modulePermissions.length > 0) {
+    return modulePermissions.some((permission) => isPermissionEnabled(permission, enabledModules));
+  }
+  return permissions.some(isCommonTenantPermission);
 }
 
 export function moduleForPath(path: string): TenantModule | null {
   const mappings: Array<[string, TenantModule]> = [
+    ['/settings/departments', 'hr'], ['/settings/designations', 'hr'], ['/settings/devices/biometric', 'hr'],
+    ['/settings/financial-year', 'finance'], ['/settings/taxes', 'finance'], ['/settings/payment-terms', 'finance'],
+    ['/settings/payment-methods', 'finance'], ['/settings/settlement-bank', 'finance'],
+    ['/settings/notification-preferences', 'notifications'], ['/settings/integrations/email', 'notifications'],
+    ['/settings/integrations/sms', 'notifications'], ['/settings/integrations/whatsapp', 'notifications'],
+    ['/settings/devices/barcode-scanner', 'pos'], ['/settings/devices/printer', 'pos'],
+    ['/settings/devices/cash-drawer', 'pos'], ['/settings/devices/customer-display', 'pos'],
     ['/inventory/stocks', 'stock'], ['/inventory/batches', 'stock'], ['/inventory/serials', 'stock'], ['/inventory/expiry', 'stock'],
     ['/inventory/movements', 'stock'], ['/inventory/adjustments', 'stock'], ['/inventory/transfers', 'stock'], ['/inventory/requests', 'stock'],
     ['/inventory/counts', 'stock'], ['/inventory/returns-wastage', 'stock'], ['/inventory/velocity', 'stock'], ['/inventory/reorder', 'stock'], ['/inventory/reports', 'stock'],

@@ -17,13 +17,16 @@ import { branchService } from '@/core/branch/branchService';
 import { syncService } from '@/features/sync/services/syncService';
 import type { DashboardFilters, DashboardOverviewResponse, DashboardApproval } from '../types/dashboard';
 import { previousRange, trend } from '../utils/period';
+import { isPermissionEnabled, tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 
 export const dashboardService = {
   async getDashboardOverview(filters: DashboardFilters): Promise<DashboardOverviewResponse> {
     const { tenantId, branchId, permittedBranchIds, permissions, dateFrom, dateTo } = filters;
     if (!tenantId || !branchId || tenantId === 'platform' || !permittedBranchIds.includes(branchId)) throw new Error('A permitted tenant branch is required.');
     if (![dateFrom, dateTo].every(value => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value) || dateFrom > dateTo) throw new Error('Choose a valid dashboard date range.');
-    const can = (permission: string) => hasPermission(permissions, permission);
+    const enabledModules = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
+    const effectivePermissions = permissions.filter((permission) => isPermissionEnabled(permission, enabledModules));
+    const can = (permission: string) => hasPermission(effectivePermissions, permission);
     const scope = { tenantId, branchId };
     const access = { ...scope, permittedBranchIds: [branchId] };
     const params = { branchId, permittedBranchIds, page: 1, pageSize: Number.MAX_SAFE_INTEGER };

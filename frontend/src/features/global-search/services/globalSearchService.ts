@@ -1,5 +1,6 @@
 import { hasPermission } from '@/core/permissions';
 import type { GlobalSearchEntry, GlobalSearchIndex, GlobalSearchResult, GlobalSearchScope, SearchModule } from '../types/globalSearch';
+import { isPermissionEnabled, tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 
 export const normalizeSearch = (value: string) => value.trim().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const recordRoute = (path: string, id: string, reference?: string) => `${path}?record=${encodeURIComponent(id)}${reference ? `&reference=${encodeURIComponent(reference)}` : ''}`;
@@ -17,7 +18,9 @@ export function filterSearchIndex(index: GlobalSearchIndex, query: string, limit
 export const globalSearchService = {
   async getIndex(scope: GlobalSearchScope, signal?: AbortSignal): Promise<GlobalSearchIndex> {
     if (!scope.tenantId || scope.tenantId === 'platform' || !scope.branchId || !scope.permittedBranchIds.includes(scope.branchId) || !scope.user.id) throw new Error('A signed-in tenant and permitted branch are required for search.');
-    const can = (permission: string) => hasPermission(scope.permissions, permission);
+    const enabledModules = tenantEntitlementService.get(scope.tenantId)?.enabledModules ?? [];
+    const effectivePermissions = scope.permissions.filter((permission) => isPermissionEnabled(permission, enabledModules));
+    const can = (permission: string) => hasPermission(effectivePermissions, permission);
     const branchScope = { tenantId: scope.tenantId, branchId: scope.branchId, permittedBranchIds: [scope.branchId] };
     const params = { branchId: scope.branchId, permittedBranchIds: [scope.branchId], page: 1, pageSize: Number.MAX_SAFE_INTEGER };
     type MatchRecord = { id: string; tenantId: string; branchId?: string };
