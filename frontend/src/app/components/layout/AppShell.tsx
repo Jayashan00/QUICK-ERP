@@ -6,6 +6,8 @@ import { cn } from '@/shared/utils/cn';
 import type { NavigationSectionConfig } from '@/app/config/navigationConfig';
 import { filterNavigationSections } from '@/core/permissions';
 import { usePermissions } from '@/core/permissions/permission-context';
+import { useTenant } from '@/core/tenant/tenant-context';
+import type { TenantModule } from '@/core/tenant/tenantEntitlements';
 
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
@@ -28,11 +30,18 @@ function getInitialCollapsedState() {
 export function AppShell({ children, navigationSections, area = 'tenant' }: AppShellProps) {
   const location = useLocation();
   const { hasPermission } = usePermissions();
+  const { currentTenant } = useTenant();
   const [collapsed, setCollapsed] = useState(getInitialCollapsedState);
   const [mobileOpen, setMobileOpen] = useState(false);
   const permittedSections = useMemo(
-    () => filterNavigationSections(navigationSections, hasPermission),
-    [navigationSections, hasPermission],
+    () => filterNavigationSections(
+      navigationSections,
+      hasPermission,
+      area === 'tenant' && currentTenant
+        ? (module: TenantModule) => currentTenant.entitlements.enabledModules.includes(module)
+        : undefined,
+    ),
+    [area, currentTenant, navigationSections, hasPermission],
   );
 
   const toggleSidebar = useCallback(() => {
