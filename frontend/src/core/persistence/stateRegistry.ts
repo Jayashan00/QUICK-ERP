@@ -30,7 +30,19 @@ export type StateAccessor = ListAccessor | ValueAccessor;
 const registry = new Map<string, StateAccessor>();
 
 function add(accessor: StateAccessor) {
-  if (registry.has(accessor.key)) {
+  const existing = registry.get(accessor.key);
+  if (existing && import.meta.hot) {
+    // Vite can re-evaluate a service module while preserving this registry module.
+    // Rehydrate the replacement accessor so HMR neither crashes nor resets mock state.
+    if (existing.kind !== accessor.kind) {
+      throw new Error(`Persistence key "${accessor.key}" changed registration kind during hot reload.`);
+    }
+    if (accessor.kind === 'list' && existing.kind === 'list') accessor.set(existing.get());
+    if (accessor.kind === 'value' && existing.kind === 'value') accessor.set(existing.get());
+    registry.set(accessor.key, accessor);
+    return;
+  }
+  if (existing) {
     throw new Error(`Persistence key "${accessor.key}" is registered twice.`);
   }
   registry.set(accessor.key, accessor);
