@@ -14,6 +14,7 @@ import { posService, type PosSale } from '@/features/pos/posService';
 import { supportTicketService } from '@/features/support/services/supportTicketService';
 import type { DashboardModule, ModuleDashboardOverview, ModuleDashboardRequest } from '@/features/dashboard/types/moduleDashboard';
 import { dashboardContext, sum, timeSeries } from '@/features/dashboard/utils/moduleAnalytics';
+import { tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 
 Object.defineProperty(globalThis, 'window', { value: { setTimeout: globalThis.setTimeout, addEventListener: () => undefined }, configurable: true });
 const modules: DashboardModule[] = ['crm', 'sales', 'purchases', 'inventory', 'finance', 'hr', 'projects', 'pos', 'documents', 'support', 'reports'];
@@ -38,8 +39,13 @@ for (const module of modules) {
     const sharedTransfers = source.data.filter(row => [row.sourceBranchId, row.destinationBranchId].includes('branch-002')).map(row => row.id);
     assert.ok(ids(second).filter(id => ids(first).includes(id)).every(id => sharedTransfers.includes(id)), 'inventory: only authorized transfers connecting both branches may be shared');
   } else assert.ok(ids(second).every(id => !ids(first).includes(id)), `${module}: branch records must not mix`);
-  const tenant = await load(module, { tenantId: 'tenant-002', branchId: 'branch-003', permittedBranchIds: ['branch-003'] });
-  assert.ok(ids(tenant).every(id => !ids(first).includes(id)), `${module}: tenant records must not mix`);
+  const tenantModule = module === 'finance' ? 'finance' : module === 'purchases' ? 'purchases' : module;
+  if (module !== 'support' && !tenantEntitlementService.isModuleEnabled('tenant-002', tenantModule as Parameters<typeof tenantEntitlementService.isModuleEnabled>[1])) {
+    await assert.rejects(load(module, { tenantId: 'tenant-002', branchId: 'branch-003', permittedBranchIds: ['branch-003'] }), /not enabled/);
+  } else {
+    const tenant = await load(module, { tenantId: 'tenant-002', branchId: 'branch-003', permittedBranchIds: ['branch-003'] });
+    assert.ok(ids(tenant).every(id => !ids(first).includes(id)), `${module}: tenant records must not mix`);
+  }
   const denied = await load(module, { permissions: [] });
   assert.deepEqual(denied, { metrics: [], charts: [], lists: [], workflow: [] }, `${module}: no unauthorized widgets`);
   const empty = await load(module, { dateFrom: '2000-01-01', dateTo: '2000-01-02' });
