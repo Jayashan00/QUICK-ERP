@@ -14,6 +14,7 @@ import { PERMISSIONS } from '@/core/permissions/permissionConstants';
 import type { Branch } from '@/core/branch/types/branch';
 import { useBranches } from '@/features/settings/branches/hooks/useBranches';
 import { BranchTable } from '@/features/settings/branches/components/BranchTable';
+import { useTenant } from '@/core/tenant/tenant-context';
 
 const STATUS_FILTER_OPTIONS = [
   { value: 'all', label: 'All Statuses' },
@@ -30,8 +31,10 @@ const MAIN_FILTER_OPTIONS = [
 export function BranchListPage() {
   const navigate = useNavigate();
   const { hasPermission } = usePermissions();
+  const { currentTenant } = useTenant();
 
   const canCreate = hasPermission(PERMISSIONS.SETTINGS.BRANCHES_CREATE);
+  const branchLimitReached = Boolean(currentTenant && currentTenant.entitlements.usage.currentBranches >= currentTenant.entitlements.limits.maxBranches);
   const canEdit = hasPermission(PERMISSIONS.SETTINGS.BRANCHES_EDIT);
   const canDelete = hasPermission(PERMISSIONS.SETTINGS.BRANCHES_DELETE);
 
@@ -83,13 +86,17 @@ export function BranchListPage() {
         description="Manage company branches and their basic operational information."
         actions={
           canCreate ? (
-            <Button
-              variant="primary"
-              leftIcon={<Plus size={16} />}
-              onClick={() => navigate('/settings/branches/new')}
-            >
-              Add Branch
-            </Button>
+            <div className="text-right">
+              <Button
+                variant="primary"
+                leftIcon={<Plus size={16} />}
+                disabled={branchLimitReached}
+                onClick={() => navigate('/settings/branches/new')}
+              >
+                Add Branch
+              </Button>
+              {currentTenant && <p className={`mt-1 text-xs ${branchLimitReached ? 'text-amber-700' : 'text-slate-500'}`}>{currentTenant.entitlements.usage.currentBranches} / {currentTenant.entitlements.limits.maxBranches} branches{branchLimitReached ? ' · limit reached' : ''}</p>}
+            </div>
           ) : undefined
         }
       />

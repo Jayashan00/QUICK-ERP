@@ -1,6 +1,7 @@
 import type { User } from '@/core/auth/types/user';
 import { mockUsers } from '@/core/auth/mocks/users';
 import { registerList } from '@/core/persistence/stateRegistry';
+import { tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 
 const departmentMap: Record<string, { id: string; name: string }> = {
   Administration: { id: 'dept-003', name: 'Administration & Operations' },
@@ -85,12 +86,18 @@ export const userService = {
 
   async createUser(tenantId: string, data: CreateUserInput): Promise<User> {
     await new Promise((resolve) => setTimeout(resolve, 250));
+    const entitlements = tenantEntitlementService.get(tenantId);
+    const currentUsers = usersStore.filter((user) => user.tenantId === tenantId && !user.isSuperAdmin).length;
+    if (entitlements && currentUsers >= entitlements.limits.maxUsers) {
+      throw new Error(`User limit reached (${currentUsers} / ${entitlements.limits.maxUsers}). Contact Quick Solutions to change the company limit.`);
+    }
     if (usersStore.some((user) => user.tenantId === tenantId && user.email.toLowerCase() === data.email.toLowerCase())) {
       throw new Error('A user with this email already exists.');
     }
     const now = new Date().toISOString();
     const user: User = { ...data, id: `usr-${crypto.randomUUID().slice(0, 8)}`, tenantId, branchIds: [...data.branchIds], createdAt: now, updatedAt: now };
     usersStore = [user, ...usersStore];
+    tenantEntitlementService.updateUsage(tenantId, { currentUsers: currentUsers + 1 });
     return cloneUser(user);
   },
 
@@ -111,6 +118,7 @@ export const userService = {
     const user = usersStore.find((item) => item.tenantId === tenantId && item.id === id && !item.isSuperAdmin);
     if (!user) throw new Error('User not found.');
     usersStore = usersStore.filter((item) => !(item.tenantId === tenantId && item.id === id));
+    tenantEntitlementService.updateUsage(tenantId, { currentUsers: usersStore.filter((item) => item.tenantId === tenantId && !item.isSuperAdmin).length });
   },
 
   getAssignedRoleCount(tenantId: string, roleId: string): number {
