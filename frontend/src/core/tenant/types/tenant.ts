@@ -1,13 +1,12 @@
 import { BaseEntity } from '@/shared/types/common';
+import type { TenantEntitlements } from '@/core/tenant/tenantEntitlements';
 
-export type TenantStatus = 'active' | 'trial' | 'suspended' | 'expired';
+export type TenantStatus = 'active' | 'suspended';
 
 export interface Tenant extends BaseEntity {
   name: string;
   subdomain: string;
   status: TenantStatus;
-  planId: string;
-  planName: string;
   ownerEmail: string;
   contactName: string;
   phone?: string;
@@ -15,5 +14,5 @@ export interface Tenant extends BaseEntity {
   currency: string;
   timezone: string;
   locale: string;
-  features: string[];
+  entitlements: TenantEntitlements;
 }
