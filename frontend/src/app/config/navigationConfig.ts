@@ -18,9 +18,7 @@ import {
   Settings,
   ShieldAlert,
   Building,
-  Sliders,
   Activity,
-  Cpu,
   HeartPulse,
   Headphones,
   ScrollText,
@@ -606,18 +604,6 @@ export const SUPER_ADMIN_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
         permission: "platform.tenants.view",
       },
       {
-        label: "Subscription Plans",
-        path: "/super-admin/plans",
-        icon: Sliders,
-        permission: "platform.plans.view",
-      },
-      {
-        label: "Subscriptions",
-        path: "/super-admin/subscriptions",
-        icon: Receipt,
-        permission: "platform.subscriptions.view",
-      },
-      {
         label: "Platform Usage",
         path: "/super-admin/usage",
         icon: Activity,
@@ -646,12 +632,6 @@ export const SUPER_ADMIN_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
   {
     title: "SYSTEM",
     items: [
-      {
-        label: "Feature Flags",
-        path: "/super-admin/feature-flags",
-        icon: Cpu,
-        permission: "platform.feature_flags.view",
-      },
       {
         label: "Platform Settings",
         path: "/super-admin/settings",
