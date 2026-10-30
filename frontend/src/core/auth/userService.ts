@@ -2,6 +2,8 @@ import type { User } from '@/core/auth/types/user';
 import { mockUsers } from '@/core/auth/mocks/users';
 import { registerList } from '@/core/persistence/stateRegistry';
 import { tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
+import { roleService } from '@/core/permissions/roleService';
+import { branchService } from '@/core/branch/branchService';
 
 const departmentMap: Record<string, { id: string; name: string }> = {
   Administration: { id: 'dept-003', name: 'Administration & Operations' },
@@ -50,6 +52,23 @@ export type CreateUserInput = Omit<User, 'id' | 'createdAt' | 'updatedAt' | 'ten
 
 const cloneUser = (user: User): User => ({ ...user, branchIds: [...user.branchIds] });
 
+async function validateAccessAssignment(tenantId: string, roleId: string, branchIds: string[], defaultBranchId: string) {
+  const [role, assignableRoles, tenantBranches] = await Promise.all([
+    roleService.getRoleById(tenantId, roleId),
+    roleService.getAssignableRoles(tenantId),
+    branchService.getAllBranches(tenantId),
+  ]);
+  if (!role || !assignableRoles.some((candidate) => candidate.id === role.id)) {
+    throw new Error('Select an active role whose permissions belong to modules enabled for this company.');
+  }
+  const tenantBranchIds = new Set(tenantBranches.map((branch) => branch.id));
+  if (branchIds.length === 0 || branchIds.some((branchId) => !tenantBranchIds.has(branchId))) {
+    throw new Error('Users can only be assigned to branches belonging to this company.');
+  }
+  if (!branchIds.includes(defaultBranchId)) throw new Error('The default branch must be one of the user’s permitted branches.');
+  return role;
+}
+
 export const userService = {
   async getUsers(tenantId: string, params: GetUsersParams = {}): Promise<PaginatedUsersResult> {
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -86,6 +105,7 @@ export const userService = {
 
   async createUser(tenantId: string, data: CreateUserInput): Promise<User> {
     await new Promise((resolve) => setTimeout(resolve, 250));
+    const role = await validateAccessAssignment(tenantId, data.roleId, data.branchIds, data.defaultBranchId);
     const entitlements = tenantEntitlementService.get(tenantId);
     const currentUsers = usersStore.filter((user) => user.tenantId === tenantId && !user.isSuperAdmin).length;
     if (entitlements && currentUsers >= entitlements.limits.maxUsers) {
@@ -95,7 +115,7 @@ export const userService = {
       throw new Error('A user with this email already exists.');
     }
     const now = new Date().toISOString();
-    const user: User = { ...data, id: `usr-${crypto.randomUUID().slice(0, 8)}`, tenantId, branchIds: [...data.branchIds], createdAt: now, updatedAt: now };
+    const user: User = { ...data, roleName: role.name, id: `usr-${crypto.randomUUID().slice(0, 8)}`, tenantId, branchIds: [...data.branchIds], createdAt: now, updatedAt: now };
     usersStore = [user, ...usersStore];
     tenantEntitlementService.updateUsage(tenantId, { currentUsers: currentUsers + 1 });
     return cloneUser(user);
@@ -108,7 +128,9 @@ export const userService = {
     if (data.email && usersStore.some((user) => user.tenantId === tenantId && user.id !== id && user.email.toLowerCase() === data.email!.toLowerCase())) {
       throw new Error('A user with this email already exists.');
     }
-    const updated: User = { ...usersStore[index], ...data, tenantId, branchIds: data.branchIds ? [...data.branchIds] : usersStore[index].branchIds, updatedAt: new Date().toISOString() };
+    const candidate: User = { ...usersStore[index], ...data, tenantId, branchIds: data.branchIds ? [...data.branchIds] : usersStore[index].branchIds, updatedAt: new Date().toISOString() };
+    const role = await validateAccessAssignment(tenantId, candidate.roleId, candidate.branchIds, candidate.defaultBranchId);
+    const updated: User = { ...candidate, roleName: role.name };
     usersStore[index] = updated;
     return cloneUser(updated);
   },
