@@ -1,6 +1,7 @@
 import type { Branch } from '@/core/branch/types/branch';
 import { mockBranches } from '@/core/branch/mocks/branches';
 import { registerList } from '@/core/persistence/stateRegistry';
+import { tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 
 let branchesStore: Branch[] = [...mockBranches];
 
@@ -80,6 +81,11 @@ export const branchService = {
 
   async createBranch(tenantId: string, data: CreateBranchInput): Promise<Branch> {
     await new Promise((resolve) => setTimeout(resolve, 300));
+    const entitlements = tenantEntitlementService.get(tenantId);
+    const currentBranches = branchesStore.filter((branch) => branch.tenantId === tenantId).length;
+    if (entitlements && currentBranches >= entitlements.limits.maxBranches) {
+      throw new Error(`Branch limit reached (${currentBranches} / ${entitlements.limits.maxBranches}). Contact Quick Solutions to change the company limit.`);
+    }
     const now = new Date().toISOString();
 
     // If new branch is designated as main, unset previous main branch
@@ -98,6 +104,7 @@ export const branchService = {
     };
 
     branchesStore = [newBranch, ...branchesStore];
+    tenantEntitlementService.updateUsage(tenantId, { currentBranches: currentBranches + 1 });
     return { ...newBranch };
   },
 
@@ -135,6 +142,7 @@ export const branchService = {
     if (branch.isMain) throw new Error('Cannot delete the primary/main headquarters branch.');
 
     branchesStore = branchesStore.filter((b) => !(b.id === id && b.tenantId === tenantId));
+    tenantEntitlementService.updateUsage(tenantId, { currentBranches: branchesStore.filter((item) => item.tenantId === tenantId).length });
     return true;
   },
 };

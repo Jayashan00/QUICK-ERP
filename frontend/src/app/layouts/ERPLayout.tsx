@@ -5,6 +5,8 @@ import { ERP_NAVIGATION_SECTIONS } from '@/app/config/navigationConfig';
 import { useAuth } from '@/core/auth/auth-context';
 import { useTenant } from '@/core/tenant/tenant-context';
 import { useBranch } from '@/core/branch/branch-context';
+import { moduleForPath } from '@/core/tenant/tenantEntitlements';
+import { PermissionDenied } from '@/shared/components/feedback/PermissionDenied';
 
 export function ERPLayout() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -30,6 +32,10 @@ export function ERPLayout() {
 
   if (!user || !user.tenantId || !currentTenant) return <Navigate to="/unauthorized" replace />;
   if (user.branchIds.length > 0 && !currentBranch) return <Navigate to="/unauthorized" replace />;
+  const requestedModule = moduleForPath(location.pathname);
+  if (requestedModule && !currentTenant.entitlements.enabledModules.includes(requestedModule)) {
+    return <PermissionDenied message="This module is not enabled for your company. Contact your Quick ERP administrator." />;
+  }
 
   return (
     <AppShell navigationSections={ERP_NAVIGATION_SECTIONS} area="tenant">

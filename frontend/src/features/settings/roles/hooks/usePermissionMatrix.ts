@@ -6,7 +6,7 @@ import { permissionMatrixService } from '@/features/settings/roles/services/perm
 
 export function usePermissionMatrix(roleId: string) {
   const { tenantId } = useTenant(); const queryClient = useQueryClient(); const [selected, setSelected] = useState<string[]>([]);
-  const catalogQuery = useQuery({ queryKey: ['settings', 'permission-catalog', 'tenant'], queryFn: permissionMatrixService.getCatalog });
+  const catalogQuery = useQuery({ queryKey: ['settings', 'permission-catalog', tenantId ?? ''], queryFn: () => permissionMatrixService.getCatalog(tenantId ?? ''), enabled: Boolean(tenantId) });
   const permissionsQuery = useQuery({ queryKey: ['settings', 'role-permissions', tenantId ?? '', roleId], queryFn: () => { if (!tenantId || !roleId) return []; return permissionMatrixService.getRolePermissions(tenantId, roleId); }, enabled: Boolean(tenantId && roleId) });
   useEffect(() => { setSelected(permissionsQuery.data?.filter((permission) => permission !== '*') ?? []); }, [permissionsQuery.data, roleId]);
   const save = useMutation({ mutationFn: () => { if (!tenantId || !roleId) throw new Error('Select a role before saving.'); return permissionMatrixService.saveRolePermissions(tenantId, roleId, selected); }, onSuccess: async (role) => { queryClient.setQueryData(roleKeys.detail(role.tenantId, role.id), role); await Promise.all([queryClient.invalidateQueries({ queryKey: roleKeys.all }), queryClient.invalidateQueries({ queryKey: ['settings', 'role-permissions', role.tenantId, role.id] })]); } });

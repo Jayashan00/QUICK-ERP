@@ -1,0 +1,68 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { ArrowLeft, Edit, KeyRound, Power, Save, Settings2 } from 'lucide-react';
+import { platformTenantSchema, tenantConfigurationSchema } from '@/features/platform/schemas/platformSchemas';
+import type { PlatformTenantInput, TenantConfigurationInput } from '@/features/platform/types/platform';
+import { platformService } from '@/features/platform/services/platformService';
+import { usePlatformFoundation, usePlatformMutation } from '@/features/platform/hooks/usePlatformFoundation';
+import { TENANT_MODULE_CATALOG, expandModuleDependencies, type TenantModule } from '@/core/tenant/tenantEntitlements';
+import { PageContainer } from '@/shared/components/layout/PageContainer';
+import { PageHeader } from '@/shared/components/layout/PageHeader';
+import { Card } from '@/shared/components/common/Card';
+import { Button } from '@/shared/components/common/Button';
+import { StatusBadge } from '@/shared/components/common/StatusBadge';
+import { ErrorState } from '@/shared/components/feedback/ErrorState';
+import { LoadingSpinner } from '@/shared/components/feedback/LoadingSpinner';
+import { ConfirmDialog } from '@/shared/components/feedback/ConfirmDialog';
+import { TextInput } from '@/shared/components/forms/TextInput';
+import { FormField } from '@/shared/components/forms/FormField';
+import { Modal } from '@/shared/components/common/Modal';
+import { appToast } from '@/shared/utils/toast';
+
+const usageBar = (used: number, limit: number) => `${Math.min(100, Math.round((used / Math.max(limit, 1)) * 100))}%`;
+
+export function TenantDetailPage() {
+  const { tenantId = '' } = useParams(); const navigate = useNavigate(); const query = usePlatformFoundation();
+  const tenant = query.data?.tenants.find((item) => item.id === tenantId);
+  const [pendingModules, setPendingModules] = useState<TenantModule[]>([]); const [statusConfirm, setStatusConfirm] = useState(false); const [resetConfirm, setResetConfirm] = useState(false); const [disableConfirm, setDisableConfirm] = useState<TenantModule | null>(null);
+  const [editingCompany, setEditingCompany] = useState(false);
+  const form = useForm<TenantConfigurationInput>({ resolver: zodResolver(tenantConfigurationSchema), defaultValues: { enabledModules: [], maxUsers: 10, maxBranches: 2 } });
+  const editForm = useForm<PlatformTenantInput>({ resolver: zodResolver(platformTenantSchema), defaultValues: { name: '', subdomain: '', ownerEmail: '', contactName: '', country: '', adminName: '', adminEmail: '' } });
+  useEffect(() => { if (tenant) { setPendingModules(tenant.enabledModules); form.reset({ enabledModules: tenant.enabledModules, maxUsers: tenant.limits.maxUsers, maxBranches: tenant.limits.maxBranches, maxWarehouses: tenant.limits.maxWarehouses, maxStorageGb: tenant.limits.maxStorageGb }); } }, [form, tenant]);
+  const configure = usePlatformMutation((input: TenantConfigurationInput) => platformService.configureTenant(tenantId, input));
+  const status = usePlatformMutation(() => platformService.setTenantStatus(tenantId, tenant?.status === 'suspended' ? 'active' : 'suspended'));
+  const resetAdmin = usePlatformMutation(() => platformService.resetTenantAdmin(tenantId));
+  const updateCompany = usePlatformMutation((input: PlatformTenantInput) => platformService.updateTenant(tenantId, input));
+  const grouped = useMemo(() => TENANT_MODULE_CATALOG.reduce<Record<string, typeof TENANT_MODULE_CATALOG>>((groups, module) => { (groups[module.group] ??= []).push(module); return groups; }, {}), []);
+  if (query.isLoading) return <div className="flex h-64 items-center justify-center"><LoadingSpinner /></div>;
+  if (!tenant) return <PageContainer><ErrorState title="Company not found" message="This tenant does not exist or is outside your platform access." onRetry={() => navigate('/super-admin/tenants')} /></PageContainer>;
+  const toggleModule = (module: TenantModule) => {
+    if (module === 'settings') return;
+    if (pendingModules.includes(module)) { setDisableConfirm(module); return; }
+    const next = expandModuleDependencies([...pendingModules, module]); setPendingModules(next); form.setValue('enabledModules', next, { shouldDirty: true });
+  };
+  const saveConfiguration = form.handleSubmit(async (values) => { try { await configure.mutateAsync({ ...values, enabledModules: pendingModules }); appToast.success('Tenant modules and limits updated.'); } catch (error) { appToast.error(error instanceof Error ? error.message : 'Unable to update tenant configuration.'); } });
+  return <PageContainer>
+    <Link to="/super-admin/tenants" className="mb-4 inline-flex items-center gap-2 text-sm font-medium text-blue-700"><ArrowLeft size={15} />Back to companies</Link>
+    <PageHeader title={tenant.name} description={`${tenant.subdomain}.quickerp.cloud · isolated tenant configuration`} actions={<div className="flex flex-wrap gap-2"><Button variant="secondary" leftIcon={<Edit size={15} />} onClick={() => { editForm.reset({ name: tenant.name, subdomain: tenant.subdomain, ownerEmail: tenant.ownerEmail, contactName: tenant.contactName, country: tenant.country, adminName: tenant.admin.name, adminEmail: tenant.admin.email }); setEditingCompany(true); }}>Edit Company</Button><Button variant="secondary" leftIcon={<KeyRound size={15} />} onClick={() => setResetConfirm(true)}>Reset Admin Access</Button><Button variant={tenant.status === 'suspended' ? 'primary' : 'danger'} leftIcon={<Power size={15} />} onClick={() => setStatusConfirm(true)}>{tenant.status === 'suspended' ? 'Activate' : 'Suspend'}</Button></div>} />
+    <div className="grid gap-5 xl:grid-cols-3">
+      <Card className="xl:col-span-2"><div className="flex items-center justify-between"><h2 className="font-semibold">Company information</h2><StatusBadge status={tenant.status} /></div><dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2"><div><dt className="text-slate-500">Primary contact</dt><dd className="font-medium">{tenant.contactName} · {tenant.ownerEmail}</dd></div><div><dt className="text-slate-500">Country</dt><dd className="font-medium">{tenant.country}</dd></div><div><dt className="text-slate-500">Created</dt><dd className="font-medium">{new Date(tenant.createdAt).toLocaleString()}</dd></div><div><dt className="text-slate-500">Last activity</dt><dd className="font-medium">{tenant.lastActivityAt ? new Date(tenant.lastActivityAt).toLocaleString() : 'No activity recorded'}</dd></div></dl></Card>
+      <Card><h2 className="font-semibold">Tenant administrator</h2><p className="mt-3 font-medium">{tenant.admin.name}</p><p className="text-sm text-slate-500">{tenant.admin.email}</p><div className="mt-3"><StatusBadge status={tenant.admin.status} /></div><p className="mt-3 text-xs text-slate-500">This account belongs only to this tenant and cannot access platform screens.</p></Card>
+    </div>
+    <form className="mt-6 space-y-6" onSubmit={saveConfiguration}>
+      <Card><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 font-semibold"><Settings2 size={18} />Module access</h2><p className="mt-1 text-sm text-slate-500">Disabled modules are hidden from navigation, blocked at routes, and removed from tenant role permissions. Data is retained.</p></div><div className="flex gap-2"><Button type="button" size="sm" variant="secondary" onClick={() => { const all = [...TENANT_MODULE_CATALOG.map((item) => item.id)]; setPendingModules(all); form.setValue('enabledModules', all, { shouldDirty: true }); }}>Select All</Button><Button type="button" size="sm" variant="ghost" onClick={() => { setPendingModules(['settings']); form.setValue('enabledModules', ['settings'], { shouldDirty: true }); }}>Clear Optional</Button></div></div>
+        <div className="mt-5 space-y-5">{Object.entries(grouped).map(([group, modules]) => <section key={group}><h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{group}</h3><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{modules.map((module) => { const checked = pendingModules.includes(module.id); return <label key={module.id} className={`flex cursor-pointer gap-3 rounded-xl border p-4 ${checked ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'}`}><input type="checkbox" checked={checked} disabled={module.id === 'settings'} onChange={() => toggleModule(module.id)} /><span><span className="block text-sm font-semibold text-slate-900">{module.label}</span><span className="mt-1 block text-xs text-slate-500">{module.description}</span>{module.dependencies?.length ? <span className="mt-1 block text-[11px] text-blue-700">Requires: {module.dependencies.join(', ')}</span> : null}</span></label>; })}</div></section>)}</div>
+      </Card>
+      <Card><h2 className="font-semibold">Tenant limits</h2><p className="mt-1 text-sm text-slate-500">Limits cannot be set below current usage.</p><div className="mt-5 grid gap-5 md:grid-cols-2"><Usage label="Users" used={tenant.usage.currentUsers} limit={tenant.limits.maxUsers} /><Usage label="Branches" used={tenant.usage.currentBranches} limit={tenant.limits.maxBranches} /></div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><FormField label="Maximum users" error={form.formState.errors.maxUsers?.message}><TextInput type="number" min={tenant.usage.currentUsers} {...form.register('maxUsers', { valueAsNumber: true })} /></FormField><FormField label="Maximum branches" error={form.formState.errors.maxBranches?.message}><TextInput type="number" min={tenant.usage.currentBranches} {...form.register('maxBranches', { valueAsNumber: true })} /></FormField><FormField label="Maximum warehouses (optional)" error={form.formState.errors.maxWarehouses?.message}><TextInput type="number" min={1} {...form.register('maxWarehouses', { setValueAs: (value) => value === '' ? undefined : Number(value) })} /></FormField><FormField label="Storage GB (optional)" error={form.formState.errors.maxStorageGb?.message}><TextInput type="number" min={1} {...form.register('maxStorageGb', { setValueAs: (value) => value === '' ? undefined : Number(value) })} /></FormField></div></Card>
+      <div className="flex justify-end"><Button type="submit" leftIcon={<Save size={16} />} isLoading={configure.isPending}>Save Tenant Configuration</Button></div>
+    </form>
+    <ConfirmDialog isOpen={Boolean(disableConfirm)} title="Disable module access?" message={`Disable ${TENANT_MODULE_CATALOG.find((item) => item.id === disableConfirm)?.label ?? 'this module'} and any modules that depend on it? Tenant data will be kept, but navigation, routes, permissions and actions will no longer be available.`} variant="danger" confirmLabel="Disable Module" onCancel={() => setDisableConfirm(null)} onConfirm={() => { if (!disableConfirm) return; const blocked = new Set<TenantModule>([disableConfirm]); let changed = true; while (changed) { changed = false; for (const definition of TENANT_MODULE_CATALOG) if (pendingModules.includes(definition.id) && definition.dependencies?.some((dependency) => blocked.has(dependency)) && !blocked.has(definition.id)) { blocked.add(definition.id); changed = true; } } const next = pendingModules.filter((item) => !blocked.has(item)); setPendingModules(next); form.setValue('enabledModules', next, { shouldDirty: true }); setDisableConfirm(null); }} />
+    <ConfirmDialog isOpen={statusConfirm} title={tenant.status === 'suspended' ? 'Activate tenant?' : 'Suspend tenant?'} message={`${tenant.status === 'suspended' ? 'Restore' : 'Suspend'} access for ${tenant.name}?`} variant={tenant.status === 'suspended' ? 'primary' : 'danger'} onCancel={() => setStatusConfirm(false)} onConfirm={async () => { await status.mutateAsync(); setStatusConfirm(false); appToast.success('Tenant status updated.'); }} />
+    <ConfirmDialog isOpen={resetConfirm} title="Reset tenant admin access?" message={`Issue a new mock access invitation to ${tenant.admin.email}?`} onCancel={() => setResetConfirm(false)} onConfirm={async () => { await resetAdmin.mutateAsync(); setResetConfirm(false); appToast.success('Tenant admin access reset.'); }} />
+    <Modal isOpen={editingCompany} title="Edit company" onClose={() => setEditingCompany(false)}><form className="space-y-4" onSubmit={editForm.handleSubmit(async (values) => { try { await updateCompany.mutateAsync(values); setEditingCompany(false); appToast.success('Company details updated.'); } catch (error) { appToast.error(error instanceof Error ? error.message : 'Unable to update company.'); } })}><div className="grid gap-3 sm:grid-cols-2">{(['name', 'subdomain', 'ownerEmail', 'contactName', 'country', 'adminName', 'adminEmail'] as const).map((name) => <FormField key={name} label={name.replace(/([A-Z])/g, ' $1')} error={editForm.formState.errors[name]?.message}><TextInput {...editForm.register(name)} /></FormField>)}</div><div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setEditingCompany(false)}>Cancel</Button><Button type="submit" isLoading={updateCompany.isPending}>Save Company</Button></div></form></Modal>
+  </PageContainer>;
+}
+
+function Usage({ label, used, limit }: { label: string; used: number; limit: number }) { return <div><div className="flex justify-between text-sm"><span>{label}</span><strong>{used} / {limit}</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-blue-600" style={{ width: usageBar(used, limit) }} /></div></div>; }

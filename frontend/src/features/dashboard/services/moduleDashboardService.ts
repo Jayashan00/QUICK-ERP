@@ -1,5 +1,6 @@
 import type { DashboardModule, ModuleDashboardContext, ModuleDashboardRequest } from '../types/moduleDashboard';
 import { dashboardContext } from '../utils/moduleAnalytics';
+import { tenantEntitlementService, type TenantModule } from '@/core/tenant/tenantEntitlements';
 
 const loaders: Record<DashboardModule, (context: ModuleDashboardContext) => Promise<void>> = {
   crm: async context => (await import('@/features/crm/services/crmDashboardService')).aggregateCrmDashboard(context),
@@ -14,8 +15,16 @@ const loaders: Record<DashboardModule, (context: ModuleDashboardContext) => Prom
   support: async context => (await import('@/features/support/services/supportDashboardService')).aggregateSupportDashboard(context),
   reports: async context => (await import('@/features/reports/services/reportDashboardService')).aggregateReportDashboard(context),
 };
+const tenantModules: Partial<Record<DashboardModule, TenantModule>> = {
+  crm: 'crm', sales: 'sales', purchases: 'purchases', inventory: 'inventory', finance: 'finance', hr: 'hr',
+  projects: 'projects', pos: 'pos', documents: 'documents', reports: 'reports',
+};
 export const moduleDashboardService = {
   async getOverview(module: DashboardModule, request: ModuleDashboardRequest) {
+    const tenantModule = tenantModules[module];
+    if (tenantModule && !tenantEntitlementService.isModuleEnabled(request.tenantId, tenantModule)) {
+      throw new Error('This module is not enabled for this company.');
+    }
     const context = dashboardContext(request);
     await loaders[module](context);
     return context.output;

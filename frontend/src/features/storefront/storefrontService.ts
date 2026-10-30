@@ -7,6 +7,7 @@ import { getTenantTaxRates } from '@/features/settings/finance/tax';
 import { money, priceCart } from '@/features/pos/posPricing';
 import { flashSaleService } from '@/features/sales/services/flashSaleService';
 import { registerList, replaceArray } from '@/core/persistence/stateRegistry';
+import { tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 
 export const checkoutSchema = z.object({
   name: z.string().trim().min(2), email: z.email(), phone: z.string().trim().min(7),
@@ -18,7 +19,7 @@ export type CartItem = { productId: string; quantity: number };
 export type StoreOrder = { id: string; trackingToken: string; scope: TenantBranchScope; customer: CheckoutDetails; items: { productId: string; name: string; quantity: number; unitPrice: number; tax: number; total: number }[]; subtotal: number; tax: number; total: number; status: 'new' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled'; paymentStatus: 'pending' | 'paid' | 'failed'; createdAt: string; updatedAt: string; locationId?: string };
 const orders: StoreOrder[] = [];
 const sameScope = (a: TenantBranchScope, b: TenantBranchScope) => a.tenantId === b.tenantId && a.branchId === b.branchId;
-const checkedScope = (scope: TenantBranchScope) => { if (!scope.tenantId || !scope.branchId || !inventoryStore.locations().some(l => sameScope(l, scope) && l.isActive)) throw new Error('This store is unavailable.'); };
+const checkedScope = (scope: TenantBranchScope) => { if (!scope.tenantId || !scope.branchId || !tenantEntitlementService.isModuleEnabled(scope.tenantId, 'web_store') || !inventoryStore.locations().some(l => sameScope(l, scope) && l.isActive)) throw new Error('This store is unavailable.'); };
 const stock = (scope: TenantBranchScope, productId: string) => inventoryStore.balances().filter(b => sameScope(b, scope) && b.productId === productId).reduce((sum, b) => sum + Math.max(0, b.quantityOnHand - b.quantityCommitted), 0);
 
 export const storefrontService = {
@@ -49,14 +50,15 @@ export const storefrontService = {
     orders.unshift(order);
     return order;
   },
-  track(scope: TenantBranchScope, id: string, token: string) { return orders.find(o => sameScope(o.scope, scope) && o.id === id && o.trackingToken === token) ?? null; },
-  listForStaff(scope: TenantBranchScope) { return orders.filter(o => sameScope(o.scope, scope)); },
+  track(scope: TenantBranchScope, id: string, token: string) { checkedScope(scope); return orders.find(o => sameScope(o.scope, scope) && o.id === id && o.trackingToken === token) ?? null; },
+  listForStaff(scope: TenantBranchScope) { checkedScope(scope); return orders.filter(o => sameScope(o.scope, scope)); },
   /** A real PayHere hash and notify callback must come from a server. This is a demo response only. */
   simulatePayHere(order: StoreOrder, result: 'paid' | 'failed') {
     if (order.customer.paymentMethod !== 'payhere' || order.paymentStatus !== 'pending' || order.status !== 'new') throw new Error('This payment cannot be changed.');
     order.paymentStatus = result; order.updatedAt = new Date().toISOString();
   },
   confirm(order: StoreOrder) {
+    checkedScope(order.scope);
     if (order.status !== 'new' || order.paymentStatus === 'failed' || (order.customer.paymentMethod === 'payhere' && order.paymentStatus !== 'paid')) throw new Error('This order is not ready to confirm.');
     const location = inventoryStore.locations().find(l => sameScope(l, order.scope) && l.isActive);
     if (!location) throw new Error('No stock location is available.');
@@ -71,6 +73,7 @@ export const storefrontService = {
     order.locationId = location.id; order.status = 'confirmed'; order.updatedAt = new Date().toISOString();
   },
   advance(order: StoreOrder, userId: string, userName: string) {
+    checkedScope(order.scope);
     if (order.status === 'confirmed') order.status = 'preparing';
     else if (order.status === 'preparing') order.status = 'ready';
     else if (order.status === 'ready') {
@@ -92,6 +95,7 @@ export const storefrontService = {
     order.updatedAt = new Date().toISOString();
   },
   cancel(order: StoreOrder) {
+    checkedScope(order.scope);
     if (order.status === 'completed' || order.status === 'cancelled') throw new Error('This order cannot be cancelled.');
     if (order.locationId) for (const item of order.items) {
       const index = inventoryStore.balances().findIndex(b => sameScope(b, order.scope) && b.locationId === order.locationId && b.productId === item.productId);

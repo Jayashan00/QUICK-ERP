@@ -3,6 +3,7 @@ import { mockRoles } from '@/core/permissions/mocks/roles';
 import { userService } from '@/core/auth/userService';
 import { assertPermissionsInScope, type PermissionScope } from '@/core/permissions';
 import { registerList } from '@/core/persistence/stateRegistry';
+import { isPermissionEnabled, isRoleAssignable, tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 
 let rolesStore: Role[] = mockRoles.map((role) => ({ ...role, permissions: [...role.permissions], isActive: role.isActive ?? true }));
 
@@ -31,6 +32,13 @@ export const roleService = {
     return { data: filtered.slice((page - 1) * pageSize, page * pageSize).map(withUsage), total, page, pageSize };
   },
   async getAllRoles(tenantId: string): Promise<RoleWithUsage[]> { await new Promise((resolve) => setTimeout(resolve, 120)); return rolesStore.filter((role) => belongsToScope(role, tenantId)).map(withUsage); },
+  async getAssignableRoles(tenantId: string): Promise<RoleWithUsage[]> {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const enabledModules = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
+    return rolesStore
+      .filter((role) => belongsToScope(role, tenantId) && role.isActive !== false && isRoleAssignable(role.permissions, enabledModules))
+      .map(withUsage);
+  },
   async getRoleById(tenantId: string, id: string): Promise<RoleWithUsage | null> { await new Promise((resolve) => setTimeout(resolve, 120)); const role = rolesStore.find((item) => belongsToScope(item, tenantId) && item.id === id); return role ? withUsage(role) : null; },
   async createRole(tenantId: string, data: CreateRoleInput): Promise<RoleWithUsage> {
     await new Promise((resolve) => setTimeout(resolve, 220));
@@ -55,6 +63,14 @@ export const roleService = {
   async savePermissions(tenantId: string, id: string, permissions: string[]): Promise<RoleWithUsage> {
     await new Promise((resolve) => setTimeout(resolve, 250)); const index = rolesStore.findIndex((role) => belongsToScope(role, tenantId) && role.id === id); if (index < 0) throw new Error('Role not found.');
     assertPermissionsInScope(permissions, rolesStore[index].scope);
+    if (rolesStore[index].scope === 'tenant') {
+      const existing = new Set(rolesStore[index].permissions);
+      const enabledModules = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
+      if (permissions.includes('*') && !existing.has('*')) throw new Error('Tenant custom roles cannot be granted unrestricted access.');
+      if (permissions.some((permission) => permission !== '*' && !isPermissionEnabled(permission, enabledModules) && !existing.has(permission))) {
+        throw new Error('A tenant role cannot receive permissions for a module disabled by Quick Solutions.');
+      }
+    }
     rolesStore[index] = { ...rolesStore[index], permissions: [...new Set(permissions)], updatedAt: new Date().toISOString() }; return withUsage(rolesStore[index]);
   },
 };

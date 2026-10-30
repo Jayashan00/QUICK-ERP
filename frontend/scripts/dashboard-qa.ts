@@ -31,7 +31,7 @@ const otherBranch = await load({ branchId: 'branch-002' });
 assert.ok(otherBranch.sales?.every(row => !data.sales?.some(first => first.id === row.id)), 'branch transactions do not mix');
 assert.ok(otherBranch.lowStock?.every(row => !data.lowStock?.some(first => first.id === row.id)), 'branch stock does not mix');
 const otherTenant = await load({ tenantId: 'tenant-002' });
-assert.ok(otherTenant.sales?.every(row => !data.sales?.some(first => first.id === row.id)), 'tenant sales isolation');
+assert.equal(otherTenant.sales, undefined, 'disabled tenant sales module has no dashboard data');
 assert.ok(otherTenant.lowStock?.every(row => !data.lowStock?.some(first => first.id === row.id)), 'tenant stock isolation');
 const none = await load({ permissions: [] });
 assert.deepEqual(none.metrics, []);

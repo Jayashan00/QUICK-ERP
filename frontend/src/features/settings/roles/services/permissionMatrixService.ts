@@ -1,5 +1,6 @@
 import { TENANT_PERMISSIONS, assertPermissionsInScope, isPermissionInScope, resolveScopedPermissions } from '@/core/permissions';
 import { roleService } from '@/core/permissions/roleService';
+import { tenantEntitlementService, isPermissionEnabled } from '@/core/tenant/tenantEntitlements';
 
 export const MATRIX_ACTIONS = ['view', 'create', 'edit', 'delete', 'approve', 'export', 'print', 'configure', 'test'] as const;
 export type MatrixAction = typeof MATRIX_ACTIONS[number];
@@ -28,24 +29,34 @@ function buildTenantCatalog(): PermissionMatrixGroup[] {
 const tenantCatalog = buildTenantCatalog();
 
 export const permissionMatrixService = {
-  async getCatalog(): Promise<PermissionMatrixGroup[]> { await new Promise((resolve) => setTimeout(resolve, 120)); return tenantCatalog.map((group) => ({ ...group, rows: group.rows.map((row) => ({ ...row, permissions: { ...row.permissions } })) })); },
+  async getCatalog(tenantId: string): Promise<PermissionMatrixGroup[]> {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const enabled = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
+    return tenantCatalog.map((group) => ({ ...group, rows: group.rows.map((row) => ({ ...row, permissions: Object.fromEntries(Object.entries(row.permissions).filter(([, permission]) => isPermissionEnabled(permission, enabled))) })).filter((row) => Object.keys(row.permissions).length > 0) })).filter((group) => group.rows.length > 0);
+  },
   async getRolePermissions(tenantId: string, roleId: string): Promise<string[]> {
     if (tenantId === 'platform') throw new Error('The tenant Permission Matrix cannot manage platform roles.');
     const role = await roleService.getRoleById(tenantId, roleId);
     if (!role || role.scope !== 'tenant') throw new Error('Tenant role not found.');
     if (role.permissions.includes('*')) {
-      return ['*', ...tenantCatalog.flatMap((group) => group.rows.flatMap((row) => Object.values(row.permissions)))];
+      const enabled = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
+      return tenantCatalog.flatMap((group) => group.rows.flatMap((row) => Object.values(row.permissions))).filter((permission) => isPermissionEnabled(permission, enabled));
     }
-    return resolveScopedPermissions(role.permissions, 'tenant');
+    const enabled = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
+    return resolveScopedPermissions(role.permissions, 'tenant').filter((permission) => isPermissionEnabled(permission, enabled));
   },
   async saveRolePermissions(tenantId: string, roleId: string, permissions: string[]) {
     if (tenantId === 'platform') throw new Error('The tenant Permission Matrix cannot manage platform roles.');
     const role = await roleService.getRoleById(tenantId, roleId); if (!role || role.scope !== 'tenant') throw new Error('Tenant role not found.');
     assertPermissionsInScope(permissions, 'tenant');
-    const unsupported = role.permissions.filter((permission) => {
+    const enabled = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
+    if (permissions.some((permission) => !isPermissionEnabled(permission, enabled))) {
+      throw new Error('A tenant role cannot receive permissions for a module disabled by Quick Solutions.');
+    }
+    const preserved = role.permissions.filter((permission) => {
       const parts = permission.split('.');
-      return isPermissionInScope(permission, 'tenant') && (permission === '*' || !MATRIX_ACTIONS.includes(parts[parts.length - 1] as MatrixAction));
+      return isPermissionInScope(permission, 'tenant') && (permission === '*' || !isPermissionEnabled(permission, enabled) || !MATRIX_ACTIONS.includes(parts[parts.length - 1] as MatrixAction));
     });
-    return roleService.savePermissions(tenantId, roleId, [...unsupported, ...permissions]);
+    return roleService.savePermissions(tenantId, roleId, [...preserved, ...permissions]);
   },
 };
