@@ -1,6 +1,6 @@
 import type { DocumentRecord } from '@/shared/types/document-record';
 
-export const supportCategories = ['login_access', 'billing_subscription', 'pos', 'sales', 'purchase', 'inventory_stock', 'accounting', 'hr', 'projects', 'integrations', 'other'] as const;
+export const supportCategories = ['login_access', 'service_configuration', 'pos', 'sales', 'purchase', 'inventory_stock', 'accounting', 'hr', 'projects', 'integrations', 'other'] as const;
 export const supportPriorities = ['low', 'medium', 'high', 'urgent'] as const;
 export const supportStatuses = ['open', 'in_progress', 'waiting_for_user', 'resolved', 'closed'] as const;
 export const supportModules = ['general', 'auth', 'billing', 'pos', 'sales', 'purchasing', 'inventory', 'accounting', 'hr', 'projects', 'integrations'] as const;

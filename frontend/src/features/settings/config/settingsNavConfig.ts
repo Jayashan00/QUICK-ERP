@@ -192,7 +192,7 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
   {
     id: 'notifications-channels',
     label: 'Notifications & Channels',
-    description: 'Notification preferences and subscription communication identities',
+    description: 'Notification preferences and company communication identities',
     icon: BellRing,
     items: [
       {
@@ -206,7 +206,7 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
         label: 'Email Channel',
         path: '/settings/integrations/email',
         icon: Mail,
-        description: 'Sender identity for subscription email delivery',
+        description: 'Sender identity for managed email delivery',
         permission: PERMISSIONS.INTEGRATIONS.EMAIL_INTEGRATION_VIEW,
       },
       {
