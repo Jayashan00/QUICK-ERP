@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/core/auth/auth-context';
 import { usePermissions } from '@/core/permissions/permission-context';
 import { PLATFORM_PERMISSIONS, TENANT_PERMISSIONS } from '@/core/permissions';
+import { useTenantRoute } from '@/core/routing';
 
 interface UserMenuProps {
   area: 'tenant' | 'super-admin';
@@ -14,6 +15,7 @@ export function UserMenu({ area }: UserMenuProps) {
   const { user, logout } = useAuth();
   const { hasPermission } = usePermissions();
   const navigate = useNavigate();
+  const { toTenantPath } = useTenantRoute();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -36,8 +38,8 @@ export function UserMenu({ area }: UserMenuProps) {
   if (!user) return null;
 
   const initials = user.name.split(' ').map((name) => name[0]).join('').toUpperCase().slice(0, 2);
-  const settingsPath = area === 'super-admin' ? '/super-admin/settings' : '/settings/company';
-  const profilePath = area === 'super-admin' ? '/super-admin/profile' : '/profile';
+  const settingsPath = area === 'super-admin' ? '/super-admin/settings' : toTenantPath('/settings/company');
+  const profilePath = area === 'super-admin' ? '/super-admin/profile' : toTenantPath('/profile');
   const canViewSettings = area === 'super-admin'
     ? Boolean(user.isSuperAdmin && hasPermission(PLATFORM_PERMISSIONS.SUPER_ADMIN.SETTINGS_VIEW))
     : hasPermission(TENANT_PERMISSIONS.SETTINGS.COMPANY_VIEW);
@@ -82,7 +84,7 @@ export function UserMenu({ area }: UserMenuProps) {
             </button>
           )}
           {area === 'tenant' && (
-            <button type="button" role="menuitem" className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" onClick={() => navigateTo('/security')}>
+            <button type="button" role="menuitem" className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" onClick={() => navigateTo(toTenantPath('/security'))}>
               <ShieldCheck size={17} className="text-slate-500" /> Security
             </button>
           )}

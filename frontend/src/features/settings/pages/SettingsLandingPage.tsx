@@ -5,9 +5,11 @@ import { Card } from '@/shared/components/common/Card';
 import { EmptyState } from '@/shared/components/feedback/EmptyState';
 import { usePermissions } from '@/core/permissions/permission-context';
 import { SETTINGS_NAV_GROUPS } from '@/features/settings/config/settingsNavConfig';
+import { useTenantRoute } from '@/core/routing';
 
 export function SettingsLandingPage() {
   const { hasPermission } = usePermissions();
+  const { toTenantPath } = useTenantRoute();
 
   const allowedGroups = SETTINGS_NAV_GROUPS.map((group) => ({
     ...group,
@@ -48,7 +50,7 @@ export function SettingsLandingPage() {
                     return (
                       <Link
                         key={item.path}
-                        to={item.path}
+                        to={toTenantPath(item.path)}
                         className="group block rounded-xl transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                       >
                         <Card className="h-full p-5 transition-shadow duration-150 hover:border-blue-200 hover:shadow-md">

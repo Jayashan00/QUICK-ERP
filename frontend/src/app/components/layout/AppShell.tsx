@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 
 import { APP_CONSTANTS } from '@/shared/constants/appConstants';
 import { cn } from '@/shared/utils/cn';
-import type { NavigationSectionConfig } from '@/app/config/navigationConfig';
+import type { NavigationItemConfig, NavigationSectionConfig } from '@/app/config/navigationConfig';
 import { filterNavigationSections } from '@/core/permissions';
 import { usePermissions } from '@/core/permissions/permission-context';
 import { useTenant } from '@/core/tenant/tenant-context';
@@ -12,6 +12,7 @@ import type { TenantModule } from '@/core/tenant/tenantEntitlements';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { OfflineBanner } from '@/features/sync';
+import { useTenantRoute } from '@/core/routing';
 
 interface AppShellProps {
   children: ReactNode;
@@ -31,6 +32,7 @@ export function AppShell({ children, navigationSections, area = 'tenant' }: AppS
   const location = useLocation();
   const { hasPermission } = usePermissions();
   const { currentTenant } = useTenant();
+  const { toTenantPath } = useTenantRoute();
   const [collapsed, setCollapsed] = useState(getInitialCollapsedState);
   const [mobileOpen, setMobileOpen] = useState(false);
   const permittedSections = useMemo(
@@ -43,6 +45,15 @@ export function AppShell({ children, navigationSections, area = 'tenant' }: AppS
     ),
     [area, currentTenant, navigationSections, hasPermission],
   );
+  const routedSections = useMemo(() => {
+    if (area !== 'tenant') return permittedSections;
+    const routeItem = (item: NavigationItemConfig): NavigationItemConfig => ({
+      ...item,
+      path: item.path ? toTenantPath(item.path) : undefined,
+      children: item.children?.map(routeItem),
+    });
+    return permittedSections.map((section) => ({ ...section, items: section.items.map(routeItem) }));
+  }, [area, permittedSections, toTenantPath]);
 
   const toggleSidebar = useCallback(() => {
     setCollapsed((current) => {
@@ -92,7 +103,7 @@ export function AppShell({ children, navigationSections, area = 'tenant' }: AppS
   return (
     <div className="min-h-screen bg-slate-50">
       <Sidebar
-        sections={permittedSections}
+        sections={routedSections}
         collapsed={collapsed}
         mobileOpen={mobileOpen}
         area={area}
