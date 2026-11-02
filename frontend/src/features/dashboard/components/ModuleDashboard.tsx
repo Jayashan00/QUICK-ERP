@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { TenantLink as Link } from '@/core/routing';
 import { BarChart3 } from 'lucide-react';
 import { useBranch } from '@/core/branch/branch-context';
 import { useTenant } from '@/core/tenant/tenant-context';

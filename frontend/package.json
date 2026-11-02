@@ -27,6 +27,7 @@
     "qa:module-dashboards": "node scripts/run-module-dashboards-qa.mjs",
     "qa:auth": "node scripts/run-auth-qa.mjs",
     "qa:tenant-access": "node scripts/run-tenant-access-qa.mjs",
+    "qa:tenant-routing": "node scripts/run-tenant-routing-qa.mjs",
     "qa:search": "node scripts/run-global-search-qa.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
