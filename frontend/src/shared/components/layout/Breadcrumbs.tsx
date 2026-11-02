@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 import { useMemo } from 'react';
+import { stripTenantPath, useTenantRoute } from '@/core/routing';
 
 interface BreadcrumbItem {
   label: string;
@@ -13,12 +14,14 @@ interface BreadcrumbItem {
  */
 export function Breadcrumbs({ items }: { items?: BreadcrumbItem[] }) {
   const location = useLocation();
+  const { identity, toTenantPath } = useTenantRoute();
 
   const crumbs = useMemo(() => {
-    if (items) return items;
+    if (items) return items.map((item) => ({ ...item, path: item.path && identity ? toTenantPath(item.path) : item.path }));
 
-    const segments = location.pathname.split('/').filter(Boolean);
-    const autoCrumbs: BreadcrumbItem[] = [{ label: 'Home', path: '/dashboard' }];
+    const tenantPath = identity ? stripTenantPath(location.pathname) : location.pathname;
+    const segments = tenantPath.split('/').filter(Boolean);
+    const autoCrumbs: BreadcrumbItem[] = [{ label: 'Home', path: identity ? toTenantPath('/dashboard') : '/super-admin/dashboard' }];
 
     let currentPath = '';
     for (const segment of segments) {
@@ -28,7 +31,7 @@ export function Breadcrumbs({ items }: { items?: BreadcrumbItem[] }) {
       const label = segment
         .replace(/-/g, ' ')
         .replace(/\b\w/g, (c) => c.toUpperCase());
-      autoCrumbs.push({ label, path: currentPath });
+      autoCrumbs.push({ label, path: identity ? toTenantPath(currentPath) : currentPath });
     }
 
     // Last crumb has no link
@@ -37,7 +40,7 @@ export function Breadcrumbs({ items }: { items?: BreadcrumbItem[] }) {
     }
 
     return autoCrumbs;
-  }, [items, location.pathname]);
+  }, [identity, items, location.pathname, toTenantPath]);
 
   return (
     <nav className="mb-4" aria-label="Breadcrumb">

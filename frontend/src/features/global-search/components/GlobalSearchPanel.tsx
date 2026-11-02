@@ -9,11 +9,13 @@ import { ErrorState } from '@/shared/components/feedback/ErrorState';
 import { useGlobalSearch } from '../hooks/useGlobalSearch';
 import { readRecentSearches, rememberSearch } from '../utils/recentSearches';
 import type { GlobalSearchResult, SearchModule } from '../types/globalSearch';
+import { useTenantRoute } from '@/core/routing';
 
 const icons = { CRM: Target, Customers: Users, Suppliers: Building2, Products: PackageSearch, Sales: ShoppingCart, Purchases: ShoppingCart, Inventory: Boxes, Finance: WalletCards, HR: Users, Projects: BriefcaseBusiness, Documents: FileText, Support: Headphones };
 const resultKey = (row: GlobalSearchResult) => `${row.module}/${row.type}/${row.id}`;
 export function GlobalSearchPanel({ onClose, inputRef }: { onClose: () => void; inputRef: RefObject<HTMLInputElement> }) {
   const navigate = useNavigate();
+  const { toTenantPath } = useTenantRoute();
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState('');
   const search = useGlobalSearch(query);
@@ -28,7 +30,7 @@ export function GlobalSearchPanel({ onClose, inputRef }: { onClose: () => void; 
   const recent = useMemo(() => readRecentSearches(search.recentKey), [search.recentKey]);
   const select = (row: GlobalSearchResult) => {
     rememberSearch(search.recentKey, query);
-    onClose(); navigate(row.route);
+    onClose(); navigate(toTenantPath(row.route));
   };
   const updateQuery = (value: string) => { setQuery(value); setSelected(''); };
   return createPortal(<Modal isOpen onClose={onClose} title="Global Search" maxWidth="720px" initialFocusRef={inputRef} footer={<p className="text-xs text-slate-500">Arrow keys to select / Enter to open / Esc to close</p>}>

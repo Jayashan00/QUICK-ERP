@@ -7,6 +7,7 @@ import { usePermissions } from '@/core/permissions/permission-context';
 import { useNotificationActions, useRecentNotifications } from '@/features/notifications';
 import type { NotificationModule, NotificationRecord } from '@/features/notifications';
 import { appToast } from '@/shared/utils/toast';
+import { useTenantRoute } from '@/core/routing';
 
 const icons: Record<NotificationModule, typeof Bell> = { sales: Check, purchasing: ShieldCheck, inventory: Package, finance: AlertTriangle, hr: ShieldCheck, projects: Check, documents: Info, support: Headphones, sync: WifiOff, system: Bell };
 
@@ -14,6 +15,7 @@ export function NotificationsMenu({ area }: { area: 'tenant' | 'super-admin' }) 
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const { toTenantPath } = useTenantRoute();
   const { hasPermission } = usePermissions();
   const canView = area === 'tenant' && hasPermission('notifications.view');
   const query = useRecentNotifications(canView);
@@ -33,7 +35,7 @@ export function NotificationsMenu({ area }: { area: 'tenant' | 'super-admin' }) 
     try {
       if (!record.isRead) await actions.markRead({ id: record.id });
       setOpen(false);
-      if (record.actionUrl) navigate(record.actionUrl);
+      if (record.actionUrl) navigate(toTenantPath(record.actionUrl));
     } catch (error) {
       appToast.error(error instanceof Error ? error.message : 'Unable to open notification.');
     }
@@ -59,7 +61,7 @@ export function NotificationsMenu({ area }: { area: 'tenant' | 'super-admin' }) 
               return <button key={record.id} type="button" role="menuitem" onClick={() => void openRecord(record)} className={`flex w-full gap-3 rounded-lg px-3 py-3 text-left outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500 ${record.isRead ? '' : 'bg-blue-50/60'}`}><div className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${record.priority === 'urgent' ? 'bg-red-50 text-red-600' : record.priority === 'high' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-600'}`}><ItemIcon size={17} /></div><div className="min-w-0 flex-1"><div className="flex items-start gap-2"><span className="flex-1 text-sm font-medium text-slate-900">{record.title}</span>{!record.isRead && <span className="mt-1.5 size-2 shrink-0 rounded-full bg-blue-600" aria-label="Unread" />}</div><div className="mt-0.5 line-clamp-2 text-xs leading-5 text-slate-500">{record.message}</div><div className="mt-1 text-[11px] uppercase tracking-wide text-slate-400">{record.module} · {new Date(record.createdAt).toLocaleString()}</div></div></button>;
             }) : <div className="p-8 text-center text-sm text-slate-500">No notifications for this branch.</div>}
           </div>
-          <div className="border-t border-slate-200 p-2"><Link to="/notifications" className="block rounded-lg px-3 py-2 text-center text-sm font-semibold text-blue-600 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" onClick={() => setOpen(false)}>View all notifications</Link></div>
+          <div className="border-t border-slate-200 p-2"><Link to={toTenantPath('/notifications')} className="block rounded-lg px-3 py-2 text-center text-sm font-semibold text-blue-600 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" onClick={() => setOpen(false)}>View all notifications</Link></div>
         </div>
       )}
     </div>

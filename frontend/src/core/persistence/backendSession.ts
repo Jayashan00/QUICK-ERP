@@ -14,6 +14,7 @@ import { mockUsers } from '@/core/auth/mocks/users';
 import { mockTenants } from '@/core/tenant/mocks/tenants';
 import type { User } from '@/core/auth/types/user';
 import type { Tenant } from '@/core/tenant/types/tenant';
+import { toUrlSlug } from '@/shared/utils/slug';
 
 const KEYS = APP_CONSTANTS.STORAGE_KEYS;
 
@@ -58,28 +59,46 @@ export function getBackendToken(): string | null {
 
 /** The signed-in user saved at sign-in, or null when there is no stored session. */
 export function readStoredBackendUser(): User | null {
-  return getBackendToken() ? readJson<User>(KEYS.USER) : null;
+  const user = getBackendToken() ? readJson<User>(KEYS.USER) : null;
+  return user ? normalizeBackendUser(user) : null;
+}
+
+function normalizeBackendUser(user: User): User {
+  const [firstName = '', ...remaining] = user.name.trim().split(/\s+/);
+  const branchIds = user.allowedBranchIds?.length ? user.allowedBranchIds : user.branchIds;
+  return {
+    ...user,
+    firstName: user.firstName || firstName,
+    lastName: user.lastName ?? remaining.join(' '),
+    slug: user.slug || toUrlSlug(user.name),
+    branchIds: [...branchIds],
+    allowedBranchIds: [...branchIds],
+  };
 }
 
 /** Places the authenticated user and tenant into the arrays the providers read from. */
 export function upsertIdentity(user: User, tenant: Tenant | null): void {
-  const userIndex = mockUsers.findIndex((candidate) => candidate.id === user.id);
-  if (userIndex >= 0) mockUsers[userIndex] = user;
-  else mockUsers.push(user);
+  const normalizedUser = normalizeBackendUser(user);
+  const userIndex = mockUsers.findIndex((candidate) => candidate.id === normalizedUser.id);
+  if (userIndex >= 0) mockUsers[userIndex] = normalizedUser;
+  else mockUsers.push(normalizedUser);
   if (tenant) {
+    const normalizedTenant = { ...tenant, slug: tenant.slug || toUrlSlug(tenant.subdomain || tenant.name) };
     const tenantIndex = mockTenants.findIndex((candidate) => candidate.id === tenant.id);
-    if (tenantIndex >= 0) mockTenants[tenantIndex] = tenant;
-    else mockTenants.push(tenant);
+    if (tenantIndex >= 0) mockTenants[tenantIndex] = normalizedTenant;
+    else mockTenants.push(normalizedTenant);
   }
 }
 
-export function storeBackendSession(response: BackendLoginResponse): void {
+export function storeBackendSession(response: BackendLoginResponse): User {
   if (!response.token) throw new Error('The server did not return a session.');
+  const user = normalizeBackendUser(response.user);
   localStorage.setItem(KEYS.AUTH_TOKEN, response.token);
-  localStorage.setItem(KEYS.USER, JSON.stringify(response.user));
+  localStorage.setItem(KEYS.USER, JSON.stringify(user));
   if (response.tenant) localStorage.setItem(KEYS.TENANT, JSON.stringify(response.tenant));
   else localStorage.removeItem(KEYS.TENANT);
-  upsertIdentity(response.user, response.tenant);
+  upsertIdentity(user, response.tenant);
+  return user;
 }
 
 /** Called once before the React tree renders, so a refresh restores the signed-in identity. */
@@ -125,9 +144,9 @@ export async function authenticateWithBackend(email: string, password: string): 
       mfaStatus.set(data.user.id, true);
       return data.user;
     }
-    storeBackendSession(data);
+    const user = storeBackendSession(data);
     mfaStatus.set(data.user.id, false);
-    return data.user;
+    return user;
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 401) throw new Error('Invalid email or password.');
@@ -161,10 +180,10 @@ export async function verifyBackendMfa(code: string): Promise<User> {
   if (!pendingChallenge) throw new Error('The sign-in request has expired. Start again.');
   try {
     const { data } = await apiClient.post<BackendLoginResponse>('/auth/mfa/verify', { challenge: pendingChallenge.challenge, code: code.trim() });
-    storeBackendSession(data);
+    const user = storeBackendSession(data);
     pendingChallenge = null;
     mfaStatus.set(data.user.id, true);
-    return data.user;
+    return user;
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       pendingChallenge = null;

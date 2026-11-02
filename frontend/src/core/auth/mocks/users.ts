@@ -1,15 +1,18 @@
 ﻿import type { User } from '@/core/auth/types/user';
 
-export const mockUsers: User[] = [
+const baseMockUsers: Array<Omit<User, 'allowedBranchIds'>> = [
   {
-    id: 'usr-009', name: 'POS Cashier', email: 'cashier@quickerp.test', roleId: 'role-009', roleName: 'POS Cashier', tenantId: 'tenant-001', branchIds: ['branch-001'], defaultBranchId: 'branch-001', status: 'active', department: 'Store', jobTitle: 'Cashier', createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+    id: 'usr-009', name: 'POS Cashier', firstName: 'POS', lastName: 'Cashier', slug: 'pos-cashier', email: 'cashier@quickerp.test', roleId: 'role-009', roleName: 'POS Cashier', tenantId: 'tenant-001', branchIds: ['branch-001'], defaultBranchId: 'branch-001', status: 'active', department: 'Store', jobTitle: 'Cashier', createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
   },
   {
-    id: 'usr-010', name: 'POS Supervisor', email: 'pos.supervisor@quickerp.test', roleId: 'role-010', roleName: 'POS Supervisor', tenantId: 'tenant-001', branchIds: ['branch-001', 'branch-002'], defaultBranchId: 'branch-001', status: 'active', department: 'Store', jobTitle: 'Supervisor', createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+    id: 'usr-010', name: 'POS Supervisor', firstName: 'POS', lastName: 'Supervisor', slug: 'pos-supervisor', email: 'pos.supervisor@quickerp.test', roleId: 'role-010', roleName: 'POS Supervisor', tenantId: 'tenant-001', branchIds: ['branch-001', 'branch-002'], defaultBranchId: 'branch-001', status: 'active', department: 'Store', jobTitle: 'Supervisor', createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
   },
   {
     id: 'usr-001',
     name: 'Admin User',
+    firstName: 'Admin',
+    lastName: 'User',
+    slug: 'admin-user',
     email: 'admin@quickerp.test',
     roleId: 'role-001',
     roleName: 'Administrator',
@@ -26,6 +29,9 @@ export const mockUsers: User[] = [
   {
     id: 'usr-002',
     name: 'Sales Manager',
+    firstName: 'Sales',
+    lastName: 'Manager',
+    slug: 'sales-manager',
     email: 'sales@quickerp.test',
     roleId: 'role-002',
     roleName: 'Sales Manager',
@@ -42,6 +48,9 @@ export const mockUsers: User[] = [
   {
     id: 'usr-003',
     name: 'Super Admin',
+    firstName: 'Super',
+    lastName: 'Admin',
+    slug: 'super-admin',
     email: 'superadmin@quickerp.test',
     roleId: 'role-003',
     roleName: 'Super Admin',
@@ -59,6 +68,9 @@ export const mockUsers: User[] = [
   {
     id: 'usr-004',
     name: 'Sales Executive',
+    firstName: 'Sales',
+    lastName: 'Executive',
+    slug: 'sales-executive',
     email: 'sales.executive@quickerp.test',
     roleId: 'role-004',
     roleName: 'Sales Executive',
@@ -74,6 +86,9 @@ export const mockUsers: User[] = [
   {
     id: 'usr-005',
     name: 'Audit Viewer',
+    firstName: 'Audit',
+    lastName: 'Viewer',
+    slug: 'audit-viewer',
     email: 'viewer@quickerp.test',
     roleId: 'role-005',
     roleName: 'Viewer / Auditor',
@@ -89,6 +104,9 @@ export const mockUsers: User[] = [
   {
     id: 'usr-006',
     name: 'Inventory Manager',
+    firstName: 'Inventory',
+    lastName: 'Manager',
+    slug: 'inventory-manager',
     email: 'inventory@quickerp.test',
     roleId: 'role-006',
     roleName: 'Inventory Manager',
@@ -104,6 +122,9 @@ export const mockUsers: User[] = [
   {
     id: 'usr-007',
     name: 'HR Manager',
+    firstName: 'HR',
+    lastName: 'Manager',
+    slug: 'hr-manager',
     email: 'hr@quickerp.test',
     roleId: 'role-007',
     roleName: 'HR Manager',
@@ -119,6 +140,9 @@ export const mockUsers: User[] = [
   {
     id: 'usr-008',
     name: 'Accountant',
+    firstName: 'Accountant',
+    lastName: '',
+    slug: 'accountant',
     email: 'accountant@quickerp.test',
     roleId: 'role-008',
     roleName: 'Accountant',
@@ -134,6 +158,9 @@ export const mockUsers: User[] = [
   {
     id: 'usr-009',
     name: 'Inactive User',
+    firstName: 'Inactive',
+    lastName: 'User',
+    slug: 'inactive-user',
     email: 'inactive@quickerp.test',
     roleId: 'role-005',
     roleName: 'Viewer / Auditor',
@@ -145,4 +172,9 @@ export const mockUsers: User[] = [
     updatedAt: '2024-06-01T00:00:00Z',
   },
 ];
+
+export const mockUsers: User[] = baseMockUsers.map((user) => ({
+  ...user,
+  allowedBranchIds: [...user.branchIds],
+}));
 

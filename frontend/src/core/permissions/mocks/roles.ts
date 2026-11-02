@@ -1,6 +1,9 @@
 import type { Role } from "@/core/permissions/types/role";
+import { toUrlSlug } from '@/shared/utils/slug';
 
-const baseMockRoles: Role[] = [
+type MockRole = Omit<Role, 'slug'> & { slug?: string };
+
+const baseMockRoles: MockRole[] = [
   {
     id: 'role-011', scope: 'tenant', name: 'Project Manager', code: 'project_manager',
     description: 'Project delivery, team, time, cost and billing preparation', tenantId: 'tenant-001',
@@ -373,6 +376,10 @@ const baseMockRoles: Role[] = [
 
 const tenantSupportPermissions = ['support.view', 'support.create', 'support.reply'];
 
-export const mockRoles: Role[] = baseMockRoles.map((role) => role.scope === 'tenant' && !role.permissions.includes('*')
-  ? { ...role, permissions: [...new Set([...role.permissions, ...tenantSupportPermissions])] }
-  : role);
+export const mockRoles: Role[] = baseMockRoles.map((role) => ({
+  ...role,
+  slug: role.slug ?? toUrlSlug(role.code),
+  permissions: role.scope === 'tenant' && !role.permissions.includes('*')
+    ? [...new Set([...role.permissions, ...tenantSupportPermissions])]
+    : role.permissions,
+}));

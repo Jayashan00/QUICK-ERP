@@ -5,6 +5,7 @@ export const mockTenants: Tenant[] = [
   {
     id: 'tenant-001',
     name: 'Acme Corporation',
+    slug: 'acme',
     subdomain: 'acme',
     status: 'active',
     ownerEmail: 'admin@acme.test',

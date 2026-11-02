@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { TenantLink as Link } from '@/core/routing';
 import { RefreshCw, CircleDollarSign, ShoppingCart, Users, Boxes, ClipboardCheck, Target, BriefcaseBusiness } from 'lucide-react';
 import { PageContainer } from '@/shared/components/layout/PageContainer';
 import { PageHeader } from '@/shared/components/layout/PageHeader';
