@@ -10,6 +10,7 @@ import { TextInput } from '@/shared/components/forms/TextInput';
 import { Button } from '@/shared/components/common/Button';
 import { getErrorMessage } from '@/shared/utils/errors';
 import { loginSchema, type LoginValues } from '@/features/auth/schemas/securitySchemas';
+import { resolvePostLoginPath } from '@/core/routing';
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -30,7 +31,7 @@ export function LoginPage() {
       const result = await login(values.email, values.password, values.remember);
       if (result.status === 'captcha_required') navigate('/security-check');
       else if (result.status === 'mfa_required') navigate('/two-factor');
-      else navigate(result.user.isSuperAdmin ? '/super-admin/dashboard' : ((location.state as { from?: string } | null)?.from ?? '/dashboard'));
+      else navigate(resolvePostLoginPath(result.user, (location.state as { from?: string } | null)?.from));
     } catch (error) {
       setError('root', { message: getErrorMessage(error, 'Unable to sign in.') });
     }
