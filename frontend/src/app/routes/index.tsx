@@ -2,11 +2,11 @@ import { createBrowserRouter } from 'react-router-dom';
 import { authRoutes } from './auth.routes';
 import { superAdminRoutes } from './platform.routes';
 import { erpRoutes } from './erp.routes';
-import { NotFoundPage } from '@/app/pages/errors/NotFoundPage';
 import { UnauthorizedPage } from '@/app/pages/errors/UnauthorizedPage';
 import { PermissionDeniedPage } from '@/app/pages/errors/PermissionDeniedPage';
 import { GenericErrorPage } from '@/app/pages/errors/GenericErrorPage';
 import { StorefrontPage } from '@/features/storefront/StorefrontPage';
+import { LegacyTenantRoute } from '@/core/routing/LegacyTenantRoute';
 
 export const router = createBrowserRouter([
   authRoutes,
@@ -21,5 +21,5 @@ export const router = createBrowserRouter([
   { path: '/unauthorized', element: <UnauthorizedPage /> },
   { path: '/forbidden', element: <PermissionDeniedPage /> },
   { path: '/error', element: <GenericErrorPage /> },
-  { path: '*', element: <NotFoundPage /> },
+  { path: '*', element: <LegacyTenantRoute /> },
 ]);

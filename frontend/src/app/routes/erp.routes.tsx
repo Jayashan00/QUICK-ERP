@@ -16,6 +16,7 @@ import { notificationRoutes } from './notification.routes';
 import { auditRoutes } from './audit.routes';
 import { supportRoutes } from './support.routes';
 import { lazyPage } from './lazyPage';
+import { NotFoundPage } from '@/app/pages/errors/NotFoundPage';
 
 const ProfilePage = lazyPage(() => import('@/features/auth/pages/ProfilePage').then(({ ProfilePage }) => ({ default: ProfilePage })));
 
@@ -27,11 +28,11 @@ const SecuritySettingsPage = lazyPage(() => import('@/features/settings/security
 const reportViewPermissions = ['reports.view', 'reports.sales.view', 'reports.purchases.view', 'reports.inventory.view', 'reports.finance.view', 'reports.hr.view', 'reports.projects.view', 'reports.pos.view'];
 
 export const erpRoutes: RouteObject = {
-  path: '/',
+  path: '/:companySlug/:roleSlug/:userSlug',
   element: <ERPLayout />,
   children: [
     { path: 'profile', element: <ProfilePage /> },
-    { index: true, element: <Navigate to="/dashboard" replace /> },
+    { index: true, element: <Navigate to="dashboard" replace /> },
     { path: 'dashboard', element: <DashboardPage /> },
     { path: 'security', element: <SecuritySettingsPage /> },
 
@@ -65,5 +66,6 @@ export const erpRoutes: RouteObject = {
     ...notificationRoutes,
     ...auditRoutes,
     ...supportRoutes,
+    { path: '*', element: <NotFoundPage /> },
   ],
 };
