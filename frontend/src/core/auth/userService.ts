@@ -4,6 +4,7 @@ import { registerList } from '@/core/persistence/stateRegistry';
 import { tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 import { roleService } from '@/core/permissions/roleService';
 import { branchService } from '@/core/branch/branchService';
+import { toUniqueUrlSlug } from '@/shared/utils/slug';
 
 const departmentMap: Record<string, { id: string; name: string }> = {
   Administration: { id: 'dept-003', name: 'Administration & Operations' },
@@ -24,6 +25,7 @@ let usersStore: User[] = mockUsers.map((user) => {
   return {
     ...user,
     branchIds: [...user.branchIds],
+    allowedBranchIds: [...(user.allowedBranchIds ?? user.branchIds)],
     departmentId: user.departmentId ?? department?.id,
     department: department?.name ?? user.department,
     designationId: user.designationId ?? (user.jobTitle ? designationMap[user.jobTitle] : undefined),
@@ -48,9 +50,27 @@ export interface PaginatedUsersResult {
   pageSize: number;
 }
 
-export type CreateUserInput = Omit<User, 'id' | 'createdAt' | 'updatedAt' | 'tenantId'>;
+export type CreateUserInput = Omit<User, 'id' | 'createdAt' | 'updatedAt' | 'tenantId' | 'firstName' | 'lastName' | 'slug' | 'allowedBranchIds'>;
 
-const cloneUser = (user: User): User => ({ ...user, branchIds: [...user.branchIds] });
+const cloneUser = (user: User): User => ({ ...user, branchIds: [...user.branchIds], allowedBranchIds: [...user.allowedBranchIds] });
+
+function splitName(name: string): { firstName: string; lastName: string } {
+  const [firstName = '', ...remaining] = name.trim().split(/\s+/);
+  return { firstName, lastName: remaining.join(' ') };
+}
+
+function normalizeUsers(rows: User[]): User[] {
+  const reservedByTenant = new Map<string, Set<string>>();
+  return rows.map((user) => {
+    const reserved = reservedByTenant.get(user.tenantId) ?? new Set<string>();
+    const slug = user.slug && !reserved.has(user.slug) ? user.slug : toUniqueUrlSlug(user.name, reserved);
+    reserved.add(slug);
+    reservedByTenant.set(user.tenantId, reserved);
+    const name = splitName(user.name);
+    const branchIds = user.allowedBranchIds?.length ? user.allowedBranchIds : user.branchIds;
+    return { ...user, firstName: user.firstName || name.firstName, lastName: user.lastName ?? name.lastName, slug, branchIds: [...branchIds], allowedBranchIds: [...branchIds] };
+  });
+}
 
 async function validateAccessAssignment(tenantId: string, roleId: string, branchIds: string[], defaultBranchId: string) {
   const [role, assignableRoles, tenantBranches] = await Promise.all([
@@ -115,7 +135,9 @@ export const userService = {
       throw new Error('A user with this email already exists.');
     }
     const now = new Date().toISOString();
-    const user: User = { ...data, roleName: role.name, id: `usr-${crypto.randomUUID().slice(0, 8)}`, tenantId, branchIds: [...data.branchIds], createdAt: now, updatedAt: now };
+    const name = splitName(data.name);
+    const slug = toUniqueUrlSlug(data.name, usersStore.filter((candidate) => candidate.tenantId === tenantId).map((candidate) => candidate.slug));
+    const user: User = { ...data, ...name, slug, roleName: role.name, id: `usr-${crypto.randomUUID().slice(0, 8)}`, tenantId, branchIds: [...data.branchIds], allowedBranchIds: [...data.branchIds], createdAt: now, updatedAt: now };
     usersStore = [user, ...usersStore];
     tenantEntitlementService.updateUsage(tenantId, { currentUsers: currentUsers + 1 });
     return cloneUser(user);
@@ -128,7 +150,10 @@ export const userService = {
     if (data.email && usersStore.some((user) => user.tenantId === tenantId && user.id !== id && user.email.toLowerCase() === data.email!.toLowerCase())) {
       throw new Error('A user with this email already exists.');
     }
-    const candidate: User = { ...usersStore[index], ...data, tenantId, branchIds: data.branchIds ? [...data.branchIds] : usersStore[index].branchIds, updatedAt: new Date().toISOString() };
+    const existing = usersStore[index];
+    const name = data.name ? splitName(data.name) : { firstName: existing.firstName, lastName: existing.lastName };
+    const branchIds = data.branchIds ? [...data.branchIds] : existing.branchIds;
+    const candidate: User = { ...existing, ...data, ...name, slug: existing.slug, tenantId, branchIds, allowedBranchIds: [...branchIds], updatedAt: new Date().toISOString() };
     const role = await validateAccessAssignment(tenantId, candidate.roleId, candidate.branchIds, candidate.defaultBranchId);
     const updated: User = { ...candidate, roleName: role.name };
     usersStore[index] = updated;
@@ -155,4 +180,4 @@ export const userService = {
 };
 
 // Backend persistence registration (see src/core/persistence).
-registerList('core.users', () => usersStore, (rows) => { usersStore = rows; });
+registerList('core.users', () => usersStore, (rows) => { usersStore = normalizeUsers(rows); });

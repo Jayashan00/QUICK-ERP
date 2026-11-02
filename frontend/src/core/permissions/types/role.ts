@@ -3,6 +3,7 @@ import type { PermissionScope } from '@/core/permissions/permissionScope';
 
 export interface Role extends BaseEntity {
   name: string;
+  slug: string;
   code: string;
   description?: string;
   tenantId: EntityId;

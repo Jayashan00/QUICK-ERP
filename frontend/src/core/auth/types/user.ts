@@ -4,11 +4,16 @@ export type UserStatus = 'active' | 'inactive' | 'suspended' | 'invited';
 
 export interface User extends BaseEntity {
   name: string;
+  firstName: string;
+  lastName: string;
+  slug: string;
   email: string;
   avatarUrl?: string;
   roleId: EntityId;
   roleName: string;
   tenantId: EntityId;
+  allowedBranchIds: EntityId[];
+  /** Compatibility alias used by the current branch-aware frontend. */
   branchIds: EntityId[];
   defaultBranchId: EntityId;
   status: UserStatus;

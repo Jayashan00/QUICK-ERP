@@ -4,6 +4,7 @@ import { userService } from '@/core/auth/userService';
 import { assertPermissionsInScope, type PermissionScope } from '@/core/permissions';
 import { registerList } from '@/core/persistence/stateRegistry';
 import { isPermissionEnabled, isRoleAssignable, tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
+import { toUrlSlug } from '@/shared/utils/slug';
 
 let rolesStore: Role[] = mockRoles.map((role) => ({ ...role, permissions: [...role.permissions], isActive: role.isActive ?? true }));
 
@@ -44,7 +45,7 @@ export const roleService = {
     await new Promise((resolve) => setTimeout(resolve, 220));
     if (rolesStore.some((role) => role.tenantId === tenantId && role.code.toLowerCase() === data.code.toLowerCase())) throw new Error('A role with this code already exists.');
     const now = new Date().toISOString();
-    const role: Role = { ...data, id: `role-${crypto.randomUUID().slice(0, 8)}`, tenantId, scope: scopeForTenant(tenantId), permissions: [], isSystem: false, isActive: data.isActive ?? true, createdAt: now, updatedAt: now };
+    const role: Role = { ...data, slug: toUrlSlug(data.code), id: `role-${crypto.randomUUID().slice(0, 8)}`, tenantId, scope: scopeForTenant(tenantId), permissions: [], isSystem: false, isActive: data.isActive ?? true, createdAt: now, updatedAt: now };
     rolesStore = [role, ...rolesStore]; return withUsage(role);
   },
   async updateRole(tenantId: string, id: string, data: Partial<CreateRoleInput>): Promise<RoleWithUsage> {

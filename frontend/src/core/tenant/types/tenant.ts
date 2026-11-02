@@ -5,6 +5,7 @@ export type TenantStatus = 'active' | 'suspended';
 
 export interface Tenant extends BaseEntity {
   name: string;
+  slug: string;
   subdomain: string;
   status: TenantStatus;
   ownerEmail: string;
