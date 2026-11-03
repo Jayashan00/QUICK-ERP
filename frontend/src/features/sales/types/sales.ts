@@ -18,6 +18,7 @@ export type SalesOrderStatus =
   | "processing"
   | "partially_delivered"
   | "delivered"
+  | "returned"
   | "cancelled";
 export type DeliveryStatus = "draft" | "completed" | "cancelled";
 export type SalesInvoiceStatus =

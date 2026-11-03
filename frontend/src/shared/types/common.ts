@@ -53,6 +53,7 @@ export type StatusType =
   | 'partial'
   | 'overdue'
   | 'delivered'
+  | 'returned'
   | 'in_progress'
   | 'on_hold';
 

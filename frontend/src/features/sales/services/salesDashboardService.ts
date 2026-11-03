@@ -18,7 +18,7 @@ export async function aggregateSalesDashboard(context: ModuleDashboardContext) {
   output.metrics = [
     { label: 'Invoiced sales', value: sales, format: 'currency', to: '/sales/invoices', change: trend(sales, priorSales) },
     { label: 'Open quotations', value: quotations.filter(row => ['draft', 'pending_approval', 'approved', 'sent'].includes(row.status)).length, to: '/sales/quotations', description: 'Current pipeline' },
-    { label: 'Active orders', value: orders.filter(row => !['delivered', 'cancelled'].includes(row.status)).length, to: '/sales/orders', description: 'Current fulfilment queue' },
+    { label: 'Active orders', value: orders.filter(row => !['delivered', 'returned', 'cancelled'].includes(row.status)).length, to: '/sales/orders', description: 'Current fulfilment queue' },
     { label: 'Outstanding amount', value: sum(issued, row => row.outstandingAmount), format: 'currency', to: '/sales/invoices', description: 'Current invoice balances' },
   ];
   output.charts.push(
