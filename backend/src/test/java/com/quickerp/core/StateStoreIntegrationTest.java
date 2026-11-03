@@ -230,6 +230,86 @@ class StateStoreIntegrationTest {
         assertNotNull(record(store.load(admin), "customers.records", "cust-conflict"));
     }
 
+    @Test
+    void duplicateCustomerEmailAndPhoneAreRejectedAfterNormalization() throws Exception {
+        Principal sales = login("sales@quickerp.test");
+        ObjectNode original = (ObjectNode) json("{\"id\":\"cust-unique-contact\",\"tenantId\":\"tenant-001\","
+                + "\"branchId\":\"branch-001\",\"name\":\"Unique Contact\",\"email\":\"Billing.Unique@Example.com\","
+                + "\"phone\":\"+94 77 123 4567\"}");
+        StateStore.BatchResult created = store.applyBatch(sales,
+                versioned("customers.records", "cust-unique-contact", original, 0L));
+        assertEquals(List.of(), created.rejected());
+
+        ObjectNode duplicateEmail = original.deepCopy();
+        duplicateEmail.put("id", "cust-duplicate-email");
+        duplicateEmail.put("email", "  billing.unique@EXAMPLE.COM ");
+        duplicateEmail.put("phone", "+94 77 999 9999");
+        StateStore.BatchResult emailResult = store.applyBatch(sales,
+                versioned("customers.records", "cust-duplicate-email", duplicateEmail, 0L));
+        assertEquals(1, emailResult.rejected().size());
+        assertEquals("A customer with this email address already exists.", emailResult.rejected().get(0).message());
+
+        ObjectNode duplicatePhone = original.deepCopy();
+        duplicatePhone.put("id", "cust-duplicate-phone");
+        duplicatePhone.put("email", "another.unique@example.com");
+        duplicatePhone.put("phone", "94771234567");
+        StateStore.BatchResult phoneResult = store.applyBatch(sales,
+                versioned("customers.records", "cust-duplicate-phone", duplicatePhone, 0L));
+        assertEquals(1, phoneResult.rejected().size());
+        assertEquals("A customer with this phone number already exists.", phoneResult.rejected().get(0).message());
+
+        long version = created.versions().get(0).version();
+        ObjectNode sameCustomer = original.deepCopy();
+        sameCustomer.put("email", "BILLING.UNIQUE@example.com");
+        sameCustomer.put("phone", "94 (77) 123-4567");
+        assertEquals(List.of(), store.applyBatch(sales,
+                versioned("customers.records", "cust-unique-contact", sameCustomer, version)).rejected());
+    }
+
+    @Test
+    void quotationAboveCustomerCreditLimitIsRejectedByTheServer() throws Exception {
+        Principal sales = login("sales@quickerp.test");
+        ObjectNode customer = (ObjectNode) json("{\"id\":\"cust-credit-limit\",\"tenantId\":\"tenant-001\","
+                + "\"branchId\":\"branch-001\",\"name\":\"Credit Limited\",\"email\":\"credit.limit@example.com\","
+                + "\"phone\":\"+94 77 555 0101\",\"currency\":\"USD\",\"creditLimit\":1000}");
+        assertEquals(List.of(), store.applyBatch(sales,
+                versioned("customers.records", "cust-credit-limit", customer, 0L)).rejected());
+
+        ObjectNode quotation = (ObjectNode) json("{\"id\":\"quote-credit-limit\",\"tenantId\":\"tenant-001\","
+                + "\"branchId\":\"branch-001\",\"customerId\":\"cust-credit-limit\",\"currency\":\"USD\","
+                + "\"totalAmount\":1000.01}");
+        StateStore.BatchResult rejected = store.applyBatch(sales,
+                versioned("sales.quotations", "quote-credit-limit", quotation, 0L));
+        assertEquals(1, rejected.rejected().size());
+        assertEquals("Quotation total exceeds the customer's credit limit of USD 1000.", rejected.rejected().get(0).message());
+
+        quotation.put("totalAmount", 1000);
+        assertEquals(List.of(), store.applyBatch(sales,
+                versioned("sales.quotations", "quote-credit-limit", quotation, 0L)).rejected());
+    }
+
+    @Test
+    void quotationWithFractionalCountUnitIsRejectedByTheServer() throws Exception {
+        Principal sales = login("sales@quickerp.test");
+        ObjectNode customer = (ObjectNode) json("{\"id\":\"cust-quantity-check\",\"tenantId\":\"tenant-001\","
+                + "\"branchId\":\"branch-001\",\"name\":\"Quantity Check\",\"email\":\"quantity.check@example.com\","
+                + "\"phone\":\"+94 77 555 0102\",\"currency\":\"USD\"}");
+        assertEquals(List.of(), store.applyBatch(sales,
+                versioned("customers.records", "cust-quantity-check", customer, 0L)).rejected());
+
+        ObjectNode quotation = (ObjectNode) json("{\"id\":\"quote-quantity-check\",\"tenantId\":\"tenant-001\","
+                + "\"branchId\":\"branch-001\",\"customerId\":\"cust-quantity-check\",\"currency\":\"USD\","
+                + "\"totalAmount\":374.25,\"items\":[{\"productId\":\"prod-002\",\"quantity\":1.5}]}");
+        StateStore.BatchResult rejected = store.applyBatch(sales,
+                versioned("sales.quotations", "quote-quantity-check", quotation, 0L));
+        assertEquals(1, rejected.rejected().size());
+        assertTrue(rejected.rejected().get(0).message().contains("requires a whole-number quantity"));
+
+        ((ObjectNode) quotation.withArray("items").get(0)).put("quantity", 2);
+        assertEquals(List.of(), store.applyBatch(sales,
+                versioned("sales.quotations", "quote-quantity-check", quotation, 0L)).rejected());
+    }
+
     // ------------------------------------------------------------ stock ledger
 
     @Test

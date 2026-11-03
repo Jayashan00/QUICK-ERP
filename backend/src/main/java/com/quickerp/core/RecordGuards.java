@@ -1,8 +1,10 @@
 package com.quickerp.core;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -14,6 +16,10 @@ public final class RecordGuards {
 
     public static final String JOURNALS = "accounting.journals";
     public static final String ROLES = "core.roles";
+    public static final String CUSTOMERS = "customers.records";
+    public static final String QUOTATIONS = "sales.quotations";
+    public static final String PRODUCTS = "products.records";
+    public static final String UOMS = "products.uoms";
 
     private static final Map<String, Set<String>> JOURNAL_TRANSITIONS = Map.of(
             "draft", Set.of("pending_approval"),
@@ -29,6 +35,55 @@ public final class RecordGuards {
     private static final double CENT = 0.005;
 
     private RecordGuards() {
+    }
+
+    static String normalizeCustomerEmail(String email) {
+        return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    static String normalizeCustomerPhone(String phone) {
+        return phone == null ? "" : phone.replaceAll("\\D", "");
+    }
+
+    static void checkQuotationCreditLimit(JsonNode customer, JsonNode quotation) {
+        JsonNode limitNode = customer == null ? null : customer.get("creditLimit");
+        if (limitNode == null || limitNode.isNull()) return;
+        if (!limitNode.isNumber() || limitNode.decimalValue().compareTo(BigDecimal.ZERO) < 0) {
+            throw ApiException.badRequest("The customer's credit limit is not valid.");
+        }
+        JsonNode totalNode = quotation == null ? null : quotation.get("totalAmount");
+        if (totalNode == null || !totalNode.isNumber()) {
+            throw ApiException.validation("totalAmount", "The quotation total is required for credit limit validation.");
+        }
+        BigDecimal limit = limitNode.decimalValue();
+        if (totalNode.decimalValue().compareTo(limit) <= 0) return;
+        String currency = Sql.text(quotation, "currency");
+        if (currency == null || currency.isBlank()) currency = Sql.text(customer, "currency");
+        String formattedLimit = limit.stripTrailingZeros().toPlainString();
+        String prefix = currency == null || currency.isBlank() ? "" : currency + " ";
+        throw ApiException.validation("totalAmount",
+                "Quotation total exceeds the customer's credit limit of " + prefix + formattedLimit + ".");
+    }
+
+    static void checkSalesLineQuantity(JsonNode product, JsonNode uom, JsonNode line) {
+        JsonNode quantityNode = line == null ? null : line.get("quantity");
+        if (quantityNode == null || !quantityNode.isNumber()) {
+            throw ApiException.validation("quantity", "A numeric quantity is required.");
+        }
+        int decimalPlaces = uom == null ? 2 : uom.path("decimalPlaces").asInt(2);
+        if (decimalPlaces < 0 || decimalPlaces > 6) {
+            throw ApiException.badRequest("The product's unit quantity precision is not valid.");
+        }
+        BigDecimal quantity = quantityNode.decimalValue().stripTrailingZeros();
+        if (quantity.scale() <= decimalPlaces) return;
+        String productName = Sql.text(product, "name");
+        if (productName == null || productName.isBlank()) productName = "The selected product";
+        String uomName = Sql.text(uom, "name");
+        if (uomName == null || uomName.isBlank()) uomName = "its unit of measure";
+        throw ApiException.validation("quantity",
+                decimalPlaces == 0
+                        ? productName + " uses " + uomName + " and requires a whole-number quantity."
+                        : productName + " allows at most " + decimalPlaces + " decimal place(s) for quantity.");
     }
 
     // ------------------------------------------------------------- journals

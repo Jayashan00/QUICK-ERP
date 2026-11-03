@@ -691,6 +691,12 @@ public final class StateStore {
         if (tenantScope && RecordGuards.JOURNALS.equals(change.collection()) && !principal.superAdmin()) {
             guardJournal(connection, permissions, tenant, change);
         }
+        if (tenantScope && RecordGuards.CUSTOMERS.equals(change.collection())) {
+            guardCustomer(connection, tenant, change);
+        }
+        if (tenantScope && RecordGuards.QUOTATIONS.equals(change.collection())) {
+            guardQuotation(connection, tenant, change);
+        }
         if (USERS_COLLECTION.equals(change.collection()) && tenantScope) {
             syncUsers(connection, principal, permissions, tenant, change);
         }
@@ -709,6 +715,68 @@ public final class StateStore {
             throw ApiException.badRequest("The journal id does not match its content.");
         }
         RecordGuards.checkJournal(permissions, stored, change.isDelete() ? null : change.data());
+    }
+
+    /** Customer contact details must identify only one customer inside a tenant. */
+    private void guardCustomer(Connection connection, String tenant, Change change) throws SQLException {
+        String recordId = change.recordId();
+        if (ORDER_RECORD.equals(recordId) || change.isDelete()) return;
+        if (isReserved(recordId)) throw ApiException.badRequest("Customers must be saved one by one.");
+        JsonNode customer = change.data();
+        if (customer == null || !customer.isObject()) throw ApiException.badRequest("A customer must be an object.");
+        if (!recordId.equals(Sql.text(customer, "id"))) {
+            throw ApiException.badRequest("The customer id does not match its content.");
+        }
+
+        String email = RecordGuards.normalizeCustomerEmail(Sql.text(customer, "email"));
+        if (!email.isBlank() && Sql.queryLong(connection,
+                "SELECT COUNT(*) FROM erp_records WHERE tenant_id = ? AND collection = ? AND record_id <> ? "
+                        + "AND NOT deleted AND lower(btrim(data ->> 'email')) = ?",
+                tenant, RecordGuards.CUSTOMERS, recordId, email) > 0) {
+            throw ApiException.validation("email", "A customer with this email address already exists.");
+        }
+
+        String phone = RecordGuards.normalizeCustomerPhone(Sql.text(customer, "phone"));
+        if (!phone.isBlank() && Sql.queryLong(connection,
+                "SELECT COUNT(*) FROM erp_records WHERE tenant_id = ? AND collection = ? AND record_id <> ? "
+                        + "AND NOT deleted AND regexp_replace(COALESCE(data ->> 'phone', ''), '[^0-9]', '', 'g') = ?",
+                tenant, RecordGuards.CUSTOMERS, recordId, phone) > 0) {
+            throw ApiException.validation("phone", "A customer with this phone number already exists.");
+        }
+    }
+
+    /** Quotations cannot exceed the selected customer's configured credit limit. */
+    private void guardQuotation(Connection connection, String tenant, Change change) throws SQLException {
+        String recordId = change.recordId();
+        if (ORDER_RECORD.equals(recordId) || change.isDelete()) return;
+        if (isReserved(recordId)) throw ApiException.badRequest("Quotations must be saved one by one.");
+        JsonNode quotation = change.data();
+        if (quotation == null || !quotation.isObject()) throw ApiException.badRequest("A quotation must be an object.");
+        if (!recordId.equals(Sql.text(quotation, "id"))) {
+            throw ApiException.badRequest("The quotation id does not match its content.");
+        }
+        String customerId = Sql.text(quotation, "customerId");
+        if (customerId == null || customerId.isBlank()) {
+            throw ApiException.validation("customerId", "A customer is required for the quotation.");
+        }
+        JsonNode customer = storedData(connection, tenant, RecordGuards.CUSTOMERS, customerId);
+        if (customer == null) throw ApiException.validation("customerId", "The selected customer is unavailable.");
+        JsonNode items = quotation.get("items");
+        if (items != null && items.isArray()) {
+            for (JsonNode line : items) {
+                String productId = Sql.text(line, "productId");
+                if (productId == null || productId.isBlank()) {
+                    throw ApiException.validation("productId", "A product is required for every quotation line.");
+                }
+                JsonNode product = storedData(connection, tenant, RecordGuards.PRODUCTS, productId);
+                if (product == null) throw ApiException.validation("productId", "The selected product is unavailable.");
+                String uomId = Sql.text(product, "uomId");
+                JsonNode uom = uomId == null ? null : storedData(connection, tenant, RecordGuards.UOMS, uomId);
+                if (uom == null) throw ApiException.validation("quantity", "The product's unit of measure is unavailable.");
+                RecordGuards.checkSalesLineQuantity(product, uom, line);
+            }
+        }
+        RecordGuards.checkQuotationCreditLimit(customer, quotation);
     }
 
     /** Role changes: no permissions beyond the caller's own, no self-promotion, roles in use stay, an administrator remains. */
