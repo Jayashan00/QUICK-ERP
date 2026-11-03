@@ -103,6 +103,7 @@ export function CustomerFormModal({ isOpen, onClose, onSubmit, customer }: Custo
     handleSubmit,
     register,
     reset,
+    setError,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<CustomerFormValues>({
@@ -121,7 +122,13 @@ export function CustomerFormModal({ isOpen, onClose, onSubmit, customer }: Custo
       appToast.success(isEditing ? 'Customer updated successfully.' : 'Customer created successfully.');
       onClose();
     } catch (error) {
-      appToast.error(getErrorMessage(error, 'Unable to save the customer. Please try again.'));
+      const message = getErrorMessage(error, 'Unable to save the customer. Please try again.');
+      if (message.toLowerCase().includes('email address already exists')) {
+        setError('email', { type: 'validate', message });
+      } else if (message.toLowerCase().includes('phone number already exists')) {
+        setError('phone', { type: 'validate', message });
+      }
+      appToast.error(message);
     }
   };
 
