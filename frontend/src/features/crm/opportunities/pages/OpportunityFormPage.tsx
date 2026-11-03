@@ -18,7 +18,7 @@ import { Select } from '@/shared/components/forms/Select';
 import { Textarea } from '@/shared/components/forms/Textarea';
 import { TextInput } from '@/shared/components/forms/TextInput';
 import { LoadingSpinner } from '@/shared/components/feedback/LoadingSpinner';
-import { getErrorMessage } from '@/shared/validation';
+import { getErrorMessage, getLocalDateInputValue } from '@/shared/validation';
 import { OPPORTUNITY_STAGES, OPPORTUNITY_STATUSES } from '@/features/crm/opportunities/types/opportunity';
 import { useUserOptions } from '@/features/settings/users/hooks/useUserOptions';
 import { mockCustomers } from '@/features/customers/mocks';
@@ -334,6 +334,7 @@ export function OpportunityFormPage() {
                     <DatePicker
                       value={field.value ?? ''}
                       onChange={field.onChange}
+                      min={getLocalDateInputValue()}
                     />
                   )}
                 />

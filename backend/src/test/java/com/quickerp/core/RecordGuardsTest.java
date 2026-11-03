@@ -22,6 +22,39 @@ class RecordGuardsTest {
     }
 
     @Test
+    void customerContactValuesUseCanonicalComparisonForms() {
+        assertEquals("billing@example.com", RecordGuards.normalizeCustomerEmail("  Billing@Example.COM "));
+        assertEquals("94771234567", RecordGuards.normalizeCustomerPhone("+94 (77) 123-4567"));
+    }
+
+    @Test
+    void quotationTotalCannotExceedCustomerCreditLimit() throws Exception {
+        JsonNode customer = mapper.readTree("{\"creditLimit\":1000,\"currency\":\"USD\"}");
+        JsonNode withinLimit = mapper.readTree("{\"totalAmount\":1000,\"currency\":\"USD\"}");
+        JsonNode overLimit = mapper.readTree("{\"totalAmount\":1000.01,\"currency\":\"USD\"}");
+        JsonNode unlimited = mapper.readTree("{\"currency\":\"USD\"}");
+
+        assertDoesNotThrow(() -> RecordGuards.checkQuotationCreditLimit(customer, withinLimit));
+        assertDoesNotThrow(() -> RecordGuards.checkQuotationCreditLimit(unlimited, overLimit));
+        ApiException error = assertThrows(ApiException.class,
+                () -> RecordGuards.checkQuotationCreditLimit(customer, overLimit));
+        assertEquals("Quotation total exceeds the customer's credit limit of USD 1000.", error.getMessage());
+    }
+
+    @Test
+    void countUnitsRequireWholeNumberSalesQuantities() throws Exception {
+        JsonNode product = mapper.readTree("{\"name\":\"Adjustable Laptop Stand\"}");
+        JsonNode unit = mapper.readTree("{\"name\":\"Unit\",\"decimalPlaces\":0}");
+        JsonNode kilogram = mapper.readTree("{\"name\":\"Kilogram\",\"decimalPlaces\":3}");
+
+        assertDoesNotThrow(() -> RecordGuards.checkSalesLineQuantity(product, unit, mapper.readTree("{\"quantity\":2}")));
+        assertDoesNotThrow(() -> RecordGuards.checkSalesLineQuantity(product, kilogram, mapper.readTree("{\"quantity\":1.125}")));
+        ApiException error = assertThrows(ApiException.class,
+                () -> RecordGuards.checkSalesLineQuantity(product, unit, mapper.readTree("{\"quantity\":1.5}")));
+        assertEquals("Adjustable Laptop Stand uses Unit and requires a whole-number quantity.", error.getMessage());
+    }
+
+    @Test
     void workflowTransitions() throws Exception {
         assertDoesNotThrow(() -> RecordGuards.checkJournal(clerk, null, journal("draft", 10, 10)));
         assertDoesNotThrow(() -> RecordGuards.checkJournal(clerk, journal("draft", 10, 10), journal("pending_approval", 10, 10)));

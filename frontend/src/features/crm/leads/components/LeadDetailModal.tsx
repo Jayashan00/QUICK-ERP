@@ -6,6 +6,9 @@ import { StatusBadge } from "@/shared/components/common/StatusBadge";
 import { ConfirmDialog } from "@/shared/components/feedback/ConfirmDialog";
 import { getErrorMessage } from "@/shared/utils/errors";
 import { appToast } from "@/shared/utils/toast";
+import { useBranch } from "@/core/branch/branch-context";
+import { useTenant } from "@/core/tenant/tenant-context";
+import { customerService } from "@/features/customers/services/customerService";
 import { useUserOptions } from '@/features/settings/users/hooks/useUserOptions';
 
 import type { Lead } from '@/features/crm/leads/types/lead';
@@ -45,7 +48,7 @@ function formatSource(
 
 function formatValue(value?: number) {
   if (value === undefined) {
-    return "â€”";
+    return "—";
   }
 
   return new Intl.NumberFormat(
@@ -59,7 +62,7 @@ function formatValue(value?: number) {
 
 function formatDate(value?: string) {
   if (!value) {
-    return "â€”";
+    return "—";
   }
 
   const date = new Date(value);
@@ -92,7 +95,7 @@ function DetailItem({
       </div>
 
       <div className="text-sm font-medium text-slate-900">
-        {value || "â€”"}
+        {value || "—"}
       </div>
     </div>
   );
@@ -110,6 +113,8 @@ export function LeadDetailModal({
   canCreateOpportunity = false,
   onCreateOpportunity,
 }: LeadDetailModalProps) {
+  const { tenantId } = useTenant();
+  const { branchId } = useBranch();
   const { users } = useUserOptions({ includeInactive: true });
   const getAssignedUserName = (assignedTo?: string) => users.find(user => user.id === assignedTo)?.name || assignedTo || "Unassigned";
   const [
@@ -144,6 +149,14 @@ export function LeadDetailModal({
   if (!lead) {
     return null;
   }
+
+  const convertedCustomer =
+    lead.convertedCustomerId && tenantId && branchId
+      ? customerService.getCachedCustomerById(
+          { tenantId, branchId },
+          lead.convertedCustomerId,
+        )
+      : null;
 
   const handleClose = () => {
     setIsConversionOpen(false);
@@ -304,9 +317,7 @@ export function LeadDetailModal({
               </div>
 
               <div className="mt-1 text-xs text-emerald-800">
-                Customer ID:{" "}
-                {lead.convertedCustomerId ||
-                  "Customer created"}
+                Customer: {convertedCustomer?.name || "Customer created"}
               </div>
 
               {lead.convertedAt && (

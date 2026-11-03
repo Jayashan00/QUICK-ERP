@@ -36,6 +36,7 @@ export const STATUS_CONFIG: Record<string, StatusStyleConfig> = {
   processing: { label: "Processing", variant: "info" },
   shipped: { label: "Shipped", variant: "info" },
   delivered: { label: "Delivered", variant: "success" },
+  returned: { label: "Returned", variant: "warning" },
   sent: { label: "Sent", variant: "info" },
   responses_received: { label: "Responses Received", variant: "info" },
   preferred: { label: "Preferred", variant: "success" },

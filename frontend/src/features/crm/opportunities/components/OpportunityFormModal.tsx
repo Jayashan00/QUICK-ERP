@@ -13,7 +13,7 @@ import { NumberInput } from '@/shared/components/forms/NumberInput';
 import { Select } from '@/shared/components/forms/Select';
 import { Textarea } from '@/shared/components/forms/Textarea';
 import { TextInput } from '@/shared/components/forms/TextInput';
-import { getErrorMessage } from '@/shared/validation';
+import { getErrorMessage, getLocalDateInputValue } from '@/shared/validation';
 import type { Opportunity } from '@/features/crm/opportunities/types/opportunity';
 import { OPPORTUNITY_STAGES, OPPORTUNITY_STATUSES } from '@/features/crm/opportunities/types/opportunity';
 import { useUserOptions } from '@/features/settings/users/hooks/useUserOptions';
@@ -268,7 +268,7 @@ export function OpportunityFormModal({
               />
             </FormField>
             <FormField label="Expected Close Date" htmlFor="opp-close-date" error={errors.expectedCloseDate?.message}>
-              <DatePicker id="opp-close-date" error={Boolean(errors.expectedCloseDate)} {...register('expectedCloseDate')} />
+              <DatePicker id="opp-close-date" min={getLocalDateInputValue()} error={Boolean(errors.expectedCloseDate)} {...register('expectedCloseDate')} />
             </FormField>
           </div>
         </FormSection>

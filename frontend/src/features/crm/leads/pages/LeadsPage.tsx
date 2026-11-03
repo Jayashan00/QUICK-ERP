@@ -3,11 +3,13 @@ import { leadService } from '../services/leadService';
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  CircleCheck,
   Download,
   Plus,
   Target,
   UserCheck,
   UserPlus,
+  UserX,
   Users,
 } from "lucide-react";
 
@@ -33,6 +35,7 @@ import type { LeadFormValues } from "../schemas/leadSchema";
 import { controlBase } from "@/shared/components/forms/controlStyles";
 import { cn } from "@/shared/utils/cn";
 import { getErrorMessage } from "@/shared/utils/errors";
+import { downloadCsv, type ExportColumn } from "@/shared/utils/fileExport";
 import { appToast } from "@/shared/utils/toast";
 import { Can } from "@/core/permissions/components";
 import { PERMISSIONS } from "@/core/permissions";
@@ -58,6 +61,25 @@ function formatValue(value?: number) {
   }).format(value);
 }
 
+const leadExportColumns: ExportColumn<Lead>[] = [
+  { header: "Code", value: (lead) => lead.code },
+  { header: "First Name", value: (lead) => lead.firstName },
+  { header: "Last Name", value: (lead) => lead.lastName },
+  { header: "Company", value: (lead) => lead.company },
+  { header: "Email", value: (lead) => lead.email },
+  { header: "Phone", value: (lead) => lead.phone },
+  { header: "Source", value: (lead) => formatSource(lead.source) },
+  { header: "Status", value: (lead) => lead.status.replace(/_/g, " ") },
+  { header: "Estimated Value", value: (lead) => lead.estimatedValue },
+  { header: "Next Follow-up", value: (lead) => lead.nextFollowUpAt },
+  { header: "Lost Reason", value: (lead) => lead.lostReason?.replace(/_/g, " ") },
+  { header: "Lost Note", value: (lead) => lead.lostNote },
+  { header: "Notes", value: (lead) => lead.notes },
+  { header: "Converted At", value: (lead) => lead.convertedAt },
+  { header: "Created At", value: (lead) => lead.createdAt },
+  { header: "Updated At", value: (lead) => lead.updatedAt },
+];
+
 export function LeadsPage() {
   const searchRecord = useSearchRecord('leads', 'leads.view', leadService.getById);
   const navigate = useNavigate();
@@ -70,6 +92,7 @@ export function LeadsPage() {
   const {
     leads,
     total,
+    summary,
     isLoading,
     isError,
     error,
@@ -94,7 +117,9 @@ export function LeadsPage() {
     updateLead,
     deleteLead,
     convertLead,
+    exportLeads,
     isDeleting,
+    isExporting,
   } = useLeads(searchRecord.initialSearch);
 
   const [
@@ -122,19 +147,9 @@ export function LeadsPage() {
     setDeletingId,
   ] = useState<string | null>(null);
 
-  const newCount = leads.filter(
-    (lead) => lead.status === "new",
-  ).length;
-
-  const contactedCount = leads.filter(
-    (lead) =>
-      lead.status === "contacted",
-  ).length;
-
-  const qualifiedCount = leads.filter(
-    (lead) =>
-      lead.status === "qualified",
-  ).length;
+  const closedCount =
+    (summary?.byStatus.unqualified ?? 0) +
+    (summary?.byStatus.lost ?? 0);
 
   const columns: Column<Lead>[] = [
     {
@@ -229,6 +244,20 @@ export function LeadsPage() {
       }
     };
 
+  const handleExport = async () => {
+    try {
+      const rows = await exportLeads();
+      downloadCsv(
+        `leads-${new Date().toISOString().slice(0, 10)}.csv`,
+        leadExportColumns,
+        rows,
+      );
+      appToast.success(`Exported ${rows.length} lead record(s).`);
+    } catch (error) {
+      appToast.error(getErrorMessage(error, "Unable to export leads. Please try again."));
+    }
+  };
+
   const openCreateModal = () => {
     setEditingLead(null);
     setIsFormOpen(true);
@@ -245,7 +274,8 @@ export function LeadsPage() {
               <Button
                 variant="secondary"
                 leftIcon={<Download size={16} />}
-                onClick={() => appToast.info("Lead export will be available when the export service is connected.")}
+                isLoading={isExporting}
+                onClick={() => void handleExport()}
               >
                 Export
               </Button>
@@ -260,33 +290,47 @@ export function LeadsPage() {
         ) : undefined}
       />
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <StatCard
           title="Total Leads"
-          value={total}
+          value={summary?.total ?? 0}
           icon={<Users size={20} />}
           description="All prospective customers"
         />
 
         <StatCard
           title="New"
-          value={newCount}
+          value={summary?.byStatus.new ?? 0}
           icon={<UserPlus size={20} />}
           description="Awaiting first contact"
         />
 
         <StatCard
           title="Contacted"
-          value={contactedCount}
+          value={summary?.byStatus.contacted ?? 0}
           icon={<Target size={20} />}
           description="Follow-up in progress"
         />
 
         <StatCard
           title="Qualified"
-          value={qualifiedCount}
+          value={summary?.byStatus.qualified ?? 0}
           icon={<UserCheck size={20} />}
           description="Ready for sales process"
+        />
+
+        <StatCard
+          title="Converted"
+          value={summary?.byStatus.converted ?? 0}
+          icon={<CircleCheck size={20} />}
+          description="Converted into customers"
+        />
+
+        <StatCard
+          title="Closed"
+          value={closedCount}
+          icon={<UserX size={20} />}
+          description="Unqualified or lost leads"
         />
       </div>
 

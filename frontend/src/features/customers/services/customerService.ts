@@ -4,6 +4,7 @@ export type { PaginatedResult } from '@/shared/types/common';
 import { mockCustomers } from '@/features/customers/mocks/customers';
 import { belongsToScope, type TenantBranchScope } from '@/core/tenant/dataScope';
 import { registerList } from '@/core/persistence/stateRegistry';
+import { leadService } from '@/features/crm/leads/services/leadService';
 
 let customersStore: Customer[] = [...mockCustomers];
 
@@ -19,6 +20,28 @@ export type CreateCustomerInput = Omit<
   Customer,
   'id' | 'createdAt' | 'updatedAt' | 'tenantId' | 'branchId'
 >;
+
+const normalizeEmail = (email: string | undefined) => email?.trim().toLowerCase() ?? '';
+const normalizePhone = (phone: string | undefined) => phone?.replace(/\D/g, '') ?? '';
+
+function assertUniqueContact(
+  tenantId: string,
+  customer: Pick<Customer, 'email' | 'phone'>,
+  excludedCustomerId?: string,
+) {
+  const email = normalizeEmail(customer.email);
+  const phone = normalizePhone(customer.phone);
+  const tenantCustomers = customersStore.filter(
+    (item) => item.tenantId === tenantId && item.id !== excludedCustomerId,
+  );
+
+  if (email && tenantCustomers.some((item) => normalizeEmail(item.email) === email)) {
+    throw new Error('A customer with this email address already exists.');
+  }
+  if (phone && tenantCustomers.some((item) => normalizePhone(item.phone) === phone)) {
+    throw new Error('A customer with this phone number already exists.');
+  }
+}
 
 export const customerService = {
   getCachedCustomerById(scope: TenantBranchScope, id: string): Customer | null {
@@ -66,6 +89,7 @@ export const customerService = {
 
   async createCustomer(scope: TenantBranchScope, data: CreateCustomerInput): Promise<Customer> {
     await new Promise((resolve) => setTimeout(resolve, 300));
+    assertUniqueContact(scope.tenantId, data);
     const now = new Date().toISOString();
     const newCustomer: Customer = {
       ...data,
@@ -75,6 +99,7 @@ export const customerService = {
       createdAt: now,
       updatedAt: now,
     };
+    if (newCustomer.status === 'lead') await leadService.syncFromCustomer(newCustomer);
     customersStore = [newCustomer, ...customersStore];
     return newCustomer;
   },
@@ -97,6 +122,8 @@ export const customerService = {
       branchId: customersStore[index].branchId,
       updatedAt: new Date().toISOString(),
     };
+    assertUniqueContact(scope.tenantId, updated, id);
+    if (updated.status === 'lead') await leadService.syncFromCustomer(updated);
     customersStore[index] = updated;
     return updated;
   },
