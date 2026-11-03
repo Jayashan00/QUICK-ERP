@@ -39,6 +39,7 @@ export function LoginPage() {
 
   return (
     <div>
+      <Link to="/" className="mb-6 inline-flex min-h-11 items-center rounded-md text-sm font-medium text-blue-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600">Back to home</Link>
       <h1 className="text-[1.75rem] font-bold tracking-tight text-slate-900">Sign in</h1>
       <p className="mt-1.5 text-[15px] text-slate-500">Use the email address your company registered for you.</p>
 
