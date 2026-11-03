@@ -10,6 +10,9 @@ export const leadKeys = {
   list: (scope: TenantBranchScope, params: LeadListParams) =>
     [...leadKeys.lists(), scope, params] as const,
 
+  summary: (scope: TenantBranchScope) =>
+    [...leadKeys.lists(), scope, "summary"] as const,
+
   details: () =>
     [...leadKeys.all, "detail"] as const,
 

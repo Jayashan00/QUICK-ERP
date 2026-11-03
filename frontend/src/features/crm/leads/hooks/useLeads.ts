@@ -49,6 +49,12 @@ export function useLeads(initialSearch = "") {
     enabled: Boolean(tenantId && branchId),
   });
 
+  const summaryQuery = useQuery({
+    queryKey: leadKeys.summary(scope),
+    queryFn: () => leadService.getSummary(scope),
+    enabled: Boolean(tenantId && branchId),
+  });
+
   const createMutation = useMutation({
     mutationFn: (
       data: LeadFormValues,
@@ -115,6 +121,17 @@ export function useLeads(initialSearch = "") {
     },
   });
 
+  const exportMutation = useMutation({
+    mutationFn: () =>
+      leadService.getAll(scope, {
+        search,
+        status,
+        source,
+        page: 1,
+        pageSize: Number.MAX_SAFE_INTEGER,
+      }),
+  });
+
   const updateSearch = (value: string) => {
     setSearch(value);
     setPage(1);
@@ -144,11 +161,14 @@ export function useLeads(initialSearch = "") {
   return {
     leads: leadsQuery.data?.data ?? [],
     total: leadsQuery.data?.total ?? 0,
+    summary: summaryQuery.data,
 
-    isLoading: leadsQuery.isLoading,
-    isError: leadsQuery.isError,
-    error: leadsQuery.error,
-    refetch: leadsQuery.refetch,
+    isLoading: leadsQuery.isLoading || summaryQuery.isLoading,
+    isError: leadsQuery.isError || summaryQuery.isError,
+    error: leadsQuery.error ?? summaryQuery.error,
+    refetch: async () => {
+      await Promise.all([leadsQuery.refetch(), summaryQuery.refetch()]);
+    },
 
     search,
     setSearch: updateSearch,
@@ -190,6 +210,8 @@ export function useLeads(initialSearch = "") {
         data,
       }),
 
+    exportLeads: async () => (await exportMutation.mutateAsync()).data,
+
     isCreating:
       createMutation.isPending,
 
@@ -201,5 +223,8 @@ export function useLeads(initialSearch = "") {
 
     isConverting:
       convertMutation.isPending,
+
+    isExporting:
+      exportMutation.isPending,
   };
 }

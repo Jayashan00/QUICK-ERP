@@ -56,6 +56,8 @@ export interface Lead
 
   notes?: string;
 
+  sourceCustomerId?: EntityId;
+
   lostReason?: LeadLostReason;
   lostNote?: string;
 

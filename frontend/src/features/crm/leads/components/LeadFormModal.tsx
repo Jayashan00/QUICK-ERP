@@ -11,6 +11,7 @@ import { FormSection } from '@/shared/components/forms/FormSection';
 import { Select } from '@/shared/components/forms/Select';
 import { Textarea } from '@/shared/components/forms/Textarea';
 import { TextInput } from '@/shared/components/forms/TextInput';
+import { getLocalDateInputValue } from '@/shared/validation';
 import { getErrorMessage } from '@/shared/utils/errors';
 import { appToast } from '@/shared/utils/toast';
 import type { Lead } from '@/features/crm/leads/types/lead';
@@ -188,7 +189,7 @@ export function LeadFormModal({ isOpen, onClose, onSubmit, lead }: LeadFormModal
               <Select id="lead-assigned-to" placeholder="Select salesperson" error={Boolean(errors.assignedTo)} aria-describedby={errors.assignedTo ? 'lead-assigned-to-error' : undefined} options={assignedUserOptions} {...register('assignedTo')} />
             </FormField>
             <FormField label="Next Follow-up" htmlFor="lead-next-follow-up" error={errors.nextFollowUpAt?.message}>
-              <DatePicker id="lead-next-follow-up" error={Boolean(errors.nextFollowUpAt)} aria-describedby={errors.nextFollowUpAt ? 'lead-next-follow-up-error' : undefined} {...register('nextFollowUpAt')} />
+              <DatePicker id="lead-next-follow-up" min={getLocalDateInputValue()} error={Boolean(errors.nextFollowUpAt)} aria-describedby={errors.nextFollowUpAt ? 'lead-next-follow-up-error' : undefined} {...register('nextFollowUpAt')} />
             </FormField>
             <FormField label="Estimated Value" htmlFor="lead-estimated-value" error={errors.estimatedValue?.message}>
               <Controller name="estimatedValue" control={control} render={({ field: { value, onChange, ...field } }) => (
