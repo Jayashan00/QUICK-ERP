@@ -363,6 +363,46 @@ class StateStoreIntegrationTest {
         return new StateStore.BatchRequest("it", List.of(new StateStore.Change(collection, recordId, data, false, baseVersion)), List.of());
     }
 
+    // ---------------------------------------------- quotations and companies
+
+    /** A quotation's status can still change after the customer's credit limit was lowered; new totals are checked. */
+    @Test
+    void quotationStatusChangesStayPossibleAfterTheCreditLimitIsLowered() throws Exception {
+        Principal sales = login("sales@quickerp.test");
+        ObjectNode customer = (ObjectNode) json("{\"id\":\"cust-credit\",\"tenantId\":\"tenant-001\",\"name\":\"Credit Test\",\"creditLimit\":1000}");
+        assertEquals(List.of(), store.applyBatch(sales, batch("customers.records", "cust-credit", customer)).rejected());
+        ObjectNode quotation = (ObjectNode) json("{\"id\":\"quo-credit\",\"tenantId\":\"tenant-001\",\"customerId\":\"cust-credit\",\"status\":\"draft\",\"totalAmount\":500,"
+                + "\"items\":[{\"productId\":\"PRODUCT\",\"quantity\":1}]}".replace("PRODUCT", "prod-001"));
+        assertEquals(List.of(), store.applyBatch(sales, batch("sales.quotations", "quo-credit", quotation)).rejected());
+
+        // The credit limit is lowered below the quotation total.
+        assertEquals(List.of(), store.applyBatch(sales, batch("customers.records", "cust-credit", customer.deepCopy().put("creditLimit", 100))).rejected());
+        // Changing only the status still works.
+        assertEquals(List.of(), store.applyBatch(sales, batch("sales.quotations", "quo-credit", quotation.deepCopy().put("status", "rejected"))).rejected());
+        // A new total above the limit is refused.
+        StateStore.BatchResult raised = store.applyBatch(sales, batch("sales.quotations", "quo-credit", quotation.deepCopy().put("status", "rejected").put("totalAmount", 600)));
+        assertEquals(1, raised.rejected().size());
+        assertTrue(raised.rejected().get(0).message().contains("credit limit"));
+    }
+
+    /** Modules switched on or off in the Super Admin console reach the company's users at sign-in. */
+    @Test
+    void superAdminModuleSettingsReachTheCompanyAtSignIn() throws Exception {
+        Principal superAdmin = login("superadmin@quickerp.test");
+        JsonNode foundation = json("{\"tenants\":[{\"id\":\"tenant-001\",\"status\":\"active\","
+                + "\"enabledModules\":[\"customers\",\"products\",\"sales\",\"settings\",\"Bad Name!\"],\"limits\":{\"maxUsers\":20,\"maxBranches\":3,\"hack\":\"x\"}}]}");
+        assertEquals(List.of(), store.applyBatch(superAdmin, new StateStore.BatchRequest("it",
+                List.of(change("platform.foundation", StateStore.VALUE_RECORD, foundation)), List.of())).rejected());
+
+        AuthService.LoginResult signIn = auth.login("admin@quickerp.test", PASSWORD, "10.9.9.9");
+        JsonNode entitlements = signIn.tenant().path("entitlements");
+        assertEquals("[\"customers\",\"products\",\"sales\",\"settings\"]", entitlements.path("enabledModules").toString());
+        assertEquals(20, entitlements.path("limits").path("maxUsers").asInt());
+        assertFalse(entitlements.path("limits").has("hack"));
+        // Company users never receive the platform configuration itself.
+        assertTrue(store.load(auth.authenticate(signIn.token())).records().stream().noneMatch(r -> r.collection().equals("platform.foundation")));
+    }
+
     @Test
     void cashierCannotGrantThemselvesPermissions() {
         Principal cashier = login("cashier@quickerp.test");

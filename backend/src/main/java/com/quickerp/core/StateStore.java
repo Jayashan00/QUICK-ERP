@@ -755,6 +755,14 @@ public final class StateStore {
         if (!recordId.equals(Sql.text(quotation, "id"))) {
             throw ApiException.badRequest("The quotation id does not match its content.");
         }
+        // Only a change to the customer, lines or total is checked again. Status changes (sent, accepted,
+        // rejected, expired, converted) must stay possible even if a product or the customer's limit changed later.
+        JsonNode stored = storedData(connection, tenant, RecordGuards.QUOTATIONS, recordId);
+        if (stored != null && Objects.equals(stored.get("customerId"), quotation.get("customerId"))
+                && Objects.equals(stored.get("items"), quotation.get("items"))
+                && Objects.equals(stored.get("totalAmount"), quotation.get("totalAmount"))) {
+            return;
+        }
         String customerId = Sql.text(quotation, "customerId");
         if (customerId == null || customerId.isBlank()) {
             throw ApiException.validation("customerId", "A customer is required for the quotation.");
@@ -1058,7 +1066,15 @@ public final class StateStore {
         }
     }
 
-    /** Applies tenant suspensions and reactivations made in the Super Admin console. */
+    private static final Pattern MODULE_NAME = Pattern.compile("^[a-z][a-z_]{0,39}$");
+    private static final List<String> LIMIT_FIELDS = List.of("maxUsers", "maxBranches", "maxWarehouses", "maxStorageGb");
+
+    /**
+     * Applies changes made in the Super Admin console to the tenants themselves: suspensions and
+     * reactivations, and the modules and limits each tenant may use. The modules and limits are kept in
+     * the tenant's profile, which is sent to the tenant's users when they sign in, so the platform
+     * configuration itself stays private to the Super Admin.
+     */
     private void syncTenantStatuses(Connection connection, JsonNode foundation) throws SQLException {
         JsonNode tenants = foundation == null ? null : foundation.get("tenants");
         if (tenants == null || !tenants.isArray()) return;
@@ -1066,9 +1082,39 @@ public final class StateStore {
             String id = Sql.text(tenant, "id");
             String status = Sql.text(tenant, "status");
             if (id == null || Principal.PLATFORM_TENANT.equals(id)) continue;
-            if (!"active".equals(status) && !"suspended".equals(status)) continue;
-            Sql.update(connection, "UPDATE tenants SET status = ?, profile = jsonb_set(profile, '{status}', to_jsonb(CAST(? AS text)), true), "
-                    + "updated_at = now() WHERE id = ? AND status <> ?", status, status, id, status);
+            if ("active".equals(status) || "suspended".equals(status)) {
+                Sql.update(connection, "UPDATE tenants SET status = ?, profile = jsonb_set(profile, '{status}', to_jsonb(CAST(? AS text)), true), "
+                        + "updated_at = now() WHERE id = ? AND status <> ?", status, status, id, status);
+            }
+            ObjectNode entitlements = entitlementsOf(tenant);
+            if (entitlements != null) {
+                Sql.update(connection, "UPDATE tenants SET profile = jsonb_set(profile, '{entitlements}', CAST(? AS jsonb), true), updated_at = now() "
+                        + "WHERE id = ? AND profile -> 'entitlements' IS DISTINCT FROM CAST(? AS jsonb)",
+                        Sql.writeJson(mapper, entitlements), id, Sql.writeJson(mapper, entitlements));
+            }
         }
+    }
+
+    /** The modules and limits of one tenant in the platform configuration, or null when none are given. */
+    private ObjectNode entitlementsOf(JsonNode tenant) {
+        JsonNode modules = tenant.get("enabledModules");
+        if (modules == null || !modules.isArray()) return null;
+        ObjectNode entitlements = mapper.createObjectNode();
+        var enabled = entitlements.putArray("enabledModules");
+        Set<String> seen = new LinkedHashSet<>();
+        for (JsonNode module : modules) {
+            if (module.isTextual() && MODULE_NAME.matcher(module.asText()).matches() && seen.size() < 40 && seen.add(module.asText())) {
+                enabled.add(module.asText());
+            }
+        }
+        JsonNode limits = tenant.get("limits");
+        if (limits != null && limits.isObject()) {
+            ObjectNode cleanLimits = entitlements.putObject("limits");
+            for (String field : LIMIT_FIELDS) {
+                JsonNode value = limits.get(field);
+                if (value != null && value.isNumber() && value.asDouble() >= 0 && value.asDouble() <= 1_000_000) cleanLimits.set(field, value);
+            }
+        }
+        return entitlements;
     }
 }
