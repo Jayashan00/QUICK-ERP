@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import {
   nonNegativeNumber,
-  optionalDate,
+  optionalTodayOrFutureDate,
   optionalString,
   requiredString,
 } from '@/shared/validation';
@@ -23,7 +23,7 @@ export const opportunitySchema = z.object({
   status: z.enum(['open', 'won', 'lost', 'closed'], {
     message: 'Select a valid status.',
   }),
-  expectedCloseDate: optionalDate('Expected close date'),
+  expectedCloseDate: optionalTodayOrFutureDate('Expected close date'),
   expectedValue: nonNegativeNumber('Expected value'),
   probability: nonNegativeNumber('Probability')
     .max(100, 'Probability cannot exceed 100%.'),
