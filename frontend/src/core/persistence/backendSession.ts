@@ -14,6 +14,7 @@ import { mockUsers } from '@/core/auth/mocks/users';
 import { mockTenants } from '@/core/tenant/mocks/tenants';
 import type { User } from '@/core/auth/types/user';
 import type { Tenant } from '@/core/tenant/types/tenant';
+import { tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 import { toUrlSlug } from '@/shared/utils/slug';
 
 const KEYS = APP_CONSTANTS.STORAGE_KEYS;
@@ -84,6 +85,7 @@ export function upsertIdentity(user: User, tenant: Tenant | null): void {
   else mockUsers.push(normalizedUser);
   if (tenant) {
     const normalizedTenant = { ...tenant, slug: tenant.slug || toUrlSlug(tenant.subdomain || tenant.name) };
+    if (tenant.entitlements) tenantEntitlementService.set(tenant.id, tenant.entitlements);
     const tenantIndex = mockTenants.findIndex((candidate) => candidate.id === tenant.id);
     if (tenantIndex >= 0) mockTenants[tenantIndex] = normalizedTenant;
     else mockTenants.push(normalizedTenant);

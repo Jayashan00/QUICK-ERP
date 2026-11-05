@@ -702,7 +702,7 @@ public final class StateStore {
         }
         if (PLATFORM_FOUNDATION.equals(change.collection()) && principal.superAdmin()
                 && VALUE_RECORD.equals(change.recordId()) && !change.isDelete()) {
-            syncTenantStatuses(connection, change.data());
+            syncTenantConfigurations(connection, change.data());
         }
     }
 
@@ -1058,17 +1058,21 @@ public final class StateStore {
         }
     }
 
-    /** Applies tenant suspensions and reactivations made in the Super Admin console. */
-    private void syncTenantStatuses(Connection connection, JsonNode foundation) throws SQLException {
+    /** Applies authoritative status, module and resource-limit configuration from the Super Admin console. */
+    private void syncTenantConfigurations(Connection connection, JsonNode foundation) throws SQLException {
         JsonNode tenants = foundation == null ? null : foundation.get("tenants");
-        if (tenants == null || !tenants.isArray()) return;
+        if (tenants == null || !tenants.isArray()) throw ApiException.badRequest("Platform tenant configuration is missing.");
         for (JsonNode tenant : tenants) {
             String id = Sql.text(tenant, "id");
             String status = Sql.text(tenant, "status");
             if (id == null || Principal.PLATFORM_TENANT.equals(id)) continue;
-            if (!"active".equals(status) && !"suspended".equals(status)) continue;
-            Sql.update(connection, "UPDATE tenants SET status = ?, profile = jsonb_set(profile, '{status}', to_jsonb(CAST(? AS text)), true), "
-                    + "updated_at = now() WHERE id = ? AND status <> ?", status, status, id, status);
+            if (!"active".equals(status) && !"suspended".equals(status)) {
+                throw ApiException.validation("status", "Tenant status must be active or suspended.");
+            }
+            ObjectNode entitlements = TenantEntitlementPolicy.validatedEntitlements(mapper, tenant);
+            Sql.update(connection, "UPDATE tenants SET status = ?, profile = jsonb_set(jsonb_set(profile, '{status}', "
+                            + "to_jsonb(CAST(? AS text)), true), '{entitlements}', CAST(? AS jsonb), true), updated_at = now() WHERE id = ?",
+                    status, status, Sql.writeJson(mapper, entitlements), id);
         }
     }
 }

@@ -28,6 +28,31 @@
           "projects",
           "pos"
         ],
+        "entitlements": {
+          "enabledModules": [
+            "hr", "inventory", "stock", "crm", "customers", "suppliers", "products", "sales",
+            "purchases", "finance", "projects", "pos", "web_store", "reports", "documents",
+            "notifications", "settings"
+          ],
+          "limits": {
+            "maxUsers": 25,
+            "maxBranches": 5,
+            "maxWarehouses": 10,
+            "maxStorageGb": 50
+          },
+          "usage": {
+            "currentUsers": 9,
+            "currentBranches": 2,
+            "currentWarehouses": 2,
+            "storageGb": 18.4
+          },
+          "admin": {
+            "name": "John Doe",
+            "email": "admin@acme.test",
+            "status": "active",
+            "lastActiveAt": "2026-10-29T08:30:00Z"
+          }
+        },
         "createdAt": "2024-01-01T00:00:00Z",
         "updatedAt": "2024-06-01T00:00:00Z"
       }
