@@ -1,3 +1,4 @@
+import vyroWordmark from '@/assets/vyro-wordmark.webp';
 import { Outlet, Navigate } from 'react-router-dom';
 import { useAuth } from '@/core/auth/auth-context';
 
@@ -61,16 +62,13 @@ export function AuthLayout() {
   return (
     <div className="grid min-h-screen grid-rows-[auto_1fr] bg-white lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:grid-rows-1">
       {/* Brand panel: a slim band on phones, a full panel on larger screens. */}
-      <aside className="relative overflow-hidden bg-[#12306e] px-6 py-6 text-white sm:px-10 lg:flex lg:flex-col lg:justify-between lg:px-14 lg:py-12">
+      <aside className="relative overflow-hidden bg-[linear-gradient(130deg,#15102e,#322078_65%,#6037a3)] px-6 py-6 text-white sm:px-10 lg:flex lg:flex-col lg:justify-between lg:px-14 lg:py-12">
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 opacity-[0.07]"
           style={{ backgroundImage: 'linear-gradient(#ffffff 1px, transparent 1px)', backgroundSize: '100% 28px' }}
         />
-        <div className="relative flex items-center gap-3">
-          <span className="grid size-9 place-items-center rounded-lg bg-white text-[15px] font-black text-[#12306e]" aria-hidden="true">Q</span>
-          <span className="text-lg font-extrabold tracking-tight">Quick ERP</span>
-        </div>
+        <img src={vyroWordmark} alt="VYRO" width={801} height={238} className="relative h-auto w-44 rounded-lg" />
 
         <div className="relative hidden lg:block">
           <p className="max-w-md text-[2rem] font-bold leading-[1.15] tracking-tight">
@@ -84,7 +82,7 @@ export function AuthLayout() {
           </div>
         </div>
 
-        <p className="relative hidden text-xs text-blue-100/60 lg:block">&copy; {year} Quick ERP</p>
+        <p className="relative hidden text-xs text-blue-100/60 lg:block">&copy; {year} VYRO</p>
       </aside>
 
       {/* Form panel */}
@@ -92,7 +90,7 @@ export function AuthLayout() {
         <div className="mx-auto w-full max-w-[400px]">
           <Outlet />
         </div>
-        <p className="mx-auto mt-10 w-full max-w-[400px] text-xs text-slate-400 lg:hidden">&copy; {year} Quick ERP</p>
+        <p className="mx-auto mt-10 w-full max-w-[400px] text-xs text-slate-400 lg:hidden">&copy; {year} VYRO</p>
       </main>
     </div>
   );

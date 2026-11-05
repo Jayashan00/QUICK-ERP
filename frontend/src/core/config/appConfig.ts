@@ -13,7 +13,7 @@ export interface AppConfig {
 export const appConfig: AppConfig = {
   name: env.appName,
   version: '1.0.0-alpha',
-  companyName: 'Quick ERP Systems Inc.',
+  companyName: 'VYRO Systems Inc.',
   supportEmail: 'support@quickerp.internal',
   documentationUrl: 'https://docs.quickerp.internal',
   enableMultiBranch: true,

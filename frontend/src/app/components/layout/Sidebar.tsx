@@ -1,3 +1,4 @@
+import vyroIcon from '@/assets/vyro-icon.png';
 import { ChevronsLeft, ChevronsRight, X } from 'lucide-react';
 
 import type { NavigationSectionConfig } from '@/app/config/navigationConfig';
@@ -22,7 +23,7 @@ export function Sidebar({
   onToggleCollapsed,
   onCloseMobile,
 }: SidebarProps) {
-  const label = area === 'super-admin' ? 'Platform Admin' : 'Quick ERP';
+  const label = area === 'super-admin' ? 'Platform Admin' : 'VYRO';
 
   return (
     <>
@@ -36,9 +37,7 @@ export function Sidebar({
       >
         <div className="flex h-16 shrink-0 items-center border-b border-slate-200 px-3">
           <div className={cn('flex min-w-0 flex-1 items-center gap-3', collapsed && 'lg:hidden')}>
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white">
-              QE
-            </div>
+            <img src={vyroIcon} alt="" width={36} height={36} className="size-9 shrink-0" />
             <div className={cn('min-w-0', collapsed && 'lg:hidden')}>
               <div className="truncate text-sm font-bold text-slate-900">{label}</div>
               <div className="truncate text-[11px] font-medium text-slate-500">
@@ -63,7 +62,7 @@ export function Sidebar({
         <div className={cn('shrink-0 border-t border-slate-200 p-3', collapsed && 'lg:px-2')}>
           <div className={cn('rounded-lg bg-slate-50 px-3 py-2', collapsed && 'lg:px-2 lg:text-center')}>
             <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              {collapsed ? <span className="hidden lg:inline">v1</span> : 'Quick ERP'}
+              {collapsed ? <img src={vyroIcon} alt="VYRO" width={24} height={24} className="mx-auto hidden lg:block" /> : 'VYRO'}
             </div>
             {import.meta.env.DEV && <div className={cn('mt-0.5 text-xs text-slate-500', collapsed && 'lg:hidden')}>
               Mock development environment

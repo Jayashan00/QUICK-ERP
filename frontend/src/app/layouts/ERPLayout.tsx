@@ -46,7 +46,7 @@ export function ERPLayout() {
   }
   const requestedModule = moduleForPath(stripTenantPath(location.pathname));
   if (requestedModule && !currentTenant.entitlements.enabledModules.includes(requestedModule)) {
-    return <PermissionDenied message="This module is not enabled for your company. Contact your Quick ERP administrator." />;
+    return <PermissionDenied message="This module is not enabled for your company. Contact your VYRO administrator." />;
   }
 
   return (

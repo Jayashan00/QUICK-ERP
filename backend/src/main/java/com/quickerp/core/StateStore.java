@@ -755,6 +755,14 @@ public final class StateStore {
         if (!recordId.equals(Sql.text(quotation, "id"))) {
             throw ApiException.badRequest("The quotation id does not match its content.");
         }
+        // Only a change to the customer, lines or total is checked again. Status changes (sent, accepted,
+        // rejected, expired, converted) must stay possible even if a product or the customer's limit changed later.
+        JsonNode stored = storedData(connection, tenant, RecordGuards.QUOTATIONS, recordId);
+        if (stored != null && Objects.equals(stored.get("customerId"), quotation.get("customerId"))
+                && Objects.equals(stored.get("items"), quotation.get("items"))
+                && Objects.equals(stored.get("totalAmount"), quotation.get("totalAmount"))) {
+            return;
+        }
         String customerId = Sql.text(quotation, "customerId");
         if (customerId == null || customerId.isBlank()) {
             throw ApiException.validation("customerId", "A customer is required for the quotation.");
@@ -1074,5 +1082,6 @@ public final class StateStore {
                             + "to_jsonb(CAST(? AS text)), true), '{entitlements}', CAST(? AS jsonb), true), updated_at = now() WHERE id = ?",
                     status, status, Sql.writeJson(mapper, entitlements), id);
         }
+        return entitlements;
     }
 }

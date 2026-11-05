@@ -4,7 +4,7 @@ import { SummaryCard } from '@/shared/components/cards/SummaryCard';
 import { EmptyState } from '@/shared/components/feedback/EmptyState';
 import type { DashboardChartData } from '../types/dashboard';
 
-const colors = ['#2563eb', '#64748b', '#d97706', '#dc2626', '#0284c7'];
+const colors = ['#7045c2', '#64748b', '#d97706', '#dc2626', '#0284c7'];
 interface Props { title: string; subtitle: string; data: DashboardChartData[]; kind?: 'area' | 'bar' | 'donut'; currency?: string; action?: ReactNode; className?: string; emptyMessage?: string; primaryLabel?: string; secondaryLabel?: string; valueFormatter?: (value: number) => string }
 export function DashboardChartCard({ title, subtitle, data, kind = 'bar', currency, action, className, emptyMessage = 'No records available for this scope.', primaryLabel = currency ? 'Amount' : 'Records', secondaryLabel, valueFormatter }: Props) {
   const format = (value: number) => valueFormatter ? valueFormatter(value) : currency ? new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(value) : value.toLocaleString();
@@ -17,11 +17,11 @@ export function DashboardChartCard({ title, subtitle, data, kind = 'bar', curren
           {kind === 'area' ? <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} accessibilityLayer>
             <XAxis dataKey="label" axisLine={false} tickLine={false} minTickGap={36} tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={value => /^\d{4}-/.test(String(value)) ? new Intl.DateTimeFormat(undefined, { month: 'short', ...(String(value).length > 7 ? { day: 'numeric' as const } : { year: '2-digit' as const }), timeZone: 'UTC' }).format(new Date(`${value}${String(value).length === 7 ? '-01' : ''}T00:00:00Z`)) : String(value)} />
             <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={axis} width={48} />
-            {tooltip}<Area type="monotone" dataKey="value" stroke="#2563eb" fill="#eff6ff" strokeWidth={2} isAnimationActive={false} />{secondaryLabel && <Area type="monotone" dataKey="secondary" stroke="#64748b" fill="#f8fafc" strokeWidth={2} isAnimationActive={false} />}
+            {tooltip}<Area type="monotone" dataKey="value" stroke="#7045c2" fill="#f8f5ff" strokeWidth={2} isAnimationActive={false} />{secondaryLabel && <Area type="monotone" dataKey="secondary" stroke="#64748b" fill="#f8fafc" strokeWidth={2} isAnimationActive={false} />}
           </AreaChart> : kind === 'donut' ? <PieChart accessibilityLayer>{tooltip}<Pie data={data} dataKey="value" nameKey="label" innerRadius={60} outerRadius={86} paddingAngle={2} isAnimationActive={false}>{data.map((row, index) => <Cell key={row.label} fill={colors[index % colors.length]} />)}</Pie></PieChart> : <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 0, bottom: 0 }} accessibilityLayer>
             <XAxis type="number" axisLine={false} tickLine={false} tickFormatter={axis} tick={{ fontSize: 11, fill: '#64748b' }} />
             <YAxis type="category" dataKey="label" width={110} axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#475569' }} />
-            {tooltip}<Bar dataKey="value" fill="#2563eb" radius={[0, 4, 4, 0]} maxBarSize={24} isAnimationActive={false} />{secondaryLabel && <Bar dataKey="secondary" fill="#64748b" radius={[0, 4, 4, 0]} maxBarSize={24} isAnimationActive={false} />}
+            {tooltip}<Bar dataKey="value" fill="#7045c2" radius={[0, 4, 4, 0]} maxBarSize={24} isAnimationActive={false} />{secondaryLabel && <Bar dataKey="secondary" fill="#64748b" radius={[0, 4, 4, 0]} maxBarSize={24} isAnimationActive={false} />}
           </BarChart>}
         </ResponsiveContainer>
       </div>
