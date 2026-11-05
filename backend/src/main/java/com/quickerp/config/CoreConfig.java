@@ -1,5 +1,12 @@
 package com.quickerp.config;
 
+import com.quickerp.ai.AiAccessService;
+import com.quickerp.ai.AiAssistantService;
+import com.quickerp.ai.AiAuditRepository;
+import com.quickerp.ai.AiConversationRepository;
+import com.quickerp.ai.AiDataTools;
+import com.quickerp.ai.AiIntentResolver;
+import com.quickerp.ai.GeminiClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.quickerp.core.AccessPolicy;
 import com.quickerp.core.AccessRules;
@@ -180,6 +187,16 @@ public class CoreConfig {
     public StateStore stateStore(Db db, ObjectMapper mapper, CoreSettings settings, PasswordHasher hasher, AccessRules access,
                                  AccessPolicy accessPolicy) {
         return new StateStore(db, mapper, settings, hasher, access, accessPolicy);
+    }
+
+    @Bean
+    public AiAssistantService aiAssistantService(Db db, ObjectMapper mapper, AccessRules accessRules, AppProperties properties) {
+        AiAccessService access = new AiAccessService(db, mapper, accessRules);
+        AiDataTools tools = new AiDataTools(db, mapper);
+        AiConversationRepository conversations = new AiConversationRepository(db, mapper, properties.getAi().getMaxHistoryMessages());
+        AiAuditRepository audit = new AiAuditRepository(db);
+        GeminiClient gemini = new GeminiClient(mapper, properties.getAi().getGeminiApiKey(), properties.getAi().getGeminiModel());
+        return new AiAssistantService(new AiIntentResolver(), access, tools, conversations, audit, gemini);
     }
 
     @Bean
