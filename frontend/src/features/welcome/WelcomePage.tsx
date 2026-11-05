@@ -1,3 +1,4 @@
+import vyroIcon from '@/assets/vyro-icon.png';
 import { Link } from 'react-router-dom';
 import { Boxes, Check, ChevronRight, ClipboardList, FolderKanban, GitBranch, LifeBuoy, ShieldCheck, ShoppingBag, Truck, UserRoundSearch, Users } from 'lucide-react';
 
@@ -27,9 +28,9 @@ export function WelcomePage() {
       </a>
       <header className="border-b border-slate-200">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-5 sm:px-10">
-          <Link to="/" aria-label="Quick ERP home" className="flex items-center gap-3 rounded-md text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600">
-            <span aria-hidden="true" className="grid size-10 place-items-center rounded-lg bg-[#12306e] text-lg font-black text-white">Q</span>
-            <span className="text-xl font-extrabold tracking-tight">Quick ERP</span>
+          <Link to="/" aria-label="VYRO home" className="flex items-center gap-3 rounded-md text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600">
+            <img src={vyroIcon} alt="" width={40} height={40} className="size-10 shrink-0" />
+            <span className="text-xl font-extrabold tracking-tight">VYRO</span>
           </Link>
           <nav aria-label="Main navigation" className="flex items-center gap-4 sm:gap-8">
             <a href="#modules" className="hidden rounded-md py-3 text-sm font-medium text-slate-600 hover:text-blue-700 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600 sm:block">Explore modules</a>
@@ -45,13 +46,13 @@ export function WelcomePage() {
           <div>
             <p className="mb-6 flex items-center gap-2 text-sm font-medium text-slate-600">
               <span aria-hidden="true" className="size-2 rounded-full bg-blue-600" />
-              Welcome to Quick ERP
+              Welcome to VYRO
             </p>
-            <h1 id="welcome-title" className="max-w-xl text-4xl font-bold leading-[1.1] tracking-[-0.035em] text-[#12306e] sm:text-5xl lg:text-[3.6rem]">
+            <h1 id="welcome-title" className="max-w-xl text-4xl font-bold leading-[1.1] tracking-[-0.035em] text-[#25194b] sm:text-5xl lg:text-[3.6rem]">
               One ERP for your everyday business.
             </h1>
             <p className="mt-6 max-w-lg text-lg leading-relaxed text-slate-600">
-              Quick ERP brings sales, inventory, purchasing, accounting and your team into one system. Manage daily operations and follow the records behind your business, across every branch.
+              VYRO brings sales, inventory, purchasing, accounting and your team into one system. Manage daily operations and follow the records behind your business, across every branch.
             </p>
             <ul className="mt-8 space-y-3 text-sm text-slate-700">
               {['Follow sales from order to payment', 'See stock across your branches', 'Give your team access to the tools they need'].map((item) => (
@@ -63,13 +64,13 @@ export function WelcomePage() {
             </ul>
             <div className="mt-8 flex flex-wrap items-center gap-4">
               <Link to="/login" className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-blue-600 px-6 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600">
-                Login to Quick ERP <ChevronRight size={17} aria-hidden="true" />
+                Login to VYRO <ChevronRight size={17} aria-hidden="true" />
               </Link>
               <a href="#modules" className="inline-flex min-h-12 items-center rounded-md px-2 text-sm font-semibold text-blue-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600">Explore the system</a>
             </div>
           </div>
 
-          <aside aria-labelledby="workflow-title" className="rounded-2xl bg-[#12306e] px-7 py-9 text-white sm:px-9">
+          <aside aria-labelledby="workflow-title" className="rounded-2xl bg-[linear-gradient(130deg,#15102e,#322078_65%,#6037a3)] px-7 py-9 text-white sm:px-9">
             <h2 id="workflow-title" className="text-2xl font-semibold tracking-tight">See how the work connects.</h2>
             <p className="mt-3 text-sm leading-relaxed text-blue-100">Follow a sale through the parts of your business that handle it.</p>
             <ol className="mt-8 space-y-6">
@@ -89,7 +90,7 @@ export function WelcomePage() {
         <section id="modules" aria-labelledby="modules-title" className="scroll-mt-6 border-y border-slate-200 bg-slate-50">
           <div className="mx-auto max-w-6xl px-6 py-12 sm:px-10 sm:py-16">
             <div className="mb-9 max-w-xl">
-              <h2 id="modules-title" className="text-2xl font-bold tracking-tight text-slate-900">What you can manage with Quick ERP</h2>
+              <h2 id="modules-title" className="text-2xl font-bold tracking-tight text-slate-900">What you can manage with VYRO</h2>
               <p className="mt-3 text-sm leading-relaxed text-slate-600">Connected modules for the tasks your team handles every day.</p>
             </div>
             <div className="grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
@@ -135,7 +136,7 @@ export function WelcomePage() {
       </main>
 
       <footer className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-7 text-xs text-slate-500 sm:px-10">
-        <p>&copy; {new Date().getFullYear()} Quick ERP</p>
+        <p>&copy; {new Date().getFullYear()} VYRO</p>
         <p>Sales, stock, accounts and people. Connected.</p>
       </footer>
     </div>

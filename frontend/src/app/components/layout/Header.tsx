@@ -42,7 +42,7 @@ export function Header({ area, mobileOpen, onToggleMobileNav }: HeaderProps) {
 
       <div className="ml-1 min-w-0 lg:hidden">
         <div className="truncate text-sm font-bold text-slate-900">
-          {area === 'super-admin' ? 'Platform Admin' : 'Quick ERP'}
+          {area === 'super-admin' ? 'Platform Admin' : 'VYRO'}
         </div>
       </div>
 
