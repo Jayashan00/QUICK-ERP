@@ -22,7 +22,7 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/auth/me", "/auth/change-password", "/auth/logout", "/auth/logout-all",
                         "/auth/mfa", "/auth/mfa/setup", "/auth/mfa/enable", "/auth/mfa/disable",
-                        "/state", "/state/**", "/users/**", "/platform/**", "/files");
+                        "/state", "/state/**", "/users/**", "/platform/**", "/files", "/ai/**");
     }
 
     @Override

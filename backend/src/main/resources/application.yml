@@ -17,6 +17,10 @@ server:
     include-stacktrace: never
 
 spring:
+  config:
+    # Read only this integrated backend's local dotenv file when running from either
+    # QUICK-ERP/backend or the QUICK-ERP repository root. OS environment variables win.
+    import: optional:file:.env[.properties],optional:file:backend/.env[.properties]
   application:
     name: quick-erp-backend
   datasource:
@@ -70,6 +74,10 @@ app:
     password-reset-url: ${PASSWORD_RESET_URL:http://localhost:3000/reset-password}
   files:
     max-bytes: 20971520
+  ai:
+    gemini-api-key: ${GEMINI_API_KEY:}
+    gemini-model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
+    max-history-messages: ${AI_MAX_HISTORY_MESSAGES:12}
   limits:
     # Largest JSON request body (bytes). The frontend sends at most about 3 MB per batch.
     max-json-bytes: ${MAX_JSON_BYTES:16777216}
