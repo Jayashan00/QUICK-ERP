@@ -138,11 +138,15 @@ function SalesLineEditor({
           Add Item
         </Button>
       </div>
-      {value.map((line, index) => (
-        <div
-          key={index}
-          className="grid gap-3 rounded-lg bg-white p-3 sm:grid-cols-2 lg:grid-cols-6"
-        >
+      {value.map((line, index) => {
+        const selectedProduct = products.data?.find((item) => item.id === line.productId);
+        const decimalPlaces = selectedProduct?.quantityDecimalPlaces ?? 2;
+        const quantityStep = 10 ** -decimalPlaces;
+        return (
+          <div
+            key={index}
+            className="grid gap-3 rounded-lg bg-white p-3 sm:grid-cols-2 lg:grid-cols-6"
+          >
           <FormField label="Product / service" className="lg:col-span-2">
             <Select
               value={line.productId}
@@ -153,6 +157,10 @@ function SalesLineEditor({
                 update(index, {
                   productId: event.target.value,
                   unitPrice: product?.sellingPrice ?? line.unitPrice,
+                  quantity:
+                    product?.quantityDecimalPlaces === 0 && !Number.isInteger(line.quantity)
+                      ? 1
+                      : line.quantity,
                 });
               }}
               placeholder="Select item"
@@ -162,15 +170,17 @@ function SalesLineEditor({
               }))}
             />
           </FormField>
-          <FormField label="Quantity">
+          <FormField label={selectedProduct ? `Quantity (${selectedProduct.uomName})` : "Quantity"}>
             <TextInput
               type="number"
-              min="0.01"
-              step="0.01"
+              min={quantityStep}
+              step={quantityStep}
               value={line.quantity}
-              onChange={(event) =>
-                update(index, { quantity: Number(event.target.value) })
-              }
+              onChange={(event) => {
+                const quantity = Number(event.target.value);
+                if (decimalPlaces === 0 && !Number.isInteger(quantity)) return;
+                update(index, { quantity });
+              }}
             />
           </FormField>
           <FormField label="Unit price">
@@ -219,8 +229,9 @@ function SalesLineEditor({
               Remove
             </Button>
           )}
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -296,7 +307,11 @@ export function SalesQuotationFormModal({
       );
       onClose();
     } catch (error) {
-      appToast.error(getErrorMessage(error, "Unable to save quotation."));
+      const message = getErrorMessage(error, "Unable to save quotation.");
+      if (message.toLowerCase().includes("credit limit")) {
+        form.setError("root.creditLimit", { type: "validate", message });
+      }
+      appToast.error(message);
     }
   });
   return (
@@ -322,6 +337,11 @@ export function SalesQuotationFormModal({
         className="space-y-4"
         noValidate
       >
+        {form.formState.errors.root?.creditLimit?.message && (
+          <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {form.formState.errors.root.creditLimit.message}
+          </p>
+        )}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FormField label="Opportunity">
             <Select

@@ -88,3 +88,21 @@ export function optionalDate(label: string) {
     )
     .optional();
 }
+
+export function getLocalDateInputValue(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function optionalTodayOrFutureDate(label: string) {
+  return optionalDate(label).refine(
+    (value) =>
+      value === undefined ||
+      value === '' ||
+      !isValidDateValue(value) ||
+      value.slice(0, 10) >= getLocalDateInputValue(),
+    `${label} cannot be in the past.`,
+  );
+}

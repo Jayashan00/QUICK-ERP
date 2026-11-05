@@ -2,17 +2,24 @@ import { z } from 'zod';
 
 import {
   emailSchema,
-  optionalDate,
   optionalNonNegativeNumber,
   optionalString,
+  optionalTodayOrFutureDate,
   phoneSchema,
   requiredString,
 } from '@/shared/validation';
 
+function personName(label: string) {
+  return requiredString(label, 80).refine(
+    (value) => /^\p{L}+$/u.test(value),
+    `${label} must contain letters only.`,
+  );
+}
+
 export const leadSchema = z.object({
   code: requiredString('Lead code', 50),
-  firstName: requiredString('First name', 80),
-  lastName: requiredString('Last name', 80),
+  firstName: personName('First name'),
+  lastName: personName('Last name'),
   company: optionalString('Company name', 120),
   email: emailSchema,
   phone: phoneSchema,
@@ -26,7 +33,7 @@ export const leadSchema = z.object({
   ),
   assignedTo: optionalString('Assigned user', 100),
   estimatedValue: optionalNonNegativeNumber('Estimated value'),
-  nextFollowUpAt: optionalDate('Next follow-up date'),
+  nextFollowUpAt: optionalTodayOrFutureDate('Next follow-up date'),
   notes: optionalString('Notes', 1000),
   lostReason: z.enum(
     ['price', 'competitor', 'timing', 'no_budget', 'no_response', 'not_a_fit', 'other'],

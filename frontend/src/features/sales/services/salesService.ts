@@ -5,11 +5,13 @@ import { hrService } from '@/features/hr/hrService';
 import { customerService } from "@/features/customers/services/customerService";
 import { opportunityService } from "@/features/crm/opportunities/services/opportunityService";
 import { productStore } from "@/features/products/services/productStore";
+import { masterDataStore } from "@/features/products/services/masterDataStore";
 import { warehouseService } from "@/features/inventory/services/warehouseService";
 import { inventoryWorkflowService } from "@/features/inventory/services/inventoryWorkflowService";
 import type { ApprovalStatus } from "@/shared/types/approval";
 import type { AuditEntry } from "@/shared/types/audit";
 import type { DocumentRecord } from "@/shared/types/document-record";
+import { formatDateTime } from "@/shared/utils/formatters";
 import { documentService } from "@/features/documents/documentService";
 import {
   customerPaymentSchema,
@@ -75,6 +77,11 @@ export interface SalesListResult<T> {
   page: number;
   pageSize: number;
 }
+
+const formatExportStatus = (status: string) =>
+  status
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
 export interface SalesCustomerOption {
   id: string;
   name: string;
@@ -97,6 +104,9 @@ export interface SalesProductOption {
   trackInventory: boolean;
   trackByBatch: boolean;
   trackBySerialNumber: boolean;
+  uomCode: string;
+  uomName: string;
+  quantityDecimalPlaces: number;
 }
 
 const wait = () => new Promise((resolve) => setTimeout(resolve, 120));
@@ -130,6 +140,7 @@ const audit = (
   action: string,
   actor: SalesActor,
   remarks?: string,
+  changes?: AuditEntry["changes"],
 ): AuditEntry => {
   const entry: AuditEntry = {
     id: `audit-${crypto.randomUUID().slice(0, 8)}`,
@@ -141,6 +152,7 @@ const audit = (
     reference: item.referenceNumber,
     timestamp: new Date().toISOString(),
     remarks,
+    changes,
     tenantId: item.tenantId,
     branchId: item.branchId,
   };
@@ -177,6 +189,17 @@ const totals = (items: SalesLine[]) => ({
   taxAmount: items.reduce((sum, item) => sum + item.taxAmount, 0),
   totalAmount: items.reduce((sum, item) => sum + item.total, 0),
 });
+const assertWithinCreditLimit = (
+  customer: { creditLimit?: number; currency: string },
+  quotationTotal: number,
+) => {
+  if (customer.creditLimit === undefined || quotationTotal <= customer.creditLimit) return;
+  const limit = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: customer.currency,
+  }).format(customer.creditLimit);
+  throw new Error(`Quotation total exceeds the customer's credit limit of ${limit}.`);
+};
 const requireProduct = (tenantId: string, productId: string) => {
   const product = productStore
     .all()
@@ -191,6 +214,27 @@ const requireProduct = (tenantId: string, productId: string) => {
     throw new Error(
       "The selected product or service is unavailable for this tenant.",
     );
+  return product;
+};
+const requireValidQuantity = (
+  tenantId: string,
+  productId: string,
+  quantity: number,
+) => {
+  const product = requireProduct(tenantId, productId);
+  const uom = masterDataStore.uoms.find(
+    (item) => item.tenantId === tenantId && item.id === product.uomId,
+  );
+  if (!uom) throw new Error(`The unit of measure for ${product.name} is unavailable.`);
+  const factor = 10 ** uom.decimalPlaces;
+  const hasValidPrecision = Math.abs(quantity * factor - Math.round(quantity * factor)) < 1e-9;
+  if (!hasValidPrecision) {
+    throw new Error(
+      uom.decimalPlaces === 0
+        ? `${product.name} uses ${uom.name} and requires a whole-number quantity.`
+        : `${product.name} allows at most ${uom.decimalPlaces} decimal place(s) for quantity.`,
+    );
+  }
   return product;
 };
 
@@ -448,15 +492,23 @@ export const salesService = {
             item.status === "active" &&
             item.isSellable,
         )
-        .map((item) => ({
-          id: item.id,
-          name: item.name,
-          sku: item.sku,
-          sellingPrice: item.sellingPrice,
-          trackInventory: item.trackInventory,
-          trackByBatch: item.trackByBatch,
-          trackBySerialNumber: item.trackBySerialNumber,
-        })),
+        .map((item) => {
+          const uom = masterDataStore.uoms.find(
+            (unit) => unit.tenantId === tenantId && unit.id === item.uomId,
+          );
+          return {
+            id: item.id,
+            name: item.name,
+            sku: item.sku,
+            sellingPrice: item.sellingPrice,
+            trackInventory: item.trackInventory,
+            trackByBatch: item.trackByBatch,
+            trackBySerialNumber: item.trackBySerialNumber,
+            uomCode: uom?.code ?? "",
+            uomName: uom?.name ?? "Unit",
+            quantityDecimalPlaces: uom?.decimalPlaces ?? 2,
+          };
+        }),
     );
   },
   async opportunityOptions(scope: TenantBranchScope, permitted: string[]) {
@@ -515,7 +567,8 @@ export const salesService = {
         .orders()
         .filter(
           (item) =>
-            allowed(item) && !["delivered", "cancelled"].includes(item.status),
+            allowed(item) &&
+            !["delivered", "returned", "cancelled"].includes(item.status),
         ).length,
       pendingDeliveries: salesStore
         .orders()
@@ -559,7 +612,7 @@ export const salesService = {
       data.salespersonId,
     );
     data.items.forEach((item) =>
-      requireProduct(scope.tenantId, item.productId),
+      requireValidQuantity(scope.tenantId, item.productId, item.quantity),
     );
     if (data.opportunityId) {
       const opportunities = await this.opportunityOptions(scope, permitted);
@@ -575,7 +628,9 @@ export const salesService = {
         );
     }
     const items = lineItems(data.items),
+      amount = totals(items),
       now = new Date().toISOString();
+    assertWithinCreditLimit(customer, amount.totalAmount);
     const quotation: SalesQuotation = {
       id: `sales-quote-${crypto.randomUUID().slice(0, 8)}`,
       tenantId: scope.tenantId,
@@ -586,7 +641,7 @@ export const salesService = {
       salespersonName: salesperson.name,
       status: "draft",
       items,
-      ...totals(items),
+      ...amount,
       createdBy: actor.id,
       createdByName: actor.name,
       approval: emptyApproval,
@@ -622,15 +677,17 @@ export const salesService = {
     if (current.status !== "draft")
       throw new Error("Only draft quotations can be edited.");
     assertBranch(permitted, data.branchId);
-    await validateCustomer(scope, data.branchId, data.customerId);
+    const customer = await validateCustomer(scope, data.branchId, data.customerId);
     const salesperson = await validateSalesperson(
       scope.tenantId,
       data.salespersonId,
     );
     data.items.forEach((item) =>
-      requireProduct(scope.tenantId, item.productId),
+      requireValidQuantity(scope.tenantId, item.productId, item.quantity),
     );
     const items = lineItems(data.items);
+    const amount = totals(items);
+    assertWithinCreditLimit(customer, amount.totalAmount);
     const next: SalesQuotation = {
       ...current,
       ...data,
@@ -638,7 +695,7 @@ export const salesService = {
       notes: data.notes || undefined,
       salespersonName: salesperson.name,
       items,
-      ...totals(items),
+      ...amount,
       auditEntries: [
         ...current.auditEntries,
         audit(current, "Draft edited", actor),
@@ -752,6 +809,22 @@ export const salesService = {
     data.items.forEach((item) =>
       requireProduct(scope.tenantId, item.productId),
     );
+
+    const existingSourceOrder = sourceQuotationId
+      ? salesStore
+          .orders()
+          .find(
+            (item) =>
+              item.tenantId === scope.tenantId &&
+              item.sourceQuotationId === sourceQuotationId,
+          )
+      : undefined;
+    if (existingSourceOrder) {
+      throw new Error(
+        `Sales order ${existingSourceOrder.referenceNumber} has already been created from this quotation.`,
+      );
+    }
+
     const items = lineItems(data.items),
       now = new Date().toISOString();
     const order: SalesOrder = {
@@ -1292,14 +1365,15 @@ export const salesService = {
     actor: SalesActor,
   ) {
     const data = salesReturnSchema.parse(values);
-    const order = salesStore
+    const orderIndex = salesStore
       .orders()
-      .find(
+      .findIndex(
         (item) =>
           item.id === data.salesOrderId &&
           item.tenantId === scope.tenantId &&
           permitted.includes(item.branchId),
       );
+    const order = orderIndex >= 0 ? salesStore.orders()[orderIndex] : undefined;
     const delivery = salesStore
       .deliveries()
       .find(
@@ -1461,8 +1535,25 @@ export const salesService = {
     credit.auditEntries = [
       audit(credit, "Credit note and accounting handoff prepared", actor),
     ];
+    const returnedOrder: SalesOrder = {
+      ...order,
+      status: "returned",
+      auditEntries: [
+        ...order.auditEntries,
+        audit(order, "Returned", actor, returnReference, [
+          { field: "status", before: order.status, after: "returned" },
+          {
+            field: "salesReturn",
+            before: undefined,
+            after: returnReference,
+          },
+        ]),
+      ],
+      updatedAt: now,
+    };
     salesStore.insertReturn(salesReturn);
     salesStore.insertCreditNote(credit);
+    salesStore.replaceOrder(orderIndex, returnedOrder);
     return { salesReturn, creditNote: credit };
   },
 
@@ -1659,12 +1750,24 @@ export const salesService = {
       page: 1,
       pageSize: 10000,
     });
-    return result.data.map((item) => ({
-      Reference: item.referenceNumber,
-      Branch: item.branchId,
-      Customer: "customerId" in item ? String(item.customerId) : "",
-      Status: "status" in item ? String(item.status) : "prepared",
-      Created: item.createdAt,
-    }));
+    return result.data.map((item) => {
+      const customerId = "customerId" in item ? String(item.customerId) : "";
+      const customerName = customerId
+        ? customerService.getCachedCustomerById(
+            { tenantId: item.tenantId, branchId: item.branchId },
+            customerId,
+          )?.name ?? "Unknown customer"
+        : "";
+
+      return {
+        Reference: item.referenceNumber,
+        Branch: item.branchId,
+        Customer: customerName,
+        Status: formatExportStatus(
+          "status" in item ? String(item.status) : "prepared",
+        ),
+        Created: formatDateTime(item.createdAt),
+      };
+    });
   },
 };

@@ -691,6 +691,12 @@ public final class StateStore {
         if (tenantScope && RecordGuards.JOURNALS.equals(change.collection()) && !principal.superAdmin()) {
             guardJournal(connection, permissions, tenant, change);
         }
+        if (tenantScope && RecordGuards.CUSTOMERS.equals(change.collection())) {
+            guardCustomer(connection, tenant, change);
+        }
+        if (tenantScope && RecordGuards.QUOTATIONS.equals(change.collection())) {
+            guardQuotation(connection, tenant, change);
+        }
         if (USERS_COLLECTION.equals(change.collection()) && tenantScope) {
             syncUsers(connection, principal, permissions, tenant, change);
         }
@@ -709,6 +715,76 @@ public final class StateStore {
             throw ApiException.badRequest("The journal id does not match its content.");
         }
         RecordGuards.checkJournal(permissions, stored, change.isDelete() ? null : change.data());
+    }
+
+    /** Customer contact details must identify only one customer inside a tenant. */
+    private void guardCustomer(Connection connection, String tenant, Change change) throws SQLException {
+        String recordId = change.recordId();
+        if (ORDER_RECORD.equals(recordId) || change.isDelete()) return;
+        if (isReserved(recordId)) throw ApiException.badRequest("Customers must be saved one by one.");
+        JsonNode customer = change.data();
+        if (customer == null || !customer.isObject()) throw ApiException.badRequest("A customer must be an object.");
+        if (!recordId.equals(Sql.text(customer, "id"))) {
+            throw ApiException.badRequest("The customer id does not match its content.");
+        }
+
+        String email = RecordGuards.normalizeCustomerEmail(Sql.text(customer, "email"));
+        if (!email.isBlank() && Sql.queryLong(connection,
+                "SELECT COUNT(*) FROM erp_records WHERE tenant_id = ? AND collection = ? AND record_id <> ? "
+                        + "AND NOT deleted AND lower(btrim(data ->> 'email')) = ?",
+                tenant, RecordGuards.CUSTOMERS, recordId, email) > 0) {
+            throw ApiException.validation("email", "A customer with this email address already exists.");
+        }
+
+        String phone = RecordGuards.normalizeCustomerPhone(Sql.text(customer, "phone"));
+        if (!phone.isBlank() && Sql.queryLong(connection,
+                "SELECT COUNT(*) FROM erp_records WHERE tenant_id = ? AND collection = ? AND record_id <> ? "
+                        + "AND NOT deleted AND regexp_replace(COALESCE(data ->> 'phone', ''), '[^0-9]', '', 'g') = ?",
+                tenant, RecordGuards.CUSTOMERS, recordId, phone) > 0) {
+            throw ApiException.validation("phone", "A customer with this phone number already exists.");
+        }
+    }
+
+    /** Quotations cannot exceed the selected customer's configured credit limit. */
+    private void guardQuotation(Connection connection, String tenant, Change change) throws SQLException {
+        String recordId = change.recordId();
+        if (ORDER_RECORD.equals(recordId) || change.isDelete()) return;
+        if (isReserved(recordId)) throw ApiException.badRequest("Quotations must be saved one by one.");
+        JsonNode quotation = change.data();
+        if (quotation == null || !quotation.isObject()) throw ApiException.badRequest("A quotation must be an object.");
+        if (!recordId.equals(Sql.text(quotation, "id"))) {
+            throw ApiException.badRequest("The quotation id does not match its content.");
+        }
+        // Only a change to the customer, lines or total is checked again. Status changes (sent, accepted,
+        // rejected, expired, converted) must stay possible even if a product or the customer's limit changed later.
+        JsonNode stored = storedData(connection, tenant, RecordGuards.QUOTATIONS, recordId);
+        if (stored != null && Objects.equals(stored.get("customerId"), quotation.get("customerId"))
+                && Objects.equals(stored.get("items"), quotation.get("items"))
+                && Objects.equals(stored.get("totalAmount"), quotation.get("totalAmount"))) {
+            return;
+        }
+        String customerId = Sql.text(quotation, "customerId");
+        if (customerId == null || customerId.isBlank()) {
+            throw ApiException.validation("customerId", "A customer is required for the quotation.");
+        }
+        JsonNode customer = storedData(connection, tenant, RecordGuards.CUSTOMERS, customerId);
+        if (customer == null) throw ApiException.validation("customerId", "The selected customer is unavailable.");
+        JsonNode items = quotation.get("items");
+        if (items != null && items.isArray()) {
+            for (JsonNode line : items) {
+                String productId = Sql.text(line, "productId");
+                if (productId == null || productId.isBlank()) {
+                    throw ApiException.validation("productId", "A product is required for every quotation line.");
+                }
+                JsonNode product = storedData(connection, tenant, RecordGuards.PRODUCTS, productId);
+                if (product == null) throw ApiException.validation("productId", "The selected product is unavailable.");
+                String uomId = Sql.text(product, "uomId");
+                JsonNode uom = uomId == null ? null : storedData(connection, tenant, RecordGuards.UOMS, uomId);
+                if (uom == null) throw ApiException.validation("quantity", "The product's unit of measure is unavailable.");
+                RecordGuards.checkSalesLineQuantity(product, uom, line);
+            }
+        }
+        RecordGuards.checkQuotationCreditLimit(customer, quotation);
     }
 
     /** Role changes: no permissions beyond the caller's own, no self-promotion, roles in use stay, an administrator remains. */
@@ -990,7 +1066,15 @@ public final class StateStore {
         }
     }
 
-    /** Applies tenant suspensions and reactivations made in the Super Admin console. */
+    private static final Pattern MODULE_NAME = Pattern.compile("^[a-z][a-z_]{0,39}$");
+    private static final List<String> LIMIT_FIELDS = List.of("maxUsers", "maxBranches", "maxWarehouses", "maxStorageGb");
+
+    /**
+     * Applies changes made in the Super Admin console to the tenants themselves: suspensions and
+     * reactivations, and the modules and limits each tenant may use. The modules and limits are kept in
+     * the tenant's profile, which is sent to the tenant's users when they sign in, so the platform
+     * configuration itself stays private to the Super Admin.
+     */
     private void syncTenantStatuses(Connection connection, JsonNode foundation) throws SQLException {
         JsonNode tenants = foundation == null ? null : foundation.get("tenants");
         if (tenants == null || !tenants.isArray()) return;
@@ -998,9 +1082,39 @@ public final class StateStore {
             String id = Sql.text(tenant, "id");
             String status = Sql.text(tenant, "status");
             if (id == null || Principal.PLATFORM_TENANT.equals(id)) continue;
-            if (!"active".equals(status) && !"suspended".equals(status)) continue;
-            Sql.update(connection, "UPDATE tenants SET status = ?, profile = jsonb_set(profile, '{status}', to_jsonb(CAST(? AS text)), true), "
-                    + "updated_at = now() WHERE id = ? AND status <> ?", status, status, id, status);
+            if ("active".equals(status) || "suspended".equals(status)) {
+                Sql.update(connection, "UPDATE tenants SET status = ?, profile = jsonb_set(profile, '{status}', to_jsonb(CAST(? AS text)), true), "
+                        + "updated_at = now() WHERE id = ? AND status <> ?", status, status, id, status);
+            }
+            ObjectNode entitlements = entitlementsOf(tenant);
+            if (entitlements != null) {
+                Sql.update(connection, "UPDATE tenants SET profile = jsonb_set(profile, '{entitlements}', CAST(? AS jsonb), true), updated_at = now() "
+                        + "WHERE id = ? AND profile -> 'entitlements' IS DISTINCT FROM CAST(? AS jsonb)",
+                        Sql.writeJson(mapper, entitlements), id, Sql.writeJson(mapper, entitlements));
+            }
         }
+    }
+
+    /** The modules and limits of one tenant in the platform configuration, or null when none are given. */
+    private ObjectNode entitlementsOf(JsonNode tenant) {
+        JsonNode modules = tenant.get("enabledModules");
+        if (modules == null || !modules.isArray()) return null;
+        ObjectNode entitlements = mapper.createObjectNode();
+        var enabled = entitlements.putArray("enabledModules");
+        Set<String> seen = new LinkedHashSet<>();
+        for (JsonNode module : modules) {
+            if (module.isTextual() && MODULE_NAME.matcher(module.asText()).matches() && seen.size() < 40 && seen.add(module.asText())) {
+                enabled.add(module.asText());
+            }
+        }
+        JsonNode limits = tenant.get("limits");
+        if (limits != null && limits.isObject()) {
+            ObjectNode cleanLimits = entitlements.putObject("limits");
+            for (String field : LIMIT_FIELDS) {
+                JsonNode value = limits.get(field);
+                if (value != null && value.isNumber() && value.asDouble() >= 0 && value.asDouble() <= 1_000_000) cleanLimits.set(field, value);
+            }
+        }
+        return entitlements;
     }
 }

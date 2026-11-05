@@ -230,6 +230,86 @@ class StateStoreIntegrationTest {
         assertNotNull(record(store.load(admin), "customers.records", "cust-conflict"));
     }
 
+    @Test
+    void duplicateCustomerEmailAndPhoneAreRejectedAfterNormalization() throws Exception {
+        Principal sales = login("sales@quickerp.test");
+        ObjectNode original = (ObjectNode) json("{\"id\":\"cust-unique-contact\",\"tenantId\":\"tenant-001\","
+                + "\"branchId\":\"branch-001\",\"name\":\"Unique Contact\",\"email\":\"Billing.Unique@Example.com\","
+                + "\"phone\":\"+94 77 123 4567\"}");
+        StateStore.BatchResult created = store.applyBatch(sales,
+                versioned("customers.records", "cust-unique-contact", original, 0L));
+        assertEquals(List.of(), created.rejected());
+
+        ObjectNode duplicateEmail = original.deepCopy();
+        duplicateEmail.put("id", "cust-duplicate-email");
+        duplicateEmail.put("email", "  billing.unique@EXAMPLE.COM ");
+        duplicateEmail.put("phone", "+94 77 999 9999");
+        StateStore.BatchResult emailResult = store.applyBatch(sales,
+                versioned("customers.records", "cust-duplicate-email", duplicateEmail, 0L));
+        assertEquals(1, emailResult.rejected().size());
+        assertEquals("A customer with this email address already exists.", emailResult.rejected().get(0).message());
+
+        ObjectNode duplicatePhone = original.deepCopy();
+        duplicatePhone.put("id", "cust-duplicate-phone");
+        duplicatePhone.put("email", "another.unique@example.com");
+        duplicatePhone.put("phone", "94771234567");
+        StateStore.BatchResult phoneResult = store.applyBatch(sales,
+                versioned("customers.records", "cust-duplicate-phone", duplicatePhone, 0L));
+        assertEquals(1, phoneResult.rejected().size());
+        assertEquals("A customer with this phone number already exists.", phoneResult.rejected().get(0).message());
+
+        long version = created.versions().get(0).version();
+        ObjectNode sameCustomer = original.deepCopy();
+        sameCustomer.put("email", "BILLING.UNIQUE@example.com");
+        sameCustomer.put("phone", "94 (77) 123-4567");
+        assertEquals(List.of(), store.applyBatch(sales,
+                versioned("customers.records", "cust-unique-contact", sameCustomer, version)).rejected());
+    }
+
+    @Test
+    void quotationAboveCustomerCreditLimitIsRejectedByTheServer() throws Exception {
+        Principal sales = login("sales@quickerp.test");
+        ObjectNode customer = (ObjectNode) json("{\"id\":\"cust-credit-limit\",\"tenantId\":\"tenant-001\","
+                + "\"branchId\":\"branch-001\",\"name\":\"Credit Limited\",\"email\":\"credit.limit@example.com\","
+                + "\"phone\":\"+94 77 555 0101\",\"currency\":\"USD\",\"creditLimit\":1000}");
+        assertEquals(List.of(), store.applyBatch(sales,
+                versioned("customers.records", "cust-credit-limit", customer, 0L)).rejected());
+
+        ObjectNode quotation = (ObjectNode) json("{\"id\":\"quote-credit-limit\",\"tenantId\":\"tenant-001\","
+                + "\"branchId\":\"branch-001\",\"customerId\":\"cust-credit-limit\",\"currency\":\"USD\","
+                + "\"totalAmount\":1000.01}");
+        StateStore.BatchResult rejected = store.applyBatch(sales,
+                versioned("sales.quotations", "quote-credit-limit", quotation, 0L));
+        assertEquals(1, rejected.rejected().size());
+        assertEquals("Quotation total exceeds the customer's credit limit of USD 1000.", rejected.rejected().get(0).message());
+
+        quotation.put("totalAmount", 1000);
+        assertEquals(List.of(), store.applyBatch(sales,
+                versioned("sales.quotations", "quote-credit-limit", quotation, 0L)).rejected());
+    }
+
+    @Test
+    void quotationWithFractionalCountUnitIsRejectedByTheServer() throws Exception {
+        Principal sales = login("sales@quickerp.test");
+        ObjectNode customer = (ObjectNode) json("{\"id\":\"cust-quantity-check\",\"tenantId\":\"tenant-001\","
+                + "\"branchId\":\"branch-001\",\"name\":\"Quantity Check\",\"email\":\"quantity.check@example.com\","
+                + "\"phone\":\"+94 77 555 0102\",\"currency\":\"USD\"}");
+        assertEquals(List.of(), store.applyBatch(sales,
+                versioned("customers.records", "cust-quantity-check", customer, 0L)).rejected());
+
+        ObjectNode quotation = (ObjectNode) json("{\"id\":\"quote-quantity-check\",\"tenantId\":\"tenant-001\","
+                + "\"branchId\":\"branch-001\",\"customerId\":\"cust-quantity-check\",\"currency\":\"USD\","
+                + "\"totalAmount\":374.25,\"items\":[{\"productId\":\"prod-002\",\"quantity\":1.5}]}");
+        StateStore.BatchResult rejected = store.applyBatch(sales,
+                versioned("sales.quotations", "quote-quantity-check", quotation, 0L));
+        assertEquals(1, rejected.rejected().size());
+        assertTrue(rejected.rejected().get(0).message().contains("requires a whole-number quantity"));
+
+        ((ObjectNode) quotation.withArray("items").get(0)).put("quantity", 2);
+        assertEquals(List.of(), store.applyBatch(sales,
+                versioned("sales.quotations", "quote-quantity-check", quotation, 0L)).rejected());
+    }
+
     // ------------------------------------------------------------ stock ledger
 
     @Test
@@ -281,6 +361,46 @@ class StateStoreIntegrationTest {
 
     private StateStore.BatchRequest versioned(String collection, String recordId, JsonNode data, long baseVersion) {
         return new StateStore.BatchRequest("it", List.of(new StateStore.Change(collection, recordId, data, false, baseVersion)), List.of());
+    }
+
+    // ---------------------------------------------- quotations and companies
+
+    /** A quotation's status can still change after the customer's credit limit was lowered; new totals are checked. */
+    @Test
+    void quotationStatusChangesStayPossibleAfterTheCreditLimitIsLowered() throws Exception {
+        Principal sales = login("sales@quickerp.test");
+        ObjectNode customer = (ObjectNode) json("{\"id\":\"cust-credit\",\"tenantId\":\"tenant-001\",\"name\":\"Credit Test\",\"creditLimit\":1000}");
+        assertEquals(List.of(), store.applyBatch(sales, batch("customers.records", "cust-credit", customer)).rejected());
+        ObjectNode quotation = (ObjectNode) json("{\"id\":\"quo-credit\",\"tenantId\":\"tenant-001\",\"customerId\":\"cust-credit\",\"status\":\"draft\",\"totalAmount\":500,"
+                + "\"items\":[{\"productId\":\"PRODUCT\",\"quantity\":1}]}".replace("PRODUCT", "prod-001"));
+        assertEquals(List.of(), store.applyBatch(sales, batch("sales.quotations", "quo-credit", quotation)).rejected());
+
+        // The credit limit is lowered below the quotation total.
+        assertEquals(List.of(), store.applyBatch(sales, batch("customers.records", "cust-credit", customer.deepCopy().put("creditLimit", 100))).rejected());
+        // Changing only the status still works.
+        assertEquals(List.of(), store.applyBatch(sales, batch("sales.quotations", "quo-credit", quotation.deepCopy().put("status", "rejected"))).rejected());
+        // A new total above the limit is refused.
+        StateStore.BatchResult raised = store.applyBatch(sales, batch("sales.quotations", "quo-credit", quotation.deepCopy().put("status", "rejected").put("totalAmount", 600)));
+        assertEquals(1, raised.rejected().size());
+        assertTrue(raised.rejected().get(0).message().contains("credit limit"));
+    }
+
+    /** Modules switched on or off in the Super Admin console reach the company's users at sign-in. */
+    @Test
+    void superAdminModuleSettingsReachTheCompanyAtSignIn() throws Exception {
+        Principal superAdmin = login("superadmin@quickerp.test");
+        JsonNode foundation = json("{\"tenants\":[{\"id\":\"tenant-001\",\"status\":\"active\","
+                + "\"enabledModules\":[\"customers\",\"products\",\"sales\",\"settings\",\"Bad Name!\"],\"limits\":{\"maxUsers\":20,\"maxBranches\":3,\"hack\":\"x\"}}]}");
+        assertEquals(List.of(), store.applyBatch(superAdmin, new StateStore.BatchRequest("it",
+                List.of(change("platform.foundation", StateStore.VALUE_RECORD, foundation)), List.of())).rejected());
+
+        AuthService.LoginResult signIn = auth.login("admin@quickerp.test", PASSWORD, "10.9.9.9");
+        JsonNode entitlements = signIn.tenant().path("entitlements");
+        assertEquals("[\"customers\",\"products\",\"sales\",\"settings\"]", entitlements.path("enabledModules").toString());
+        assertEquals(20, entitlements.path("limits").path("maxUsers").asInt());
+        assertFalse(entitlements.path("limits").has("hack"));
+        // Company users never receive the platform configuration itself.
+        assertTrue(store.load(auth.authenticate(signIn.token())).records().stream().noneMatch(r -> r.collection().equals("platform.foundation")));
     }
 
     @Test

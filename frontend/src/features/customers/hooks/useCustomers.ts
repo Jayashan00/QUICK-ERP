@@ -10,6 +10,7 @@ import { useDebounce } from "@/shared/hooks/useDebounce";
 import type { Customer } from '@/features/customers/types/customer';
 import { useTenant } from "@/core/tenant/tenant-context";
 import { useBranch } from "@/core/branch/branch-context";
+import { leadKeys } from '@/features/crm/leads/queries/leadKeys';
 
 import { customerKeys } from "../queries/customerKeys";
 import {
@@ -81,10 +82,13 @@ export function useCustomers(
     ) =>
       customerService.createCustomer(scope, data),
 
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: customerKeys.lists(),
-      });
+    onSuccess: async (customer) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: customerKeys.lists() }),
+        customer.status === 'lead'
+          ? queryClient.invalidateQueries({ queryKey: leadKeys.all })
+          : Promise.resolve(),
+      ]);
     },
   });
 
@@ -111,6 +115,9 @@ export function useCustomers(
       await queryClient.invalidateQueries({
         queryKey: customerKeys.lists(),
       });
+      if (customer.status === 'lead') {
+        await queryClient.invalidateQueries({ queryKey: leadKeys.all });
+      }
     },
   });
 

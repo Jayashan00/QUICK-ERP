@@ -1,4 +1,5 @@
 import { mockLeads } from "@/features/crm/leads/mocks/leads";
+import type { Customer } from '@/features/customers/types/customer';
 import type { Lead, LeadSource, LeadStatus } from '@/features/crm/leads/types/lead';
 
 import type { LeadFormValues } from "../schemas/leadSchema";
@@ -18,14 +19,99 @@ export interface LeadListResponse {
   total: number;
 }
 
+export interface LeadSummary {
+  total: number;
+  byStatus: Record<LeadStatus, number>;
+}
+
 let leads: Lead[] = [...mockLeads];
 
 const delay = (ms = 250) =>
   new Promise<void>((resolve) => {
-    window.setTimeout(resolve, ms);
+    globalThis.setTimeout(resolve, ms);
   });
 
+const personNameParts = (customer: Customer) => {
+  const preferredName = customer.primaryContact?.name?.trim() || customer.name.trim();
+  const parts = preferredName
+    .replace(/[^\p{L}\p{M}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  return {
+    firstName: parts[0] ?? 'Customer',
+    lastName: parts.length > 1 ? parts[parts.length - 1] : 'Lead',
+  };
+};
+
 export const leadService = {
+  async syncFromCustomer(customer: Customer): Promise<Lead> {
+    await delay();
+    const existingIndex = leads.findIndex(
+      (lead) =>
+        lead.tenantId === customer.tenantId &&
+        (lead.sourceCustomerId === customer.id || lead.id === `customer-lead-${customer.id}`),
+    );
+    const now = new Date().toISOString();
+    const names = personNameParts(customer);
+
+    if (existingIndex >= 0) {
+      const existing = leads[existingIndex];
+      const updated: Lead = {
+        ...existing,
+        ...names,
+        branchId: customer.branchId,
+        company: customer.type === 'company' ? customer.name : undefined,
+        email: customer.email,
+        phone: customer.phone,
+        sourceCustomerId: customer.id,
+        updatedAt: now,
+      };
+      leads = leads.map((lead, index) => index === existingIndex ? updated : lead);
+      return updated;
+    }
+
+    const lead: Lead = {
+      id: `customer-lead-${customer.id}`,
+      tenantId: customer.tenantId,
+      branchId: customer.branchId,
+      code: `LEAD-${customer.code}`,
+      ...names,
+      company: customer.type === 'company' ? customer.name : undefined,
+      email: customer.email,
+      phone: customer.phone,
+      source: 'other',
+      status: 'new',
+      notes: [`Created from customer ${customer.code} with Lead status.`, customer.notes]
+        .filter(Boolean)
+        .join('\n'),
+      sourceCustomerId: customer.id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    leads = [lead, ...leads];
+    return lead;
+  },
+
+  async getSummary(scope: TenantBranchScope): Promise<LeadSummary> {
+    await delay();
+
+    const scopedLeads = leads.filter((lead) => belongsToScope(lead, scope));
+    const byStatus: Record<LeadStatus, number> = {
+      new: 0,
+      contacted: 0,
+      qualified: 0,
+      unqualified: 0,
+      converted: 0,
+      lost: 0,
+    };
+
+    scopedLeads.forEach((lead) => {
+      byStatus[lead.status] += 1;
+    });
+
+    return { total: scopedLeads.length, byStatus };
+  },
+
   async getAll(
     scope: TenantBranchScope,
     params: LeadListParams = {},

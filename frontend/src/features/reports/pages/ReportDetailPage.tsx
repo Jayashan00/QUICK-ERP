@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
-import toast from 'react-hot-toast';
 import { Download, FileSpreadsheet, Printer } from 'lucide-react';
 import { usePermissions } from '@/core/permissions/permission-context';
 import { useTenant } from '@/core/tenant/tenant-context';
@@ -11,6 +10,7 @@ import { Skeleton } from '@/shared/components/feedback/Skeleton';
 import { PageContainer } from '@/shared/components/layout/PageContainer';
 import { PageHeader } from '@/shared/components/layout/PageHeader';
 import { downloadCsv, downloadExcel } from '@/shared/utils/fileExport';
+import { appToast } from '@/shared/utils/toast';
 import { ReportFilters } from '../components/ReportFilters';
 import { ReportChart, ReportKpis, ReportTable } from '../components/ReportWidgets';
 import { useReport } from '../hooks/useReport';
@@ -45,7 +45,7 @@ export function ReportDetailPage() {
   const runExport = (kind: 'csv' | 'excel') => {
     if (!query.data || !canExport) return;
     setExporting(true);
-    try { if (kind === 'csv') downloadCsv(`${definition.id}.csv`, exportColumns, query.data.rows); else downloadExcel(`${definition.id}.xls`, definition.title, exportColumns, query.data.rows); toast.success(`${kind === 'csv' ? 'CSV' : 'Excel-ready'} export created.`); } finally { window.setTimeout(() => setExporting(false), 200); }
+    try { if (kind === 'csv') downloadCsv(`${definition.id}.csv`, exportColumns, query.data.rows); else downloadExcel(`${definition.id}.xls`, definition.title, exportColumns, query.data.rows); appToast.success(`${kind === 'csv' ? 'CSV' : 'Excel-ready'} export created.`); } catch (error) { appToast.error(error instanceof Error ? error.message : 'Unable to export the report.'); } finally { window.setTimeout(() => setExporting(false), 200); }
   };
   return <PageContainer><div className="report-page" ref={resultsRef}><PageHeader title={definition.title} description={`${definition.description} Source: ${query.data?.sourceModules.join(', ') ?? 'existing ERP modules'}.`} actions={<div className="report-screen-actions flex flex-wrap gap-2">{canExport && <><Button size="sm" variant="secondary" isLoading={exporting} leftIcon={<Download size={15} />} onClick={() => runExport('csv')}>CSV</Button><Button size="sm" variant="secondary" isLoading={exporting} leftIcon={<FileSpreadsheet size={15} />} onClick={() => runExport('excel')}>Excel-ready</Button></>}{canPrint && <Button size="sm" variant="secondary" leftIcon={<Printer size={15} />} onClick={() => window.print()}>Print / PDF</Button>}</div>} />
     <div className="report-screen-actions"><ReportFilters definition={definition} value={filters} onChange={setFilters} onReset={() => setFilters(defaults())} /></div>

@@ -1,20 +1,37 @@
 import assert from "node:assert/strict";
+import { auditEventService } from "../src/core/audit";
 import { hasPermission } from "../src/core/permissions/permissionUtils";
 import { isPermissionInScope } from "../src/core/permissions/permissionScope";
 import { inventoryService } from "../src/features/inventory/services/inventoryService";
 import { salesService } from "../src/features/sales/services/salesService";
+import { formatDateTime } from "../src/shared/utils/formatters";
 
 const scope = { tenantId: "tenant-001", branchId: "branch-001" };
 const branches = ["branch-001"];
 const actor = { id: "usr-002", name: "Sales QA" };
 const item = { productId: "prod-002", variantId: "", quantity: 2, unitPrice: 249.5, discountPercent: 2, taxPercent: 8 };
+const overCreditLimitItem = { ...item, quantity: 1, unitPrice: 200000, discountPercent: 0, taxPercent: 0 };
+const fractionalUnitItem = { ...item, quantity: 1.5 };
 
 assert.equal(isPermissionInScope("sales.view", "tenant"), true);
 assert.equal(isPermissionInScope("payment.receive", "tenant"), true);
 assert.equal(hasPermission(["sales.view"], "quotation.approve"), false);
 
+await assert.rejects(
+  () => salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", currency: "USD", notes: "Over limit", items: [overCreditLimitItem] }, actor),
+  /credit limit/,
+);
+await assert.rejects(
+  () => salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", currency: "USD", notes: "Fractional unit", items: [fractionalUnitItem] }, actor),
+  /requires a whole-number quantity/,
+);
+
 const quotation = await salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", currency: "USD", notes: "QA quotation", items: [item] }, actor);
 assert.equal(quotation.status, "draft");
+await assert.rejects(
+  () => salesService.updateQuotation(scope, branches, quotation.id, { customerId: quotation.customerId, branchId: quotation.branchId, salespersonId: quotation.salespersonId, opportunityId: "", quotationDate: quotation.quotationDate, expiryDate: quotation.expiryDate, terms: "Over limit", currency: quotation.currency, notes: "Over limit", items: [overCreditLimitItem] }, actor),
+  /credit limit/,
+);
 await salesService.updateQuotation(scope, branches, quotation.id, { customerId: quotation.customerId, branchId: quotation.branchId, salespersonId: quotation.salespersonId, opportunityId: "", quotationDate: quotation.quotationDate, expiryDate: quotation.expiryDate, terms: "Updated QA terms", currency: quotation.currency, notes: "Edited", items: [item] }, actor);
 await salesService.transitionQuotation(scope, branches, quotation.id, "submit", actor);
 await salesService.transitionQuotation(scope, branches, quotation.id, "approve", actor, "Margin approved");
@@ -23,6 +40,10 @@ await salesService.transitionQuotation(scope, branches, quotation.id, "accept", 
 await assert.rejects(() => salesService.createOrderFromQuotation(scope, ["branch-002"], quotation.id, "warehouse-hq-main", actor));
 
 const order = await salesService.createOrderFromQuotation(scope, branches, quotation.id, "warehouse-hq-main", actor);
+await assert.rejects(
+  () => salesService.createOrderFromQuotation(scope, branches, quotation.id, "warehouse-hq-main", actor),
+  /has already been created from this quotation/,
+);
 await salesService.transitionOrder(scope, branches, order.id, "confirm", actor);
 await salesService.transitionOrder(scope, branches, order.id, "process", actor);
 
@@ -44,6 +65,19 @@ assert.equal(payment.remainingBalance, invoice.outstandingAmount - 100);
 
 const result = await salesService.completeReturn(scope, branches, { salesOrderId: order.id, deliveryNoteId: delivery.id, invoiceId: invoice.id, warehouseId: "warehouse-hq-main", locationId: "loc-hq-main", reason: "QA customer return", notes: "Usable return", items: [{ productId: "prod-002", variantId: "", quantity: 1, condition: "usable", batchReference: "", serialReferences: [] }] }, actor);
 assert.equal(result.creditNote.accountingStatus, "prepared");
+const returnedOrder = (await salesService.listOrders(scope, { branchId: "all", permittedBranchIds: branches, pageSize: 100 })).data.find((row) => row.id === order.id);
+assert.equal(returnedOrder?.status, "returned");
+const returnAudit = returnedOrder?.auditEntries.find((entry) => entry.action === "Returned");
+assert.equal(returnAudit?.remarks, result.salesReturn.referenceNumber);
+assert.deepEqual(returnAudit?.changes, [
+  { field: "status", before: "delivered", after: "returned" },
+  { field: "salesReturn", before: undefined, after: result.salesReturn.referenceNumber },
+]);
+const tenantReturnAudit = await auditEventService.list(
+  { tenantId: scope.tenantId, permittedBranchIds: branches, canView: true, canExport: false, canViewSensitive: true, canViewSecurity: false },
+  { search: order.referenceNumber, pageSize: 100 },
+);
+assert(tenantReturnAudit.data.some((entry) => entry.action === "Returned" && entry.newValues?.status === "returned"));
 const afterReturn = await inventoryService.listStockBalances(scope, { branchId: "branch-001", warehouseId: "warehouse-hq-main", locationId: "loc-hq-main", productId: "prod-002", permittedBranchIds: branches });
 assert.equal(afterReturn.reduce((sum, balance) => sum + balance.quantityOnHand, 0), beforeQuantity - 1);
 const returnMovements = await inventoryService.listStockMovements(scope, { branchId: "branch-001", reference: result.salesReturn.referenceNumber });
@@ -56,5 +90,12 @@ assert((await salesService.getCommissions(scope, branches)).length > 0);
 const exported = await salesService.export("invoices", scope, { branchId: "all", permittedBranchIds: branches, pageSize: 100 });
 assert(exported.length > 0);
 assert(exported.every((row) => row.Branch === "branch-001"));
+const exportedCreditNotes = await salesService.export("creditNotes", scope, { branchId: "all", permittedBranchIds: branches, pageSize: 100 });
+const exportedCreditNote = exportedCreditNotes.find((row) => row.Reference === result.creditNote.referenceNumber);
+assert(exportedCreditNote);
+assert.equal(exportedCreditNote.Customer, "Global Industries Ltd.");
+assert.equal(exportedCreditNote.Status, "Prepared");
+assert.equal(exportedCreditNote.Created, formatDateTime(result.creditNote.createdAt));
+assert(!exportedCreditNote.Created.includes("T"));
 
 console.log("Sales QA checks passed.");

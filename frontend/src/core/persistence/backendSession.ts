@@ -15,6 +15,7 @@ import { mockTenants } from '@/core/tenant/mocks/tenants';
 import type { User } from '@/core/auth/types/user';
 import type { Tenant } from '@/core/tenant/types/tenant';
 import { toUrlSlug } from '@/shared/utils/slug';
+import { TENANT_MODULES, expandModuleDependencies, tenantEntitlementService, type TenantEntitlements, type TenantModule } from '@/core/tenant/tenantEntitlements';
 
 const KEYS = APP_CONSTANTS.STORAGE_KEYS;
 
@@ -77,13 +78,33 @@ function normalizeBackendUser(user: User): User {
 }
 
 /** Places the authenticated user and tenant into the arrays the providers read from. */
+/**
+ * The modules and limits the Super Admin set for this company, as sent by the server at sign-in.
+ * Companies without a configuration (existing or newly provisioned ones) keep every module.
+ */
+export function tenantEntitlementsFromServer(tenant: Tenant): TenantEntitlements {
+  const configured = (tenant as { entitlements?: Partial<TenantEntitlements> }).entitlements;
+  const known = new Set<string>(TENANT_MODULES);
+  const listed = Array.isArray(configured?.enabledModules)
+    ? configured.enabledModules.filter((module): module is TenantModule => known.has(module))
+    : [];
+  const enabledModules = listed.length > 0 ? expandModuleDependencies(listed) : [...TENANT_MODULES];
+  return {
+    enabledModules,
+    limits: { maxUsers: 1000, maxBranches: 100, ...(configured?.limits ?? {}) },
+    usage: { currentUsers: 0, currentBranches: 0, ...(configured?.usage ?? {}) },
+    admin: configured?.admin ?? { name: tenant.contactName || tenant.name, email: tenant.ownerEmail || '', status: 'active' },
+  };
+}
+
 export function upsertIdentity(user: User, tenant: Tenant | null): void {
   const normalizedUser = normalizeBackendUser(user);
   const userIndex = mockUsers.findIndex((candidate) => candidate.id === normalizedUser.id);
   if (userIndex >= 0) mockUsers[userIndex] = normalizedUser;
   else mockUsers.push(normalizedUser);
   if (tenant) {
-    const normalizedTenant = { ...tenant, slug: tenant.slug || toUrlSlug(tenant.subdomain || tenant.name) };
+    const normalizedTenant = { ...tenant, slug: tenant.slug || toUrlSlug(tenant.subdomain || tenant.name), entitlements: tenantEntitlementsFromServer(tenant) };
+    tenantEntitlementService.set(normalizedTenant.id, normalizedTenant.entitlements);
     const tenantIndex = mockTenants.findIndex((candidate) => candidate.id === tenant.id);
     if (tenantIndex >= 0) mockTenants[tenantIndex] = normalizedTenant;
     else mockTenants.push(normalizedTenant);

@@ -193,13 +193,40 @@ function SalesDetail({
   const action = async (type: "print" | "share" | "email") => {
     if (!row) return;
     try {
-      await mutations.documentAction(type, row);
-      appToast.success(
-        `${type === "email" ? "Email" : type[0].toUpperCase() + type.slice(1)} prepared for ${row.referenceNumber}.`,
-      );
+      if (type === "print") {
+        window.print();
+        return;
+      }
+
+      const documentUrl = new URL(window.location.href);
+      documentUrl.searchParams.set("record", row.id);
+      documentUrl.searchParams.set("reference", row.referenceNumber);
+      const shareUrl = documentUrl.toString();
+      const title = `${kind === "deliveries" ? "Delivery Note" : "Sales Document"} ${row.referenceNumber}`;
+
+      if (type === "share") {
+        if (typeof navigator.share === "function") {
+          await navigator.share({ title, text: title, url: shareUrl });
+          appToast.success(`${row.referenceNumber} shared.`);
+        } else if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(shareUrl);
+          appToast.success(`Share link copied for ${row.referenceNumber}.`);
+        } else {
+          window.prompt(`Copy the share link for ${row.referenceNumber}:`, shareUrl);
+        }
+        return;
+      }
+
+      const subject = encodeURIComponent(title);
+      const body = encodeURIComponent(`Please review ${title}:\n\n${shareUrl}`);
+      const emailLink = window.document.createElement("a");
+      emailLink.href = `mailto:?subject=${subject}&body=${body}`;
+      emailLink.click();
+      appToast.success(`Email draft opened for ${row.referenceNumber}.`);
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       appToast.error(
-        getErrorMessage(error, "Unable to prepare document action."),
+        getErrorMessage(error, `Unable to ${type} ${row.referenceNumber}.`),
       );
     }
   };
@@ -698,9 +725,41 @@ export function SalesDashboardPage() {
   return <ModuleDashboardPage module="sales" />;
 }
 
-function QuotationConversion({ row }: { row: SalesQuotation }) {
+function QuotationConversion({
+  row,
+  existingOrder,
+  isOrderLookupPending,
+  isOrderLookupFailed,
+}: {
+  row: SalesQuotation;
+  existingOrder?: SalesOrder;
+  isOrderLookupPending: boolean;
+  isOrderLookupFailed: boolean;
+}) {
   const warehouses = useWarehouseOptions(row.branchId),
     mutations = useSalesMutations();
+
+  if (existingOrder) {
+    return (
+      <Button
+        size="sm"
+        variant="secondary"
+        disabled
+        title={`Created as ${existingOrder.referenceNumber}`}
+      >
+        Order Created
+      </Button>
+    );
+  }
+
+  if (isOrderLookupPending || isOrderLookupFailed) {
+    return (
+      <Button size="sm" variant="secondary" disabled>
+        {isOrderLookupFailed ? "Order Status Unavailable" : "Checking Order"}
+      </Button>
+    );
+  }
+
   return (
     <ConfirmAction
       label="Create Order"
@@ -718,6 +777,7 @@ function QuotationConversion({ row }: { row: SalesQuotation }) {
 export function SalesQuotationsPage() {
   const filters = useFilters(),
     query = useSalesQuotations(filters.params),
+    orders = useSalesOrders({ branchId: "all", pageSize: Number.MAX_SAFE_INTEGER }),
     mutations = useSalesMutations(),
     [open, setOpen] = useState(false),
     [editing, setEditing] = useState<SalesQuotation | null>(null);
@@ -798,7 +858,16 @@ export function SalesQuotationsPage() {
           />
         </>
       )}
-      {row.status === "accepted" && <QuotationConversion row={row} />}
+      {row.status === "accepted" && (
+        <QuotationConversion
+          row={row}
+          existingOrder={orders.data?.data.find(
+            (order) => order.sourceQuotationId === row.id,
+          )}
+          isOrderLookupPending={orders.isLoading}
+          isOrderLookupFailed={orders.isError}
+        />
+      )}
     </div>
   );
   const close = () => {
@@ -909,6 +978,7 @@ export function SalesOrdersPage() {
           "processing",
           "partially_delivered",
           "delivered",
+          "returned",
           "cancelled",
         ]}
         query={query}
@@ -1024,12 +1094,19 @@ export function SalesInvoicesPage() {
 export function CustomerPaymentsPage() {
   const filters = useFilters(),
     query = useCustomerPayments(filters.params),
+    invoices = useSalesInvoices({ branchId: "all", pageSize: Number.MAX_SAFE_INTEGER }),
     customers = useSalesCustomerOptions(),
     currency = useTenantCurrency(),
     [open, setOpen] = useState(false);
   const columns: Column<CustomerPayment>[] = [
     { key: "referenceNumber", header: "Payment" },
-    { key: "invoiceId", header: "Invoice", render: (row) => row.invoiceId },
+    {
+      key: "invoiceId",
+      header: "Invoice",
+      render: (row) =>
+        invoices.data?.data.find((invoice) => invoice.id === row.invoiceId)
+          ?.referenceNumber ?? "Invoice unavailable",
+    },
     {
       key: "customerId",
       header: "Customer",
@@ -1091,7 +1168,7 @@ export function CustomerPaymentsPage() {
           columns={columns}
           data={query.data?.data ?? []}
           keyField="id"
-          isLoading={query.isLoading}
+          isLoading={query.isLoading || invoices.isLoading}
           emptyTitle="No customer payments"
           emptyMessage="Received payments will appear here."
           pagination={{
