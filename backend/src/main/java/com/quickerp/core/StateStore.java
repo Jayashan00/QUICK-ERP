@@ -1082,6 +1082,5 @@ public final class StateStore {
                             + "to_jsonb(CAST(? AS text)), true), '{entitlements}', CAST(? AS jsonb), true), updated_at = now() WHERE id = ?",
                     status, status, Sql.writeJson(mapper, entitlements), id);
         }
-        return entitlements;
     }
 }
