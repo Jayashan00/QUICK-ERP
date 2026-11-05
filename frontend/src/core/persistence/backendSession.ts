@@ -14,7 +14,6 @@ import { mockUsers } from '@/core/auth/mocks/users';
 import { mockTenants } from '@/core/tenant/mocks/tenants';
 import type { User } from '@/core/auth/types/user';
 import type { Tenant } from '@/core/tenant/types/tenant';
-import { tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 import { toUrlSlug } from '@/shared/utils/slug';
 import { TENANT_MODULES, expandModuleDependencies, tenantEntitlementService, type TenantEntitlements, type TenantModule } from '@/core/tenant/tenantEntitlements';
 
@@ -105,7 +104,8 @@ export function upsertIdentity(user: User, tenant: Tenant | null): void {
   else mockUsers.push(normalizedUser);
   if (tenant) {
     const normalizedTenant = { ...tenant, slug: tenant.slug || toUrlSlug(tenant.subdomain || tenant.name) };
-    if (tenant.entitlements) tenantEntitlementService.set(tenant.id, tenant.entitlements);
+    // Use the server's module configuration when it has one (normalized: known modules, dependencies, numeric limits).
+    if (tenant.entitlements) tenantEntitlementService.set(tenant.id, tenantEntitlementsFromServer(tenant));
     const tenantIndex = mockTenants.findIndex((candidate) => candidate.id === tenant.id);
     if (tenantIndex >= 0) mockTenants[tenantIndex] = normalizedTenant;
     else mockTenants.push(normalizedTenant);

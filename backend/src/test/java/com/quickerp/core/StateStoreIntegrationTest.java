@@ -385,12 +385,12 @@ class StateStoreIntegrationTest {
         assertTrue(raised.rejected().get(0).message().contains("credit limit"));
     }
 
-    /** Modules switched on or off in the Super Admin console reach the company's users at sign-in. */
+    /** Modules switched on or off in the Super Admin console reach the company's users at sign-in; unknown modules are refused. */
     @Test
     void superAdminModuleSettingsReachTheCompanyAtSignIn() throws Exception {
         Principal superAdmin = login("superadmin@quickerp.test");
         JsonNode foundation = json("{\"tenants\":[{\"id\":\"tenant-001\",\"status\":\"active\","
-                + "\"enabledModules\":[\"customers\",\"products\",\"sales\",\"settings\",\"Bad Name!\"],\"limits\":{\"maxUsers\":20,\"maxBranches\":3,\"hack\":\"x\"}}]}");
+                + "\"enabledModules\":[\"customers\",\"products\",\"sales\",\"settings\"],\"limits\":{\"maxUsers\":20,\"maxBranches\":3}}]}");
         assertEquals(List.of(), store.applyBatch(superAdmin, new StateStore.BatchRequest("it",
                 List.of(change("platform.foundation", StateStore.VALUE_RECORD, foundation)), List.of())).rejected());
 
@@ -398,9 +398,17 @@ class StateStoreIntegrationTest {
         JsonNode entitlements = signIn.tenant().path("entitlements");
         assertEquals("[\"customers\",\"products\",\"sales\",\"settings\"]", entitlements.path("enabledModules").toString());
         assertEquals(20, entitlements.path("limits").path("maxUsers").asInt());
-        assertFalse(entitlements.path("limits").has("hack"));
         // Company users never receive the platform configuration itself.
         assertTrue(store.load(auth.authenticate(signIn.token())).records().stream().noneMatch(r -> r.collection().equals("platform.foundation")));
+
+        // A configuration with an unknown module is refused as a whole, and the stored modules stay unchanged.
+        JsonNode invalid = json("{\"tenants\":[{\"id\":\"tenant-001\",\"status\":\"active\",\"enabledModules\":[\"settings\",\"Bad Name!\"]}]}");
+        StateStore.BatchResult refused = store.applyBatch(superAdmin, new StateStore.BatchRequest("it-2",
+                List.of(change("platform.foundation", StateStore.VALUE_RECORD, invalid)), List.of()));
+        assertEquals(1, refused.rejected().size());
+        assertTrue(refused.rejected().get(0).message().contains("unknown module"));
+        assertEquals("[\"customers\",\"products\",\"sales\",\"settings\"]",
+                auth.login("admin@quickerp.test", PASSWORD, "10.9.9.8").tenant().path("entitlements").path("enabledModules").toString());
     }
 
     @Test
