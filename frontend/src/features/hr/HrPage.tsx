@@ -55,7 +55,7 @@ function HrPageWorkspace({ section }: { section: string }) {
   const workerName = (id: string) => { const row = hrService.employees(scope).find((item) => item.id === id); return row ? `${row.firstName} ${row.lastName}` : id; };
   const action = (title: string, operation: () => unknown) => setConfirm({ title, action: operation });
   const currentBranch = branchFilter || scope.branchId;
-  const saveEmployee = (value: EmployeeValues) => run(() => hrService.saveEmployee(scope, actor, { ...value, id: editing?.id, salary: Number(value.salary), exitDate: value.exitDate || undefined, reportingManagerId: value.reportingManagerId || undefined, emergencyContactName: value.emergencyContactName || undefined, emergencyContactPhone: value.emergencyContactPhone || undefined, address: value.address || undefined, notes: value.notes || undefined }), 'Employee saved.');
+  const saveEmployee = (value: EmployeeValues) => run(() => hrService.saveEmployee(scope, actor, { ...value, id: editing?.id, salary: Number(value.salary), exitDate: value.exitDate || undefined, emergencyContactName: value.emergencyContactName || undefined, emergencyContactPhone: value.emergencyContactPhone || undefined, address: value.address || undefined, notes: value.notes || undefined }), 'Employee saved.');
   const saveOperation = (kind: OperationKind, value: OperationValues) => run(() => {
     switch (kind) {
       case 'shift': return hrService.saveShift(scope, actor, { branchId: currentBranch, name: value.name, start: value.start, end: value.end, breakMinutes: Number(value.breakMinutes), active: true });
@@ -75,7 +75,7 @@ function HrPageWorkspace({ section }: { section: string }) {
   let body: ReactNode;
 
   if (section === 'employees') {
-    body = <><div className="mb-4 flex justify-end">{can(P.HR.EMPLOYEES_CREATE) && <Button onClick={() => { setEditing(undefined); setModal('employee'); }}>Add employee</Button>}</div><Table headers={['Code', 'Name', 'Branch', 'Department', 'Designation', 'Status', 'Actions']} rows={workers.map((row) => ({ key: row.id, cells: [row.employeeCode, <Link className="font-medium text-blue-700" to={`/hr/employees/${row.id}`}>{row.firstName} {row.lastName}</Link>, row.branchId, row.departmentName, row.designationName, <Status value={row.status} />, can(P.HR.EMPLOYEES_EDIT) ? <Button variant="ghost" size="sm" onClick={() => { setEditing(row); setModal('employee'); }}>Edit</Button> : '—'] }))} /></>;
+    body = <><div className="mb-4 flex justify-end">{can(P.HR.EMPLOYEES_CREATE) && <Button onClick={() => { setEditing(undefined); setModal('employee'); }}>Add employee</Button>}</div><Table headers={['Code', 'Name', 'Role', 'Branch', 'Department', 'Designation', 'Status', 'Actions']} rows={workers.map((row) => ({ key: row.id, cells: [row.employeeCode, <Link className="font-medium text-blue-700" to={`/hr/employees/${row.id}`}>{row.firstName} {row.lastName}</Link>, row.roleName ?? 'Employee', row.branchId, row.departmentName, row.designationName, <Status value={row.status} />, can(P.HR.EMPLOYEES_EDIT) && !row.userId ? <Button variant="ghost" size="sm" onClick={() => { setEditing(row); setModal('employee'); }}>Edit</Button> : row.userId ? 'Managed in Team & Access' : '—'] }))} /></>;
   } else if (section === 'profile') {
     let worker: Employee | undefined; try { worker = hrService.employee(scope, employeeId ?? ''); } catch { /* unavailable */ }
     if (!worker) body = <ErrorState title="Employee unavailable" message="This employee is not in a permitted branch." />;

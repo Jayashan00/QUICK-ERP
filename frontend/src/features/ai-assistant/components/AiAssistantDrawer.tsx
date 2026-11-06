@@ -10,15 +10,22 @@ import type { TenantModule } from '@/core/tenant/tenantEntitlements';
 import { useAiAssistant } from '../hooks/useAiAssistant';
 import { AssistantResponse } from './AssistantResponse';
 
-type Suggestion = { question: string; module: TenantModule; permissions: string[] };
+type Suggestion = { question: string; module?: TenantModule; permissions: string[] };
 const SUGGESTIONS: Suggestion[] = [
   { question: "What is today's sales total?", module: 'sales', permissions: ['sales.view'] },
   { question: 'Which products are low in stock?', module: 'inventory', permissions: ['inventory.stock.view'] },
   { question: 'Show overdue invoices.', module: 'sales', permissions: ['sales.view'] },
+  { question: 'Give me customer names and details.', module: 'customers', permissions: ['customers.view'] },
+  { question: 'How many suppliers do we have?', module: 'suppliers', permissions: ['suppliers.suppliers.view'] },
+  { question: 'Give me supplier names and details.', module: 'suppliers', permissions: ['suppliers.suppliers.view'] },
   { question: 'How many employees are absent today?', module: 'hr', permissions: ['hr.attendance.view'] },
   { question: 'Give me employee names, roles, and details.', module: 'hr', permissions: ['hr.employees.view'] },
   { question: 'What are the latest purchase orders?', module: 'purchases', permissions: ['purchase.view'] },
   { question: "Show this month's expenses.", module: 'finance', permissions: ['finance.expenses.view'] },
+  { question: 'Show my accessible support tickets.', permissions: ['support.view'] },
+  { question: 'Show the latest audit logs.', permissions: ['audit.view'] },
+  { question: 'Show my notifications.', module: 'notifications', permissions: ['notifications.view'] },
+  { question: 'Show our company settings.', module: 'settings', permissions: ['settings.company.view'] },
 ];
 
 const PLATFORM_SUGGESTIONS = [
@@ -62,8 +69,8 @@ export function AiAssistantDrawer() {
   const suggestions = useMemo(() => user?.isSuperAdmin
     ? PLATFORM_SUGGESTIONS.map((question) => ({ question }))
     : SUGGESTIONS.filter((item) =>
-      currentTenant?.entitlements.enabledModules.includes(item.module) && hasAnyPermission(item.permissions),
-    ).slice(0, 4), [currentTenant, hasAnyPermission, user?.isSuperAdmin]);
+      (!item.module || currentTenant?.entitlements.enabledModules.includes(item.module)) && hasAnyPermission(item.permissions),
+    ).slice(0, 8), [currentTenant, hasAnyPermission, user?.isSuperAdmin]);
 
   useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages, isLoading]);
@@ -127,7 +134,7 @@ export function AiAssistantDrawer() {
         className={`fixed right-6 z-40 grid h-[52px] w-[52px] touch-none cursor-pointer place-items-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/25 transition-colors hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-200 active:cursor-grabbing ${launcherY === null ? 'bottom-6' : ''} ${open ? 'pointer-events-none opacity-0' : 'opacity-100'}`}
         disabled={open}
         aria-hidden={open}
-        aria-label="Open Quick ERP AI Assistant"
+        aria-label="Open VYRO Assistant"
         title="Open assistant · drag up or down"
       >
         <Bot className="h-6 w-6" />
@@ -137,16 +144,16 @@ export function AiAssistantDrawer() {
       <aside
         className={`fixed inset-y-0 right-0 z-50 flex w-full max-w-md transform flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-200 ${open ? 'translate-x-0' : 'translate-x-full'}`}
         aria-hidden={!open}
-        aria-label="Quick ERP AI Assistant"
+        aria-label="VYRO Assistant"
       >
         <header className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
           <div className="flex items-center gap-3">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-600 text-white"><Bot className="h-5 w-5" /></span>
-            <div><h2 className="font-semibold text-slate-900">Quick ERP Assistant</h2><p className="text-xs text-slate-500">Read-only · scoped to your access</p></div>
+            <h2 className="font-semibold text-slate-900">VYRO Assistant</h2>
           </div>
           <div className="flex items-center gap-1">
             <button type="button" onClick={() => void clear()} disabled={isLoading || messages.length === 0} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-40" aria-label="Clear conversation"><Trash2 className="h-4 w-4" /></button>
-            <button type="button" onClick={() => setOpen(false)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close AI Assistant"><X className="h-5 w-5" /></button>
+            <button type="button" onClick={() => setOpen(false)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close VYRO Assistant"><X className="h-5 w-5" /></button>
           </div>
         </header>
 
@@ -154,7 +161,6 @@ export function AiAssistantDrawer() {
           {messages.length === 0 && (
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900"><Sparkles className="h-4 w-4 text-blue-600" />Ask about your ERP data</div>
-              <p className="text-sm leading-6 text-slate-600">Answers use approved read-only tools and only the tenant, branch, modules, and records your role may access.</p>
               {suggestions.length > 0 && <div className="mt-4 grid gap-2">{suggestions.map((item) => (
                 <button key={item.question} type="button" onClick={() => void send(item.question)} className="rounded-xl border border-slate-200 px-3 py-2 text-left text-sm text-slate-700 transition hover:border-blue-300 hover:bg-blue-50">{item.question}</button>
               ))}</div>}
@@ -164,13 +170,25 @@ export function AiAssistantDrawer() {
           {messages.map((message) => (
             <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               {message.role === 'assistant'
-                ? <AssistantResponse content={message.content} data={message.data} source={message.source} />
+                ? <AssistantResponse
+                    content={message.content}
+                    data={message.data}
+                    source={message.source}
+                    suggestions={message.source?.tool === 'greeting' || message.source?.tool === 'capabilities' ? suggestions.map((item) => item.question) : undefined}
+                    onSuggestion={(question) => { void send(question); }}
+                  />
                 : <div className={`max-w-[88%] rounded-2xl rounded-br-md bg-blue-600 px-4 py-3 text-sm leading-6 text-white shadow-sm ${message.failed ? 'opacity-60' : ''}`}><p className="whitespace-pre-wrap">{message.content}</p></div>}
             </div>
           ))}
 
           {isLoading && <div className="flex justify-start"><div className="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-4 py-3 shadow-sm"><span className="flex gap-1" aria-label="Assistant is typing"><i className="h-2 w-2 animate-bounce rounded-full bg-slate-400" /><i className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:120ms]" /><i className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:240ms]" /></span></div></div>}
-          {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"><p>{error}</p><button type="button" onClick={retry} disabled={isLoading} className="mt-2 inline-flex items-center gap-1 font-semibold text-red-700 hover:text-red-900"><RotateCcw className="h-3.5 w-3.5" />Retry</button></div>}
+          {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <p>{error}</p>
+            {suggestions.length > 0 && <div className="mt-3 grid gap-2">{suggestions.map((item) => (
+              <button key={item.question} type="button" onClick={() => void send(item.question)} disabled={isLoading} className="rounded-lg border border-red-200 bg-white px-3 py-2 text-left text-xs leading-5 text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50">{item.question}</button>
+            ))}</div>}
+            <button type="button" onClick={retry} disabled={isLoading} className="mt-3 inline-flex items-center gap-1 font-semibold text-red-700 hover:text-red-900"><RotateCcw className="h-3.5 w-3.5" />Retry</button>
+          </div>}
         </div>
 
         <footer className="border-t border-slate-200 bg-white p-4">

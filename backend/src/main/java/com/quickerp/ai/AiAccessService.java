@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Set;
 import static com.quickerp.ai.AiModels.AccessContext;
 import static com.quickerp.ai.AiModels.Intent;
+import static com.quickerp.ai.AiResourceCatalog.Resource;
 
 public final class AiAccessService {
     private final Db db;
@@ -29,6 +30,10 @@ public final class AiAccessService {
     }
 
     public AccessContext resolve(Principal principal, String requestedBranchId, Intent intent) {
+        return resolve(principal, requestedBranchId, intent, null);
+    }
+
+    public AccessContext resolve(Principal principal, String requestedBranchId, Intent intent, Resource resource) {
         enforceAudience(principal.superAdmin(), intent);
         if (principal.superAdmin()) {
             return new AccessContext(Principal.PLATFORM_TENANT, principal.userId(), principal.roleId(), Set.of("*"),
@@ -53,13 +58,15 @@ public final class AiAccessService {
             if (allowedBranches.isEmpty()) allowedBranches.addAll(strings(userProfile.path("branchIds")));
             String branchId = requestedBranchId == null || requestedBranchId.isBlank() ? text(userProfile, "defaultBranchId") : requestedBranchId.trim();
             enforce(intent, permissions, enabledModules, allowedBranches, branchId);
+            if (resource != null) enforce(resource, permissions, enabledModules);
             return new AccessContext(principal.tenantId(), principal.userId(), principal.roleId(), permissions.granted(),
                     enabledModules, List.copyOf(allowedBranches), branchId);
         });
     }
 
     static void enforceAudience(boolean superAdmin, Intent intent) {
-        if (superAdmin && intent != Intent.COMPANY_DETAILS && intent != Intent.UNSUPPORTED) {
+        if (superAdmin && intent != Intent.COMPANY_DETAILS && intent != Intent.GREETING
+                && intent != Intent.HELP && intent != Intent.UNSUPPORTED) {
             throw ApiException.forbidden("Super Admin AI access is limited to platform company information.");
         }
         if (!superAdmin && intent == Intent.COMPANY_DETAILS) {
@@ -77,6 +84,16 @@ public final class AiAccessService {
             throw new ApiException(403, "module_disabled", "This module is not enabled for your company.");
         }
         if (!intent.permissions().isEmpty() && !permissions.matchesAny(intent.permissions())) {
+            throw new ApiException(403, "insufficient_permission", "You do not have permission to access this ERP information.");
+        }
+    }
+
+    static void enforce(Resource resource, Permissions permissions, Set<String> enabledModules) {
+        if (resource.module() != null && !enabledModules.contains(resource.module())
+                && !("inventory".equals(resource.module()) && enabledModules.contains("stock"))) {
+            throw new ApiException(403, "module_disabled", "This module is not enabled for your company.");
+        }
+        if (!resource.permissions().isEmpty() && !permissions.matchesAny(resource.permissions())) {
             throw new ApiException(403, "insufficient_permission", "You do not have permission to access this ERP information.");
         }
     }

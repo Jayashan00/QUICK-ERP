@@ -18,10 +18,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 import static com.quickerp.ai.AiModels.AccessContext;
 import static com.quickerp.ai.AiModels.Intent;
 import static com.quickerp.ai.AiModels.ToolResult;
+import static com.quickerp.ai.AiResourceCatalog.Resource;
 
 /** Approved, aggregate-first, read-only access to ERP records. No model-generated SQL is accepted. */
 public final class AiDataTools {
@@ -35,13 +37,21 @@ public final class AiDataTools {
     }
 
     public ToolResult execute(Intent intent, AccessContext scope, String question) {
+        return execute(intent, scope, question, null);
+    }
+
+    public ToolResult execute(Intent intent, AccessContext scope, String question, Resource resource) {
         return db.snapshot(connection -> switch (intent) {
+            case GREETING -> greeting(scope);
+            case HELP -> help(scope);
             case TODAY_SALES -> salesSummary(read(connection, scope, "sales.invoices"), scope);
             case LOW_STOCK -> lowStock(read(connection, scope, "inventory.balances"), read(connection, scope, "products.records"), scope);
             case STOCK_LEVEL -> stockLevels(read(connection, scope, "inventory.balances"), read(connection, scope, "products.records"), scope, question);
             case OVERDUE_INVOICES -> overdueInvoices(read(connection, scope, "sales.invoices"), scope);
             case CUSTOMER_BALANCES -> customerBalances(read(connection, scope, "sales.invoices"), scope);
             case CUSTOMER_DETAILS -> customerDetails(read(connection, scope, "customers.records"), scope);
+            case SUPPLIERS -> supplierSummary(read(connection, scope, "suppliers.records"), scope);
+            case SUPPLIER_DETAILS -> supplierDetails(read(connection, scope, "suppliers.records"), scope);
             case PURCHASE_ORDERS -> purchaseOrders(read(connection, scope, "purchases.orders"), scope);
             case EMPLOYEES -> employees(read(connection, scope, "hr.employees"), scope);
             case EMPLOYEE_DETAILS -> employeeDetails(read(connection, scope, "hr.employees"), scope);
@@ -51,8 +61,130 @@ public final class AiDataTools {
             case EXPENSES -> expenses(read(connection, scope, "accounting.expenses"), scope);
             case PROJECTS -> projects(read(connection, scope, "projects.projects"), scope);
             case COMPANY_DETAILS -> companyDetails(connection, scope);
+            case DATA_QUERY -> accessibleData(read(connection, scope, resource.collection()), scope, resource);
             default -> throw new IllegalArgumentException("This intent does not have a data tool.");
         });
+    }
+
+    private ToolResult greeting(AccessContext scope) {
+        ObjectNode data = base("assistant", "greeting", scope).put("greeting", true);
+        return result(data, "Hi, welcome to VYRO Assistant. How can I help you?");
+    }
+
+    private ToolResult help(AccessContext scope) {
+        ObjectNode data = base("assistant", "capabilities", scope).put("help", true);
+        return result(data, "I can help you find ERP information available to your role. Try one of the example questions below.");
+    }
+
+    private ToolResult accessibleData(List<JsonNode> rows, AccessContext scope, Resource resource) {
+        List<JsonNode> records = rows.stream()
+                .filter(row -> genericRowAllowed(row, scope, resource))
+                .toList();
+        ArrayNode items = mapper.createArrayNode();
+        records.stream().sorted(Comparator.comparing(AiDataTools::recordTimestamp).reversed()).limit(MAX_ROWS)
+                .forEach(row -> items.add(sanitizeRecord(row, scope, resource)));
+        ObjectNode data = base(resource.module() == null ? "system" : resource.module(), "queryAccessibleData", scope)
+                .put("resource", resource.key()).put("label", resource.label())
+                .put("count", records.size()).put("returned", items.size()).set("items", items);
+        String fallback = records.isEmpty()
+                ? "No " + resource.label().toLowerCase(Locale.ROOT) + " were found in your permitted scope."
+                : "Found " + records.size() + " " + resource.label().toLowerCase(Locale.ROOT)
+                    + " record(s) in your permitted scope. Showing " + items.size() + ".";
+        return result(data, fallback);
+    }
+
+    static boolean genericRowAllowed(JsonNode row, AccessContext scope, Resource resource) {
+        if (!genericBranchAllowed(row, scope)) return false;
+        Permissions permissions = Permissions.of(scope.permissions());
+        String collection = resource.collection();
+        if ("support.tickets".equals(collection) && !permissions.matches("support.manage")) {
+            return scope.userId().equals(text(row.path("createdBy"), "id"));
+        }
+        if ("notifications.records".equals(collection)) {
+            String required = text(row, "requiredPermission");
+            if (!required.isBlank() && !permissions.matches(required)) return false;
+            if ("user".equals(text(row, "audience")) && !scope.userId().equals(text(row, "userId"))) return false;
+        }
+        if ("notifications.notices".equals(collection)) {
+            String audience = text(row, "audience");
+            if ("users".equals(audience) && !contains(row.path("userIds"), scope.userId())) return false;
+            if ("branch".equals(audience) && !scope.allowedBranchIds().contains(text(row, "branchId"))) return false;
+        }
+        if ("core.auditEvents".equals(collection)) {
+            String sensitivity = text(row, "sensitivity");
+            if ("security".equals(sensitivity) && !permissions.matches("audit.security.view")) return false;
+            if ("sensitive".equals(sensitivity) && !permissions.matches("audit.sensitive.view")) return false;
+        }
+        if ("documents.records".equals(collection) && row.path("sensitive").asBoolean(false)
+                && !permissions.matches("documents.view_sensitive")) return false;
+        return true;
+    }
+
+    private static boolean genericBranchAllowed(JsonNode row, AccessContext scope) {
+        if (!scope.tenantId().equals(text(row, "tenantId"))) return false;
+        String branch = text(row, "branchId");
+        if (branch.isBlank()) return true;
+        if (scope.permissions().contains("*")) return scope.allowedBranchIds().contains(branch);
+        return isRowAllowed(row, scope);
+    }
+
+    private ObjectNode sanitizeRecord(JsonNode row, AccessContext scope, Resource resource) {
+        ObjectNode sanitized = mapper.createObjectNode();
+        if (row == null || !row.isObject()) return sanitized;
+        Permissions permissions = Permissions.of(scope.permissions());
+        row.fields().forEachRemaining(entry -> {
+            String field = entry.getKey();
+            JsonNode value = entry.getValue();
+            if (isBlockedField(field) || value == null || value.isNull()) return;
+            if ("employees".equals(resource.key()) && "salary".equals(field) && !permissions.matches("hr.payroll.view")) return;
+            if (value.isValueNode() || (value.isArray() && scalarArray(value))) {
+                sanitized.set(field, value.deepCopy());
+            } else if (value.isObject() && safeNestedField(field)) {
+                ObjectNode nested = mapper.createObjectNode();
+                value.fields().forEachRemaining(child -> {
+                    if (!isBlockedField(child.getKey()) && child.getValue().isValueNode()) {
+                        nested.set(child.getKey(), child.getValue().deepCopy());
+                    }
+                });
+                if (!nested.isEmpty()) sanitized.set(field, nested);
+            }
+        });
+        return sanitized;
+    }
+
+    private static boolean safeNestedField(String field) {
+        return Set.of("address", "billingAddress", "shippingAddress", "primaryContact", "createdBy",
+                "assignedSupportUser", "manager", "admin", "limits", "usage").contains(field);
+    }
+
+    private static boolean isBlockedField(String field) {
+        String key = field.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+        return key.contains("password") || key.contains("secret") || key.contains("token")
+                || key.contains("credential") || key.contains("recoverycode") || key.contains("apikey")
+                || key.contains("privatekey") || key.contains("bankdetails") || key.equals("accountnumber")
+                || key.contains("encryptionkey") || key.equals("salt") || key.equals("passwordhash")
+                || Set.of("conversation", "timeline", "auditentries", "history", "attachments", "documents",
+                        "previousvalues", "newvalues").contains(key);
+    }
+
+    private static boolean scalarArray(JsonNode value) {
+        if (!value.isArray() || value.size() > 30) return false;
+        for (JsonNode item : value) if (!item.isValueNode()) return false;
+        return true;
+    }
+
+    private static boolean contains(JsonNode array, String expected) {
+        if (array == null || !array.isArray()) return false;
+        for (JsonNode item : array) if (expected.equals(item.asText())) return true;
+        return false;
+    }
+
+    private static String recordTimestamp(JsonNode row) {
+        for (String field : List.of("updatedAt", "createdAt", "date", "invoiceDate", "orderDate")) {
+            String value = text(row, field);
+            if (!value.isBlank()) return value;
+        }
+        return "";
     }
 
     private List<JsonNode> read(java.sql.Connection connection, AccessContext scope, String collection) throws Exception {
@@ -147,6 +279,35 @@ public final class AiDataTools {
         return result(data, items.isEmpty()
                 ? "No customer details were found in the permitted branch."
                 : customerDetailsFallback(items));
+    }
+
+    private ToolResult supplierSummary(List<JsonNode> rows, AccessContext scope) {
+        List<JsonNode> records = filter(rows, scope, ignored -> true);
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        records.forEach(row -> counts.merge(text(row, "status"), 1, Integer::sum));
+        ObjectNode statuses = mapper.createObjectNode();
+        counts.forEach(statuses::put);
+        ObjectNode data = base("suppliers", "getSupplierSummary", scope)
+                .put("total", records.size()).set("statuses", statuses);
+        return result(data, records.isEmpty()
+                ? "No suppliers were found in your permitted company scope."
+                : "Your permitted company scope has " + records.size() + " supplier(s): " + counts + ".");
+    }
+
+    private ToolResult supplierDetails(List<JsonNode> rows, AccessContext scope) {
+        List<JsonNode> records = filter(rows, scope, ignored -> true);
+        ArrayNode items = mapper.createArrayNode();
+        records.stream().limit(MAX_ROWS).forEach(row -> {
+            ObjectNode item = mapper.createObjectNode();
+            copyFields(row, item, "id", "code", "name", "category", "contactPerson", "email", "phone",
+                    "mobile", "website", "currency", "paymentTermsDays", "paymentMethod", "status", "address",
+                    "createdAt", "updatedAt");
+            items.add(item);
+        });
+        ObjectNode data = base("suppliers", "getSupplierDetails", scope).put("count", items.size()).set("items", items);
+        return result(data, items.isEmpty()
+                ? "No supplier details were found in your permitted company scope."
+                : supplierDetailsFallback(items));
     }
 
     private ToolResult purchaseOrders(List<JsonNode> rows, AccessContext scope) {
@@ -309,6 +470,19 @@ public final class AiDataTools {
                     .append(" - Code: ").append(text(item, "code"))
                     .append(", Type: ").append(text(item, "type"))
                     .append(", Status: ").append(text(item, "status"))
+                    .append(", Email: ").append(text(item, "email"))
+                    .append(", Phone: ").append(text(item, "phone"));
+        }
+        return answer.toString();
+    }
+    private static String supplierDetailsFallback(ArrayNode items) {
+        StringBuilder answer = new StringBuilder("Supplier details in your permitted company scope:");
+        for (int index = 0; index < items.size(); index++) {
+            JsonNode item = items.get(index);
+            answer.append('\n').append(index + 1).append(". ").append(text(item, "name"))
+                    .append(" - Code: ").append(text(item, "code"))
+                    .append(", Status: ").append(text(item, "status"))
+                    .append(", Contact: ").append(text(item, "contactPerson"))
                     .append(", Email: ").append(text(item, "email"))
                     .append(", Phone: ").append(text(item, "phone"));
         }

@@ -5,8 +5,9 @@ import { designationService } from '@/features/settings/organization/services/de
 import type { DocumentRecord } from '@/shared/types/document-record';
 import { documentService } from '@/features/documents/documentService';
 import { auditEventService } from '@/core/audit';
+import type { User } from '@/core/auth/types/user';
 import { salesStore } from '@/features/sales/services/salesStore';
-import { registerList, replaceArray } from '@/core/persistence/stateRegistry';
+import { getStateAccessor, registerList, replaceArray } from '@/core/persistence/stateRegistry';
 
 export type HrScope = { tenantId: string; branchId: string; permittedBranchIds: string[] };
 export type HrActor = { id: string; name: string };
@@ -55,32 +56,94 @@ export function calculateStatutoryContributions(base: number, allowance: number,
 const today = () => new Date().toISOString().slice(0, 10);
 const permitted = (scope: HrScope, branchId: string) => scope.permittedBranchIds.includes(branchId);
 function assertBranch(scope: HrScope, branchId: string) { if (!scope.tenantId || !permitted(scope, branchId)) throw new Error('Branch access is not permitted.'); }
+function teamMemberEmployees(): Employee[] {
+  const accessor = getStateAccessor('core.users');
+  const users = accessor?.kind === 'list' ? accessor.get() as User[] : [];
+  const employeeEmails = new Set(employees.map((row) => `${row.tenantId}:${row.email.trim().toLowerCase()}`));
+  const isAdminRole = (roleName: string) => /\badmin(?:istrator)?\b/i.test(roleName);
+  const usedCodes = new Map<string, Set<number>>();
+  for (const row of employees) {
+    const match = /^EMP-(\d+)$/.exec(row.employeeCode);
+    if (!match) continue;
+    const tenantCodes = usedCodes.get(row.tenantId) ?? new Set<number>();
+    tenantCodes.add(Number(match[1]));
+    usedCodes.set(row.tenantId, tenantCodes);
+  }
+  const nextCode = (tenantId: string) => {
+    const tenantCodes = usedCodes.get(tenantId) ?? new Set<number>();
+    let number = 1;
+    while (tenantCodes.has(number)) number++;
+    tenantCodes.add(number);
+    usedCodes.set(tenantId, tenantCodes);
+    return `EMP-${String(number).padStart(4, '0')}`;
+  };
+  return users
+    .filter((user) => !user.isSuperAdmin && !isAdminRole(user.roleName) && !employeeEmails.has(`${user.tenantId}:${user.email.trim().toLowerCase()}`))
+    .sort((left, right) => left.tenantId.localeCompare(right.tenantId) || left.createdAt.localeCompare(right.createdAt) || left.slug.localeCompare(right.slug))
+    .flatMap((user) => {
+    const branchId = user.defaultBranchId || user.allowedBranchIds[0] || user.branchIds[0];
+    if (!branchId) return [];
+    return [{
+      id: `team-${user.slug}`,
+      userId: user.id,
+      roleName: user.roleName,
+      tenantId: user.tenantId,
+      branchId,
+      employeeCode: nextCode(user.tenantId),
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      phone: user.phone ?? '—',
+      departmentId: user.departmentId ?? '',
+      departmentName: user.department ?? 'Not assigned',
+      designationId: user.designationId ?? '',
+      designationName: user.designation ?? user.jobTitle ?? 'Not assigned',
+      employmentType: 'full_time' as const,
+      status: user.status,
+      dateOfJoining: user.createdAt.slice(0, 10),
+      salary: 0,
+      currency: 'LKR',
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    }];
+  });
+}
+function allEmployees() { return [...employees, ...teamMemberEmployees()]; }
+function nextEmployeeCode(tenantId: string) {
+  const highest = allEmployees().filter((row) => row.tenantId === tenantId).reduce((maximum, row) => {
+    const match = /^EMP-(\d+)$/.exec(row.employeeCode);
+    return match ? Math.max(maximum, Number(match[1])) : maximum;
+  }, 0);
+  return `EMP-${String(highest + 1).padStart(4, '0')}`;
+}
 function audit(scope: HrScope, actor: HrActor, action: string, reference: string, employeeId?: string, note?: string) {
   const event: HrAudit = { id: uid('hr-audit'), tenantId: scope.tenantId, branchId: scope.branchId, employeeId, action, reference, actor: actor.name, at: new Date().toISOString(), note };
   auditLog.unshift(event);
   auditEventService.record({ id: `tenant-${event.id}`, tenantId: event.tenantId, branchId: event.branchId, actorId: actor.id, actorName: actor.name, module: 'hr', entityType: employeeId ? 'Employee Record' : 'HR Record', entityId: employeeId ?? reference, reference, action, description: `${actor.name} ${action.toLowerCase()} ${reference}.`, remarks: note, createdAt: event.at, relatedRoute: '/hr', sensitivity: 'sensitive' });
 }
 function visible<T extends { tenantId: string; branchId: string }>(rows: T[], scope: HrScope, branchId?: string) { return rows.filter((row) => row.tenantId === scope.tenantId && permitted(scope, row.branchId) && (!branchId || row.branchId === branchId)); }
-function employee(scope: HrScope, id: string) { const item = employees.find((row) => row.id === id && row.tenantId === scope.tenantId && permitted(scope, row.branchId)); if (!item) throw new Error('Employee not found in permitted branches.'); return item; }
+function employee(scope: HrScope, id: string) { const item = allEmployees().find((row) => row.id === id && row.tenantId === scope.tenantId && permitted(scope, row.branchId)); if (!item) throw new Error('Employee not found in permitted branches.'); return item; }
 function hours(start: string, end: string) { const [sh, sm] = start.split(':').map(Number), [eh, em] = end.split(':').map(Number); return (eh * 60 + em - sh * 60 - sm) / 60; }
 function days(start: string, end: string) { return Math.floor((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1; }
 
 export const hrService = {
-  employees: (scope: HrScope, branchId?: string) => visible(employees, scope, branchId),
+  employees: (scope: HrScope, branchId?: string) => visible(allEmployees(), scope, branchId),
   employee: (scope: HrScope, id: string) => employee(scope, id),
-  async saveEmployee(scope: HrScope, actor: HrActor, input: Omit<Employee, 'id' | 'tenantId' | 'departmentName' | 'designationName' | 'createdAt' | 'updatedAt'> & { id?: string }) {
+  async saveEmployee(scope: HrScope, actor: HrActor, input: Omit<Employee, 'id' | 'tenantId' | 'employeeCode' | 'departmentName' | 'designationName' | 'createdAt' | 'updatedAt'> & { id?: string; employeeCode?: string }) {
     assertBranch(scope, input.branchId);
-    if (!input.employeeCode.trim() || !input.firstName.trim() || !input.lastName.trim() || !/^\S+@\S+\.\S+$/.test(input.email) || input.phone.replace(/\D/g, '').length < 7 || !input.dateOfJoining || input.salary < 0) throw new Error('Complete the required employee fields with valid contact and salary details.');
+    if (!input.firstName.trim() || !input.lastName.trim() || !/^\S+@\S+\.\S+$/.test(input.email) || input.phone.replace(/\D/g, '').length < 7 || !input.dateOfJoining || input.salary < 0) throw new Error('Complete the required employee fields with valid contact and salary details.');
     if (input.exitDate && input.exitDate < input.dateOfJoining) throw new Error('Exit date cannot precede joining date.');
-    if (employees.some((row) => row.tenantId === scope.tenantId && row.employeeCode === input.employeeCode && row.id !== input.id)) throw new Error('Employee code already exists.');
+    const previous = input.id ? employees.find((row) => row.id === input.id && row.tenantId === scope.tenantId && permitted(scope, row.branchId)) : undefined;
+    if (input.id && !previous) throw new Error('Employee not found in permitted branches.');
+    const employeeCode = previous?.employeeCode ?? (input.employeeCode?.trim() || nextEmployeeCode(scope.tenantId));
+    if (employees.some((row) => row.tenantId === scope.tenantId && row.employeeCode === employeeCode && row.id !== input.id)) throw new Error('Employee code already exists.');
     const department = await departmentService.getDepartmentById(scope.tenantId, input.departmentId);
     const designation = await designationService.getDesignationById(scope.tenantId, input.designationId);
     if (!department || !designation || designation.departmentId !== department.id) throw new Error('Choose a valid department and its designation.');
     if (input.reportingManagerId && input.reportingManagerId === input.id) throw new Error('Employee cannot report to themselves.');
     if (input.reportingManagerId) employee(scope, input.reportingManagerId);
-    const previous = input.id ? employee(scope, input.id) : undefined;
     const now = new Date().toISOString();
-    const item: Employee = { ...input, id: input.id ?? uid('emp'), tenantId: scope.tenantId, departmentName: department.name, designationName: designation.name, createdAt: previous?.createdAt ?? now, updatedAt: now };
+    const item: Employee = { ...input, employeeCode, id: input.id ?? uid('emp'), tenantId: scope.tenantId, departmentName: department.name, designationName: designation.name, createdAt: previous?.createdAt ?? now, updatedAt: now };
     employees = [item, ...employees.filter((row) => row.id !== item.id)];
     audit({ ...scope, branchId: input.branchId }, actor, previous ? 'Employee updated' : 'Employee created', item.employeeCode, item.id);
     return item;
