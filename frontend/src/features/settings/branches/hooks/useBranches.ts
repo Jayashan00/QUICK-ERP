@@ -40,6 +40,15 @@ export function useBranches(initialParams: GetBranchesParams = {}) {
     enabled: Boolean(tenantId),
   });
 
+  const branchCountQuery = useQuery({
+    queryKey: branchKeys.count(tenantId ?? ''),
+    queryFn: () => {
+      if (!tenantId) throw new Error('Tenant context is unavailable.');
+      return branchService.getBranchCount(tenantId);
+    },
+    enabled: Boolean(tenantId),
+  });
+
   const createMutation = useMutation({
     mutationFn: (data: CreateBranchInput) => {
       if (!tenantId) throw new Error('Tenant context is unavailable.');
@@ -73,6 +82,7 @@ export function useBranches(initialParams: GetBranchesParams = {}) {
 
   return {
     branches: branchesQuery.data?.data ?? [],
+    branchCount: branchCountQuery.data,
     total: branchesQuery.data?.total ?? 0,
     isLoading: branchesQuery.isLoading,
     isFetching: branchesQuery.isFetching,

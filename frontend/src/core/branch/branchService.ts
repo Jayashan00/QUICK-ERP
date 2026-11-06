@@ -5,6 +5,14 @@ import { tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 
 let branchesStore: Branch[] = [...mockBranches];
 
+function synchronizeBranchUsage(rows: readonly Branch[]) {
+  const counts = new Map<string, number>();
+  for (const branch of rows) counts.set(branch.tenantId, (counts.get(branch.tenantId) ?? 0) + 1);
+  for (const [tenantId, currentBranches] of counts) tenantEntitlementService.updateUsage(tenantId, { currentBranches });
+}
+
+synchronizeBranchUsage(branchesStore);
+
 export interface GetBranchesParams {
   search?: string;
   status?: string;
@@ -23,6 +31,11 @@ export interface PaginatedBranchesResult {
 export type CreateBranchInput = Omit<Branch, 'id' | 'createdAt' | 'updatedAt' | 'tenantId'>;
 
 export const branchService = {
+  async getBranchCount(tenantId: string): Promise<number> {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return branchesStore.filter((branch) => branch.tenantId === tenantId).length;
+  },
+
   async getAllBranches(tenantId: string): Promise<Branch[]> {
     await new Promise((resolve) => setTimeout(resolve, 150));
     return branchesStore
@@ -148,4 +161,4 @@ export const branchService = {
 };
 
 // Backend persistence registration (see src/core/persistence).
-registerList('core.branches', () => branchesStore, (rows) => { branchesStore = rows; });
+registerList('core.branches', () => branchesStore, (rows) => { branchesStore = rows; synchronizeBranchUsage(rows); });
