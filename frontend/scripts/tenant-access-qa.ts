@@ -36,6 +36,20 @@ for (const permission of Object.values(TENANT_PERMISSIONS).flatMap((group) => Ob
 assert.deepEqual(tenantEntitlementService.get('tenant-002')?.enabledModules, ['hr', 'inventory', 'stock', 'products', 'settings']);
 
 const tenantA = tenantEntitlementService.get('tenant-001')!;
+assert.equal(tenantA.usage.currentBranches, await branchService.getBranchCount('tenant-001'));
+assert.equal(tenantA.usage.currentUsers, await userService.getUserCount('tenant-001'));
+const generatedRole = await roleService.createRole('tenant-001', { name: 'Quality Coordinator', description: 'QA role-code check', isActive: true });
+const duplicateGeneratedRole = await roleService.createRole('tenant-001', { name: 'Quality Coordinator', description: 'QA duplicate role-code check', isActive: true });
+assert.equal(generatedRole.code, 'quality_coordinator');
+assert.equal(duplicateGeneratedRole.code, 'quality_coordinator_2');
+await roleService.savePermissions('tenant-001', generatedRole.id, [TENANT_PERMISSIONS.POS.VIEW]);
+const atomicPosRole = await roleService.getRoleById('tenant-001', generatedRole.id);
+assert.deepEqual(
+  Object.values(TENANT_PERMISSIONS.POS).filter((permission) => !atomicPosRole?.permissions.includes(permission)),
+  [],
+);
+await roleService.deleteRole('tenant-001', generatedRole.id);
+await roleService.deleteRole('tenant-001', duplicateGeneratedRole.id);
 tenantEntitlementService.set('tenant-001', { ...tenantA, enabledModules: ['hr', 'settings'] });
 const catalog = await permissionMatrixService.getCatalog('tenant-001');
 assert.ok(catalog.some((group) => group.module === 'hr'));
@@ -53,6 +67,13 @@ await permissionMatrixService.saveRolePermissions('tenant-001', 'role-002', []);
 const rolePermissionsAfter = (await roleService.getRoleById('tenant-001', 'role-002'))!.permissions;
 assert.ok(rolePermissionsBefore.includes('sales.quotations.view'));
 assert.ok(rolePermissionsAfter.includes('sales.quotations.view'));
+const viewerRole = await roleService.getRoleById('tenant-001', 'role-005');
+assert.deepEqual(viewerRole?.assignedUsers.map((user) => user.name).sort(), ['Audit Viewer', 'Inactive User']);
+const posCashierRole = await roleService.getRoleById('tenant-001', 'role-009');
+assert.deepEqual(
+  Object.values(TENANT_PERMISSIONS.POS).filter((permission) => !posCashierRole?.permissions.includes(permission)),
+  [],
+);
 
 const foundation = await platformService.getFoundation();
 const acme = foundation.tenants.find((tenant) => tenant.id === 'tenant-001')!;
