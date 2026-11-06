@@ -25,7 +25,7 @@ export function useAiAssistant(currentBranchId: string | null) {
         id: crypto.randomUUID(), role: 'assistant', content: response.message, data: response.data, source: response.source,
       }]);
     } catch (caught) {
-      const message = caught instanceof ApiError ? caught.message : 'The AI assistant is unavailable. Try again.';
+      const message = caught instanceof ApiError ? caught.message : 'VYRO Assistant is unavailable. Try again.';
       setError(message);
       setMessages((current) => current.map((item) => item.id === userMessage.id ? { ...item, failed: true } : item));
     } finally {

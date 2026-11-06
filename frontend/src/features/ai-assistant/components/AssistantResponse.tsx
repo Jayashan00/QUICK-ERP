@@ -4,9 +4,9 @@ import type { AiSource } from '../types';
 type JsonRecord = Record<string, unknown>;
 type AnswerBlock = { type: 'text'; content: string } | { type: 'list'; items: string[] };
 
-const INTERNAL_FIELDS = new Set(['module', 'tool', 'tenantId', 'productId', 'items', 'count', 'sensitiveFieldsIncluded']);
-const TITLE_FIELDS = new Set(['name', 'firstName', 'lastName', 'customer', 'reference']);
-const SUBTITLE_FIELDS = new Set(['reference', 'sku', 'employeeCode', 'designationName']);
+const INTERNAL_FIELDS = new Set(['module', 'tool', 'tenantId', 'productId', 'items', 'count', 'returned', 'resource', 'label', 'greeting', 'help', 'sensitiveFieldsIncluded']);
+const TITLE_FIELDS = new Set(['name', 'legalName', 'title', 'subject', 'firstName', 'lastName', 'customer', 'reference', 'referenceNumber', 'ticketNumber', 'code']);
+const SUBTITLE_FIELDS = new Set(['reference', 'referenceNumber', 'ticketNumber', 'code', 'sku', 'employeeCode', 'designationName']);
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -84,7 +84,8 @@ function detailEntries(record: JsonRecord) {
 
 function recordTitle(record: JsonRecord, index: number) {
   const fullName = [record.firstName, record.lastName].filter(Boolean).join(' ');
-  return String(record.name || fullName || record.customer || record.reference || record.employeeCode || `Result ${index + 1}`);
+  return String(record.name || record.legalName || record.title || record.subject || fullName || record.customer
+    || record.reference || record.referenceNumber || record.ticketNumber || record.code || record.employeeCode || `Result ${index + 1}`);
 }
 
 function statusClasses(status: string) {
@@ -96,7 +97,7 @@ function statusClasses(status: string) {
 
 function RecordCard({ record, index }: { record: JsonRecord; index: number }) {
   const title = recordTitle(record, index);
-  const subtitles = ['reference', 'employeeCode', 'designationName', 'sku']
+  const subtitles = ['reference', 'referenceNumber', 'ticketNumber', 'code', 'employeeCode', 'designationName', 'sku']
     .map((key) => record[key])
     .filter((value) => value !== null && value !== undefined && value !== '' && String(value) !== title)
     .map(String);
@@ -147,10 +148,19 @@ function SummaryGrid({ data }: { data: JsonRecord }) {
   );
 }
 
-export function AssistantResponse({ content, source, data }: { content: string; source?: AiSource; data?: unknown }) {
+interface AssistantResponseProps {
+  content: string;
+  source?: AiSource;
+  data?: unknown;
+  suggestions?: string[];
+  onSuggestion?: (question: string) => void;
+}
+
+export function AssistantResponse({ content, source, data, suggestions = [], onSuggestion }: AssistantResponseProps) {
   const structured = isRecord(data) ? data : null;
   const items = structured && Array.isArray(structured.items) ? structured.items.filter(isRecord) : [];
-  const title = source ? humanize(source.tool) : 'Assistant Response';
+  const isIntroduction = source?.tool === 'greeting' || source?.tool === 'capabilities';
+  const title = isIntroduction ? 'VYRO Assistant' : source ? humanize(source.tool) : 'Assistant Response';
   const fallbackUsed = content.includes('AI provider was temporarily unavailable');
 
   return (
@@ -159,9 +169,9 @@ export function AssistantResponse({ content, source, data }: { content: string; 
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-600"><Bot className="h-4 w-4" /></span>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold text-slate-900">{title}</h3>
-          <p className="text-[11px] text-slate-500">Authorized ERP result</p>
+          <p className="text-[11px] text-slate-500">{isIntroduction ? 'Here to help with your ERP' : 'Authorized ERP result'}</p>
         </div>
-        {source?.module && <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{source.module}</span>}
+        {source?.module && !isIntroduction && <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{source.module}</span>}
       </div>
 
       <div className="space-y-3 p-4">
@@ -173,14 +183,27 @@ export function AssistantResponse({ content, source, data }: { content: string; 
         ) : (
           <>
             <PlainAnswer content={content} />
-            {structured && <SummaryGrid data={structured} />}
+            {structured && !isIntroduction && <SummaryGrid data={structured} />}
           </>
+        )}
+
+        {suggestions.length > 0 && onSuggestion && (
+          <div className="border-t border-slate-100 pt-3">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Example questions for your role</p>
+            <div className="grid gap-2">
+              {suggestions.map((question) => (
+                <button key={question} type="button" onClick={() => onSuggestion(question)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-xs leading-5 text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700">
+                  {question}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
 
         {fallbackUsed && <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-700">Shown directly from authorized ERP data while the AI provider reconnects.</p>}
       </div>
 
-      {source && (
+      {source && !isIntroduction && (
         <div className="flex items-center gap-1.5 border-t border-slate-100 px-4 py-2.5 text-[10px] font-medium text-slate-400">
           <Database className="h-3 w-3" />
           <span className="capitalize">{source.module}</span>
