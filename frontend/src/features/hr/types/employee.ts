@@ -1,9 +1,11 @@
 import { BaseEntity, EntityId } from '@/shared/types/common';
 
 export type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'intern';
-export type EmploymentStatus = 'active' | 'on_leave' | 'terminated' | 'resigned';
+export type EmploymentStatus = 'active' | 'inactive' | 'suspended' | 'invited' | 'on_leave' | 'terminated' | 'resigned';
 
 export interface Employee extends BaseEntity {
+  userId?: EntityId;
+  roleName?: string;
   tenantId: EntityId;
   branchId: EntityId;
   employeeCode: string;

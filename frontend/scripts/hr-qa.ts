@@ -5,6 +5,7 @@ import { designationService } from '../src/features/settings/organization/servic
 import { TENANT_PERMISSIONS } from '../src/core/permissions/tenantPermissionConstants';
 import { hasPermission } from '../src/core/permissions/permissionUtils';
 import { salesService } from '../src/features/sales/services/salesService';
+import '../src/core/auth/userService';
 
 const scope: HrScope = { tenantId: 'tenant-001', branchId: 'branch-001', permittedBranchIds: ['branch-001'] };
 const other: HrScope = { tenantId: 'tenant-other', branchId: 'branch-001', permittedBranchIds: ['branch-001'] };
@@ -12,12 +13,18 @@ const actor = { id: 'qa', name: 'HR QA' };
 assert.equal(hasPermission([TENANT_PERMISSIONS.HR.PAYROLL_VIEW], TENANT_PERMISSIONS.HR.PAYROLL_APPROVE), false);
 assert.equal(hrService.employees(other).length, 0);
 assert.ok(hrService.employees(scope).length > 0);
+assert.equal(hrService.employees(scope).some((row) => /\badmin(?:istrator)?\b/i.test(row.roleName ?? '')), false);
+const linkedManager = hrService.employees(scope).find((row) => row.userId === 'usr-002');
+assert.equal(linkedManager?.roleName, 'Sales Manager');
+assert.match(linkedManager?.employeeCode ?? '', /^EMP-\d{4}$/);
+assert.equal(new Set(hrService.employees(scope).map((row) => row.employeeCode)).size, hrService.employees(scope).length);
 assert.ok(hrService.employees({ ...scope, branchId: 'branch-002', permittedBranchIds: ['branch-002'] }).every((row) => row.branchId === 'branch-002'));
 assert.ok((await departmentService.getDepartmentById(scope.tenantId, 'dept-001')));
 assert.ok((await designationService.getDesignationById(scope.tenantId, 'des-005')));
 await assert.rejects(() => hrService.saveEmployee(scope, actor, { branchId: 'branch-002', employeeCode: 'QA-INVALID', firstName: 'A', lastName: 'B', email: 'a@b.test', phone: '1234567', departmentId: 'dept-001', designationId: 'des-005', employmentType: 'full_time', status: 'active', dateOfJoining: '2026-09-30', salary: 100, currency: 'USD' }));
 
-const worker = await hrService.saveEmployee(scope, actor, { branchId: scope.branchId, employeeCode: 'EMP-QA', firstName: 'QA', lastName: 'Worker', email: 'qa@work.test', phone: '123456789', departmentId: 'dept-001', designationId: 'des-005', employmentType: 'full_time', status: 'active', dateOfJoining: '2026-09-01', salary: 3000, currency: 'USD' });
+const worker = await hrService.saveEmployee(scope, actor, { branchId: scope.branchId, firstName: 'QA', lastName: 'Worker', email: 'qa@work.test', phone: '123456789', departmentId: 'dept-001', designationId: 'des-005', employmentType: 'full_time', status: 'active', dateOfJoining: '2026-09-01', salary: 3000, currency: 'USD' });
+assert.match(worker.employeeCode, /^EMP-\d{4}$/);
 const shift = hrService.saveShift(scope, actor, { branchId: scope.branchId, name: 'QA day', start: '09:00', end: '17:00', breakMinutes: 60, active: true });
 hrService.assignShift(scope, actor, { branchId: scope.branchId, employeeId: worker.id, shiftId: shift.id, date: '2026-09-29' });
 const attendance = hrService.recordAttendance(scope, actor, { branchId: scope.branchId, employeeId: worker.id, date: '2026-09-29', checkIn: '09:15', checkOut: '17:30', source: 'manual' });
