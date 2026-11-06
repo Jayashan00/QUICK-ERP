@@ -12,20 +12,28 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import static com.quickerp.ai.AiModels.HistoryMessage;
+import static com.quickerp.ai.AiModels.Classification;
 import static com.quickerp.ai.AiModels.ToolResult;
 
 /** Backend-only Gemini adapter. The model receives scoped tool results, never credentials or database access. */
 public final class GeminiClient {
     private static final String INTENT_PROMPT = """
             Classify the user's ERP question into exactly one approved intent. Understand spelling mistakes,
-            broken grammar, abbreviations and natural wording. Return JSON only as {\"intent\":\"NAME\"}.
+            broken grammar, abbreviations, natural wording, and Sinhala written with English letters (Singlish).
+            Examples: "oyt puluwm monw krnnd" means what can you do; "suppliersla kiyk innwd" asks
+            how many suppliers there are; "supliers details denn" asks for supplier details.
+            Return JSON only as {\"intent\":\"NAME\",\"resource\":\"RESOURCE_KEY_OR_EMPTY\"}.
             Never invent an intent. Available intents:
+            GREETING: a greeting such as hi, hello, hey, or good morning with no ERP question.
+            HELP: what the assistant can do, how it can help, or what questions the user can ask.
             TODAY_SALES: sales or revenue for today/current day.
             LOW_STOCK: low stock, reorder alerts, items running out.
             STOCK_LEVEL: quantity/on-hand/available stock for a named product or general stock levels.
             OVERDUE_INVOICES: overdue or past-due customer invoices.
             CUSTOMER_BALANCES: unpaid invoices, receivables, customer outstanding balances.
             CUSTOMER_DETAILS: customer names, codes, types, statuses, contact details, addresses, credit terms, or customer lists.
+            SUPPLIERS: supplier/vendor count or active/inactive/pending supplier summary.
+            SUPPLIER_DETAILS: supplier/vendor names, codes, contacts, locations, terms, statuses, or supplier lists.
             PURCHASE_ORDERS: latest/recent/pending purchase orders.
             EMPLOYEES: employee or staff count, workforce size, active/inactive employee summary.
             EMPLOYEE_DETAILS: employee names, roles, departments, contact or employment details, staff lists, or details about a named employee.
@@ -34,11 +42,16 @@ public final class GeminiClient {
             PAYROLL: payroll or payslip summary.
             EXPENSES: expenses, spending or costs this month.
             PROJECTS: project, milestone or project-status summary.
-            COMPANY_DETAILS: platform company/tenant names, statuses, configuration, usage, administrator or contact details.
+            COMPANY_DETAILS: Super Admin requests for all platform companies/tenants, their statuses, configuration or usage.
+            Questions about the current user's own company name/profile/settings must use DATA_QUERY with company_settings.
+            DATA_QUERY: any request to view, count, list, summarize, find or explain data from one approved ERP resource below.
+            For DATA_QUERY, resource must be exactly one key from the approved resource catalog. Prefer DATA_QUERY when
+            the question is about a resource not fully covered by a more specific intent.
             WRITE_ACTION: any request to create, edit, delete, approve, post, pay, transfer or otherwise change ERP data.
-            UNSUPPORTED: greetings, non-ERP questions, secrets/configuration requests, or data outside these approved tools.
+            UNSUPPORTED: non-ERP questions, credential/secret requests, or data outside the approved resource catalog.
             Classification never grants access; authorization is enforced separately by the server.
-            """;
+            Approved resource catalog:
+            """ + AiResourceCatalog.classifierCatalog();
     private final ObjectMapper mapper;
     private final HttpClient http;
     private final String apiKey;
@@ -75,7 +88,7 @@ public final class GeminiClient {
         }
     }
 
-    public AiModels.Intent classify(String question) {
+    public Classification classify(String question) {
         if (apiKey.isBlank()) throw ApiException.serviceUnavailable("ai_configuration_error", "The AI provider is not configured. Contact your administrator.");
         try {
             ObjectNode body = mapper.createObjectNode();
@@ -84,15 +97,16 @@ public final class GeminiClient {
             body.putObject("generationConfig").put("temperature", 0).put("maxOutputTokens", 60).put("responseMimeType", "application/json");
             JsonNode classified = mapper.readTree(send(body));
             String value = classified.path("intent").asText("");
-            try { return AiModels.Intent.valueOf(value); }
-            catch (IllegalArgumentException ignored) { return AiModels.Intent.UNSUPPORTED; }
+            String resource = classified.path("resource").asText("");
+            try { return new Classification(AiModels.Intent.valueOf(value), resource); }
+            catch (IllegalArgumentException ignored) { return new Classification(AiModels.Intent.UNSUPPORTED, ""); }
         } catch (ApiException error) {
             throw error;
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
             throw ApiException.serviceUnavailable("ai_provider_unavailable", "The AI request was interrupted. Try again.");
         } catch (Exception error) {
-            return AiModels.Intent.UNSUPPORTED;
+            return new Classification(AiModels.Intent.UNSUPPORTED, "");
         }
     }
 
