@@ -1,6 +1,7 @@
 import type { GetUsersParams } from '@/core/auth/userService';
 export const userKeys = {
   all: ['settings', 'users'] as const,
+  count: (tenantId: string) => [...userKeys.all, 'count', tenantId] as const,
   lists: () => [...userKeys.all, 'list'] as const,
   list: (tenantId: string, params: GetUsersParams) => [...userKeys.lists(), tenantId, params] as const,
   details: () => [...userKeys.all, 'detail'] as const,
