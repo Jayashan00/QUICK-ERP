@@ -12,7 +12,7 @@ import { StatCard } from '@/shared/components/cards/StatCard';
 import { LoadingSpinner } from '@/shared/components/feedback/LoadingSpinner';
 import { EmptyState } from '@/shared/components/feedback/EmptyState';
 import { ErrorState } from '@/shared/components/feedback/ErrorState';
-import { formatCurrency } from '@/shared/utils/formatters';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 import type { Supplier } from '../types/supplier';
 import { useSupplierPerformance } from '../hooks/useSupplierPerformance';
 
@@ -21,6 +21,7 @@ interface SupplierPerformanceProps {
 }
 
 export function SupplierPerformance({ supplier }: SupplierPerformanceProps) {
+  const { formatMoney } = useTenantCurrency();
   const { performance, isLoading, error, refetch } = useSupplierPerformance(supplier.id);
 
   if (isLoading) {
@@ -64,7 +65,7 @@ export function SupplierPerformance({ supplier }: SupplierPerformanceProps) {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           title="Purchase order value"
-          value={formatCurrency(performance.totalPurchaseOrderValue, performance.currency)}
+          value={formatMoney(performance.totalPurchaseOrderValue, performance.currency)}
           icon={<CircleDollarSign size={19} />}
           description="Sum of supplier order totals"
         />
@@ -88,7 +89,7 @@ export function SupplierPerformance({ supplier }: SupplierPerformanceProps) {
         />
         <StatCard
           title="Open order value"
-          value={formatCurrency(performance.openPurchaseOrderValue, performance.currency)}
+          value={formatMoney(performance.openPurchaseOrderValue, performance.currency)}
           icon={<CircleDollarSign size={19} />}
           description="Value of issued or partial orders"
         />

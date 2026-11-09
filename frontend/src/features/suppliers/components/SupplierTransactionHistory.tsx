@@ -4,7 +4,8 @@ import { Card } from '@/shared/components/common/Card';
 import { DataTable } from '@/shared/components/tables/DataTable';
 import { StatusBadge } from '@/shared/components/common/StatusBadge';
 import { ErrorState } from '@/shared/components/feedback/ErrorState';
-import { formatCurrency, formatDate } from '@/shared/utils/formatters';
+import { formatDate } from '@/shared/utils/formatters';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 import { cn } from '@/shared/utils/cn';
 import type { Column } from '@/shared/components/tables/TableHeader';
 import type { Supplier, SupplierTransaction } from '../types/supplier';
@@ -22,7 +23,7 @@ const txnStatusTone: Record<string, 'success' | 'warning' | 'primary' | 'info' |
   void: 'default',
 };
 
-const columns: Column<SupplierTransaction>[] = [
+const columns = (formatMoney: (amount: number, currencyCode?: string) => string): Column<SupplierTransaction>[] => [
   {
     key: 'transactionNumber',
     header: 'Txn #',
@@ -67,7 +68,7 @@ const columns: Column<SupplierTransaction>[] = [
     render: (row) =>
       row.debit > 0 ? (
         <span className="font-medium text-red-700">
-          {formatCurrency(row.debit, row.currency)}
+          {formatMoney(row.debit, row.currency)}
         </span>
       ) : (
         <span className="text-slate-300">—</span>
@@ -79,7 +80,7 @@ const columns: Column<SupplierTransaction>[] = [
     render: (row) =>
       row.credit > 0 ? (
         <span className="font-medium text-emerald-700">
-          {formatCurrency(row.credit, row.currency)}
+          {formatMoney(row.credit, row.currency)}
         </span>
       ) : (
         <span className="text-slate-300">—</span>
@@ -90,7 +91,7 @@ const columns: Column<SupplierTransaction>[] = [
     header: 'Balance',
     render: (row) => (
       <span className="font-semibold text-slate-900">
-        {formatCurrency(row.balance, row.currency)}
+        {formatMoney(row.balance, row.currency)}
       </span>
     ),
   },
@@ -104,6 +105,7 @@ const columns: Column<SupplierTransaction>[] = [
 ];
 
 export function SupplierTransactionHistory({ supplier }: SupplierTransactionHistoryProps) {
+  const { formatMoney } = useTenantCurrency();
   const { transactions, isLoading, error } = useSupplierTransactions(supplier.id);
 
   if (error && !isLoading) {
@@ -130,11 +132,11 @@ export function SupplierTransactionHistory({ supplier }: SupplierTransactionHist
               <p className="text-xs text-slate-500">
                 {transactions.length} transaction(s) ·{' '}
                 <span className="text-red-600">
-                  Debits {formatCurrency(totalDebits, supplier.currency)}
+                  Debits {formatMoney(totalDebits, supplier.currency)}
                 </span>
                 {' / '}
                 <span className="text-emerald-600">
-                  Credits {formatCurrency(totalCredits, supplier.currency)}
+                  Credits {formatMoney(totalCredits, supplier.currency)}
                 </span>
               </p>
             )}
@@ -143,7 +145,7 @@ export function SupplierTransactionHistory({ supplier }: SupplierTransactionHist
       </div>
 
       <DataTable<SupplierTransaction>
-        columns={columns}
+        columns={columns(formatMoney)}
         data={transactions}
         keyField="id"
         isLoading={isLoading}

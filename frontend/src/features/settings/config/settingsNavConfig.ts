@@ -73,6 +73,13 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
         permission: PERMISSIONS.SETTINGS.DEPARTMENTS_VIEW,
       },
       {
+        label: 'Roles',
+        path: '/settings/roles',
+        icon: Shield,
+        description: 'Manage default and custom tenant roles',
+        permission: PERMISSIONS.SETTINGS.ROLES_VIEW,
+      },
+      {
         label: 'Designations',
         path: '/settings/designations',
         icon: BriefcaseBusiness,
@@ -93,13 +100,6 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
         icon: UserCheck,
         description: 'Team members, account access, and branch assignments',
         permission: PERMISSIONS.SETTINGS.USERS_VIEW,
-      },
-      {
-        label: 'Roles & Permissions',
-        path: '/settings/roles',
-        icon: Shield,
-        description: 'Manage default and custom tenant roles',
-        permission: PERMISSIONS.SETTINGS.ROLES_VIEW,
       },
       {
         label: 'Permission Matrix',

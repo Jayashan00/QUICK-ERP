@@ -9,6 +9,7 @@ import { usePermissions } from '@/core/permissions/permission-context';
 import { TENANT_PERMISSIONS as P } from '@/core/permissions';
 import { documentService } from '@/features/documents/documentService';
 import { Mail, Phone, MapPin, Building, Calendar, DollarSign, FileText, History } from 'lucide-react';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 
 interface CustomerDetailModalProps {
   customer: Customer | null;
@@ -26,6 +27,7 @@ export function CustomerDetailModal({
   const { tenantId } = useTenant();
   const { branchId, branches } = useBranch();
   const { hasPermission } = usePermissions();
+  const { formatMoney } = useTenantCurrency();
   if (!customer) return null;
   const linkedDocuments = tenantId && branchId && hasPermission(P.DOCUMENTS.VIEW)
     ? documentService.linkedPublic({ tenantId, branchId, permittedBranchIds: branches.map((branch) => branch.id) }, 'Customer', customer.id)
@@ -121,7 +123,7 @@ export function CustomerDetailModal({
           <div>
             <div className="text-xs font-medium text-slate-500">Credit Limit</div>
             <div className="mt-1 font-semibold text-slate-900">
-              {customer.creditLimit === undefined ? 'Not assigned' : new Intl.NumberFormat('en-US', { style: 'currency', currency: customer.currency }).format(customer.creditLimit)}
+              {customer.creditLimit === undefined ? 'Not assigned' : formatMoney(customer.creditLimit, customer.currency)}
             </div>
           </div>
           <div>
