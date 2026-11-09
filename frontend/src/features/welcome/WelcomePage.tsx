@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import vyroIcon from '@/assets/vyro-icon.png';
 import { Link } from 'react-router-dom';
-import { Boxes, Check, ChevronRight, ClipboardList, FolderKanban, GitBranch, LifeBuoy, ShieldCheck, ShoppingBag, Truck, UserRoundSearch, Users } from 'lucide-react';
+import { Boxes, ChevronRight, ClipboardList, FolderKanban, GitBranch, LifeBuoy, RotateCcw, ShieldCheck, ShoppingBag, Truck, UserRoundSearch, Users } from 'lucide-react';
+
+import './welcome.css';
 
 const modules = [
   { icon: ShoppingBag, title: 'Sales & POS', description: 'Manage quotations, orders, invoices and returns. Handle checkout, receipts and shifts at your point of sale.' },
@@ -14,93 +17,132 @@ const modules = [
 ];
 
 const workflow = [
-  { title: 'Start with a customer', description: 'Capture an enquiry and prepare a quotation.' },
-  { title: 'Make the sale', description: 'Create the order, delivery and invoice.' },
-  { title: 'Keep stock in view', description: 'Record the movements behind each stock change.' },
-  { title: 'Review the accounts', description: 'Follow payments and review accounting entries.' },
+  { icon: UserRoundSearch, title: 'Quotation accepted', description: 'The customer approves the price.' },
+  { icon: ShoppingBag, title: 'Sales order created', description: 'The team prepares the order.' },
+  { icon: Boxes, title: 'Stock dispatched', description: 'Inventory records the outgoing goods.' },
+  { icon: ClipboardList, title: 'Payment recorded', description: 'Accounts records the payment against the invoice.' },
 ];
 
 export function WelcomePage() {
+  const [replay, setReplay] = useState(0);
+  const [selectedModule, setSelectedModule] = useState(0);
+  const { icon: ModuleIcon, title: moduleTitle, description: moduleDescription } = modules[selectedModule];
+
   return (
     <div className="min-h-screen bg-white text-slate-900">
       <a href="#welcome-main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-10 focus:rounded-lg focus:bg-white focus:p-3 focus:text-blue-700">
         Skip to content
       </a>
-      <header className="border-b border-slate-200">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-5 sm:px-10">
-          <Link to="/" aria-label="VYRO home" className="flex items-center gap-3 rounded-md text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600">
+      <header className="border-b border-white/10 bg-[#141023] text-white">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-4 sm:px-10">
+          <Link to="/" aria-label="VYRO home" className="flex items-center gap-3 rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
             <img src={vyroIcon} alt="" width={40} height={40} className="size-10 shrink-0" />
-            <span className="text-xl font-extrabold tracking-tight">VYRO</span>
+            <span className="text-xl font-extrabold tracking-wide">VYRO</span>
           </Link>
-          <nav aria-label="Main navigation" className="flex items-center gap-4 sm:gap-8">
-            <a href="#modules" className="hidden rounded-md py-3 text-sm font-medium text-slate-600 hover:text-blue-700 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600 sm:block">Explore modules</a>
-            <Link to="/login" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 px-5 text-sm font-semibold text-slate-800 hover:border-blue-600 hover:text-blue-700 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600">
-              Login <ChevronRight size={16} aria-hidden="true" />
+          <nav aria-label="Main navigation" className="flex items-center gap-6">
+            <a href="#modules" className="hidden rounded-md py-3 text-sm font-medium text-violet-200 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300 sm:block">Explore modules</a>
+            <Link to="/login" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-white/25 px-4 text-sm font-semibold hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
+              Sign in <ChevronRight size={16} aria-hidden="true" />
             </Link>
           </nav>
         </div>
       </header>
 
       <main id="welcome-main">
-        <section aria-labelledby="welcome-title" className="mx-auto grid max-w-6xl items-center gap-12 px-6 py-14 sm:px-10 sm:py-20 lg:grid-cols-[1.15fr_1fr] lg:gap-20 lg:py-24">
-          <div>
-            <p className="mb-6 flex items-center gap-2 text-sm font-medium text-slate-600">
-              <span aria-hidden="true" className="size-2 rounded-full bg-blue-600" />
-              Welcome to VYRO
-            </p>
-            <h1 id="welcome-title" className="max-w-xl text-4xl font-bold leading-[1.1] tracking-[-0.035em] text-[#25194b] sm:text-5xl lg:text-[3.6rem]">
-              One ERP for your everyday business.
-            </h1>
-            <p className="mt-6 max-w-lg text-lg leading-relaxed text-slate-600">
-              VYRO brings sales, inventory, purchasing, accounting and your team into one system. Manage daily operations and follow the records behind your business, across every branch.
-            </p>
-            <ul className="mt-8 space-y-3 text-sm text-slate-700">
-              {['Follow sales from order to payment', 'See stock across your branches', 'Give your team access to the tools they need'].map((item) => (
-                <li key={item} className="flex items-start gap-3">
-                  <Check size={18} className="mt-0.5 shrink-0 text-blue-700" aria-hidden="true" />
-                  {item}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-8 flex flex-wrap items-center gap-4">
-              <Link to="/login" className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-blue-600 px-6 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600">
-                Login to VYRO <ChevronRight size={17} aria-hidden="true" />
-              </Link>
-              <a href="#modules" className="inline-flex min-h-12 items-center rounded-md px-2 text-sm font-semibold text-blue-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600">Explore the system</a>
+        <section aria-labelledby="welcome-title" className="vyro-welcome-hero text-white">
+          <div className="relative mx-auto max-w-7xl px-6 pb-12 pt-16 sm:px-10 sm:pb-20 sm:pt-24">
+            <div className="vyro-hero-copy mx-auto max-w-4xl text-center">
+              <p className="mb-5 text-sm font-semibold text-violet-200">VYRO ERP</p>
+              <h1 id="welcome-title" className="mx-auto max-w-4xl text-4xl font-bold leading-[1.04] tracking-[-0.055em] sm:text-6xl lg:text-7xl xl:text-[5.5rem]">
+                Run your business <span className="text-violet-300">in one place.</span>
+              </h1>
+              <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-violet-100 sm:text-lg">
+                Manage sales, inventory, purchasing and accounts in one workspace. Follow the same records as work moves between teams and branches.
+              </p>
+              <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
+                <Link to="/login" className="inline-flex min-h-12 items-center gap-2 rounded-lg bg-violet-200 px-5 text-sm font-bold text-[#25194b] hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
+                  Open workspace <ChevronRight size={17} aria-hidden="true" />
+                </Link>
+                <a href="#modules" className="inline-flex min-h-12 items-center rounded-md text-sm font-semibold text-violet-100 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">Explore modules</a>
+              </div>
+            </div>
+
+            <div className="vyro-preview mx-auto mt-12 max-w-5xl overflow-hidden rounded-2xl border border-violet-300/35 bg-[#171025] shadow-2xl sm:mt-16">
+              <div className="flex items-center justify-between gap-3 border-b border-white/15 px-5 py-4 sm:px-7">
+                <span className="flex items-center gap-2 text-sm font-semibold">
+                  <img src={vyroIcon} alt="" width={22} height={22} /> VYRO Workspace
+                </span>
+                <span className="text-xs text-violet-200">Product preview</span>
+              </div>
+              <div className="grid lg:grid-cols-[1.35fr_1fr]">
+                <div key={replay} className="min-w-0 p-5 sm:p-7">
+                  <p className="text-sm text-violet-300">Sales overview</p>
+                  <p className="mt-2 text-2xl font-semibold">From order to payment</p>
+                  <svg viewBox="0 0 420 145" className="mt-6 w-full" role="img" aria-label="Illustrative sales trend">
+                    <defs>
+                      <linearGradient id="vyro-chart-fill" x2="0" y2="1">
+                        <stop stopColor="#a78bfa" stopOpacity=".42" />
+                        <stop offset="1" stopColor="#a78bfa" stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M0 20H420 M0 55H420 M0 90H420 M0 125H420" fill="none" stroke="#fff" strokeOpacity=".13" />
+                    <path d="M0 119 C35 119 41 87 75 87 S118 107 149 96 S188 56 220 63 S260 84 292 54 S338 55 362 36 S397 28 420 11 V145 H0Z" fill="url(#vyro-chart-fill)" />
+                    <path className="vyro-chart-line" pathLength="1" d="M0 119 C35 119 41 87 75 87 S118 107 149 96 S188 56 220 63 S260 84 292 54 S338 55 362 36 S397 28 420 11" fill="none" stroke="#c4a8ff" strokeWidth="3" />
+                  </svg>
+                  <div className="mt-3 flex justify-between text-xs text-violet-200" aria-hidden="true">
+                    <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span>
+                  </div>
+                </div>
+                <aside aria-labelledby="workflow-title" className="min-w-0 border-t border-white/15 bg-[#211637] lg:border-l lg:border-t-0">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/15 px-5 py-5 sm:px-7">
+                    <div>
+                      <p className="text-xs font-medium text-violet-300">Example workflow</p>
+                      <h2 id="workflow-title" className="mt-1 text-lg font-semibold">Follow a sale</h2>
+                    </div>
+                    <button type="button" onClick={() => setReplay((value) => value + 1)} className="hidden min-h-10 items-center gap-2 rounded-lg border border-white/20 px-3 text-xs font-semibold text-violet-100 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300 motion-safe:inline-flex">
+                      <RotateCcw size={14} aria-hidden="true" /> Replay
+                    </button>
+                  </div>
+                  <ol key={replay} className="vyro-workflow px-5 py-3 sm:px-7">
+                    {workflow.map(({ icon: Icon, title, description }) => (
+                      <li key={title} className="vyro-workflow-step relative flex items-start gap-4 py-3">
+                        <span className="vyro-workflow-icon relative z-[1] grid size-10 shrink-0 place-items-center rounded-lg border border-violet-300/30 bg-[#30204f] text-violet-200">
+                          <Icon size={19} aria-hidden="true" />
+                        </span>
+                        <div>
+                          <h3 className="text-sm font-semibold">{title}</h3>
+                          <p className="mt-1 text-sm leading-snug text-violet-200">{description}</p>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                </aside>
+              </div>
             </div>
           </div>
-
-          <aside aria-labelledby="workflow-title" className="rounded-2xl bg-[linear-gradient(130deg,#15102e,#322078_65%,#6037a3)] px-7 py-9 text-white sm:px-9">
-            <h2 id="workflow-title" className="text-2xl font-semibold tracking-tight">See how the work connects.</h2>
-            <p className="mt-3 text-sm leading-relaxed text-blue-100">Follow a sale through the parts of your business that handle it.</p>
-            <ol className="mt-8 space-y-6">
-              {workflow.map(({ title, description }, index) => (
-                <li key={title} className="flex gap-4">
-                  <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-full border border-blue-300/50 text-sm font-semibold text-blue-100">{index + 1}</span>
-                  <div>
-                    <h3 className="text-sm font-semibold">{title}</h3>
-                    <p className="mt-1 text-sm leading-relaxed text-blue-100">{description}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </aside>
         </section>
 
-        <section id="modules" aria-labelledby="modules-title" className="scroll-mt-6 border-y border-slate-200 bg-slate-50">
+        <section id="modules" aria-labelledby="modules-title" className="scroll-mt-6 border-b border-violet-100 bg-[#faf7ff]">
           <div className="mx-auto max-w-6xl px-6 py-12 sm:px-10 sm:py-16">
             <div className="mb-9 max-w-xl">
               <h2 id="modules-title" className="text-2xl font-bold tracking-tight text-slate-900">What you can manage with VYRO</h2>
               <p className="mt-3 text-sm leading-relaxed text-slate-600">Connected modules for the tasks your team handles every day.</p>
             </div>
-            <div className="grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
-              {modules.map(({ icon: Icon, title, description }) => (
-                <article key={title}>
-                  <Icon size={23} className="mb-4 text-blue-700" strokeWidth={1.7} aria-hidden="true" />
-                  <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-                  <p className="mt-2 max-w-xs text-sm leading-relaxed text-slate-600">{description}</p>
-                </article>
-              ))}
+            <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
+              <div role="group" aria-label="Choose an ERP module" className="grid grid-cols-2 gap-2">
+                {modules.map(({ icon: Icon, title }, index) => (
+                  <button key={title} type="button" aria-pressed={selectedModule === index} aria-controls="vyro-module-detail" onClick={() => setSelectedModule(index)} className="vyro-module-choice flex min-h-14 items-center gap-2 rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-left text-sm font-semibold text-[#25194b] hover:bg-violet-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700 sm:gap-3 sm:px-4">
+                    <Icon size={19} className="shrink-0" aria-hidden="true" /> {title}
+                  </button>
+                ))}
+              </div>
+              <div id="vyro-module-detail" aria-live="polite" className="flex min-h-56 items-center rounded-2xl bg-[#25173d] p-6 text-white sm:p-8">
+                <div key={moduleTitle} className="vyro-module-detail">
+                  <ModuleIcon size={30} className="mb-4 text-violet-300" aria-hidden="true" />
+                  <h3 className="text-2xl font-semibold tracking-tight">{moduleTitle}</h3>
+                  <p className="mt-3 max-w-md leading-relaxed text-violet-100">{moduleDescription}</p>
+                </div>
+              </div>
             </div>
           </div>
         </section>

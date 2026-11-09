@@ -1,0 +1,68 @@
+.vyro-welcome-hero {
+  background:
+    radial-gradient(ellipse at 85% 25%, #6338a4 0, transparent 55%),
+    linear-gradient(135deg, #141023 18%, #2a194b 65%, #35215e);
+}
+
+.vyro-workflow-step:not(:last-child)::after {
+  position: absolute;
+  top: 2rem;
+  bottom: -2rem;
+  left: 19px;
+  width: 2px;
+  content: '';
+  background: #604685;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .vyro-workflow-icon {
+    animation: vyro-step-highlight 750ms ease-out both;
+  }
+
+  .vyro-workflow-step:nth-child(2) .vyro-workflow-icon { animation-delay: 550ms; }
+  .vyro-workflow-step:nth-child(3) .vyro-workflow-icon { animation-delay: 1100ms; }
+  .vyro-workflow-step:nth-child(4) .vyro-workflow-icon { animation-delay: 1650ms; }
+
+  @keyframes vyro-step-highlight {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    35% {
+      background-color: #7248b4;
+      box-shadow: 0 0 0 5px #bc97ff33, 0 0 24px #ae80ff66;
+    }
+  }
+}
+
+.vyro-module-choice[aria-pressed='true'] {
+  background: #ede5ff;
+  border-color: #8962c7;
+  color: #38216b;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .vyro-hero-copy {
+    animation: vyro-rise 650ms ease-out both;
+  }
+
+  .vyro-preview {
+    animation: vyro-rise 900ms 150ms cubic-bezier(.2, .75, .25, 1) both;
+  }
+
+  .vyro-chart-line {
+    stroke-dasharray: 1;
+    animation: vyro-draw 1450ms 450ms ease-out both;
+  }
+
+  .vyro-module-detail {
+    animation: vyro-rise 240ms ease-out both;
+  }
+
+  @keyframes vyro-rise {
+    from { opacity: 0; transform: translateY(18px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes vyro-draw {
+    from { stroke-dashoffset: 1; }
+    to { stroke-dashoffset: 0; }
+  }
+}
