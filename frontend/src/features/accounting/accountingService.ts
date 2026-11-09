@@ -5,6 +5,8 @@ import { hrService } from '@/features/hr/hrService';
 import { projectService } from '@/features/projects/projectService';
 import { stockAccountingService, type StockAccountingPreview } from '@/features/inventory/services/stockAccountingService';
 import { getTenantTaxRates } from '@/features/settings/finance/tax';
+import { tenantSettingsService } from '@/features/settings/finance/services/tenantSettingsService';
+import { assertOpenAccountingPeriod, registerPeriodCloseHandler } from '@/features/settings/finance/accountingPeriodEnforcement';
 import { auditEventService } from '@/core/audit';
 import { registerList, registerMap, replaceArray } from '@/core/persistence/stateRegistry';
 
@@ -169,6 +171,7 @@ export const accountingService = {
   openingBalances: (scope: AccountingScope, filters: Filters = {}) => visible(openingBalances, scope, filters),
   addOpeningBalance(scope: AccountingScope, actor: Actor, input: Omit<OpeningBalance, 'id' | 'tenantId' | 'history'>) {
     assertScope(scope, input.branchId);
+    assertOpenAccountingPeriod(scope.tenantId, input.date, 'enter an opening balance');
     if (!Number.isFinite(input.amount) || input.amount <= 0 || !accounts.some((item) => item.id === input.accountId && item.tenantId === scope.tenantId)) throw new Error('Choose an account and a positive amount.');
     const event = audit(scope, actor, 'Opening balance entered', input.reference);
     const item = { ...input, id: id('opening'), tenantId: scope.tenantId, history: [event] };
@@ -179,6 +182,7 @@ export const accountingService = {
   saveJournal(scope: AccountingScope, actor: Actor, input: Pick<Journal, 'branchId' | 'date' | 'reference' | 'notes' | 'lines' | 'attachments'> & { id?: string }) {
     assertScope(scope, input.branchId);
     if (!input.date || !input.reference.trim()) throw new Error('Date and reference are required.');
+    assertOpenAccountingPeriod(scope.tenantId, input.date, 'save a journal');
     validateLines(input.lines, scope.tenantId);
     const previous = journals.find((item) => item.id === input.id && item.tenantId === scope.tenantId && allowed(scope, item.branchId));
     if (input.id && (!previous || !['draft', 'rejected'].includes(previous.status))) throw new Error('Only draft or rejected journals can be edited.');
@@ -206,7 +210,7 @@ export const accountingService = {
     if (!item) throw new Error('Journal not found.');
     const transitions: Record<JournalStatus, JournalStatus[]> = { draft: ['pending_approval'], pending_approval: ['approved', 'rejected'], approved: ['posted'], posted: ['reversed'], rejected: ['draft'], reversed: [] };
     if (!transitions[item.status].includes(status)) throw new Error('This journal status change is not allowed.');
-    if (status === 'posted') validateLines(item.lines, scope.tenantId);
+    if (status === 'posted') { assertOpenAccountingPeriod(scope.tenantId, item.date, 'post this journal'); validateLines(item.lines, scope.tenantId); }
     if (status === 'reversed' && !remarks.trim()) throw new Error('Give a reason for reversal.');
     if (status === 'reversed') {
       const reversal: Journal = { ...item, id: id('reversal'), reference: `${item.reference}-REV`, date: new Date().toISOString().slice(0, 10), status: 'posted', source: 'reversal', notes: `Reversal of ${item.reference}: ${remarks}`, lines: item.lines.map((line) => ({ ...line, debit: line.credit, credit: line.debit })), attachments: [], history: [] };
@@ -219,22 +223,25 @@ export const accountingService = {
   receivables: receivableRows,
   payables: payableRows,
   settlements: (scope: AccountingScope, filters: Filters = {}) => visible(settlements, scope, filters),
-  createSettlement(scope: AccountingScope, actor: Actor, input: Omit<Settlement, 'id' | 'tenantId'>) {
+  createSettlement(scope: AccountingScope, actor: Actor, input: Omit<Settlement, 'id' | 'tenantId' | 'reference'> & { reference?: string }) {
     assertScope(scope, input.branchId);
+    assertOpenAccountingPeriod(scope.tenantId, input.date, 'record this settlement');
     const document = (input.kind === 'receipt' ? receivableRows(scope) : payableRows(scope)).find((row) => row.id === input.documentId && row.branchId === input.branchId);
     if (!document) throw new Error('Select a visible invoice.');
     if (input.kind === 'payment' && !['approved', 'partially_paid', 'overdue'].includes(document.status)) throw new Error('Only approved supplier invoices can be paid.');
-    if (!input.reference.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(input.date) || Number.isNaN(Date.parse(input.date))) throw new Error('Enter a payment reference and valid date.');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || Number.isNaN(Date.parse(input.date))) throw new Error('Enter a valid payment date.');
     if (!Number.isFinite(input.amount) || input.amount <= 0 || input.amount > document.outstanding) throw new Error('Amount must be positive and cannot exceed the outstanding balance.');
     if (!accounts.some((row) => row.id === input.accountId && row.tenantId === scope.tenantId && row.type === 'asset' && row.active)) throw new Error('Select an active cash or bank account.');
-    const item = { ...input, id: id(input.kind), tenantId: scope.tenantId };
+    const reference = tenantSettingsService.nextDocumentNumber(scope.tenantId, input.kind);
+    const item = { ...input, reference, id: id(input.kind), tenantId: scope.tenantId };
     settlements.unshift(item);
-    audit(scope, actor, input.kind === 'receipt' ? 'Customer receipt recorded' : 'Supplier payment recorded', input.reference);
+    audit(scope, actor, input.kind === 'receipt' ? 'Customer receipt recorded' : 'Supplier payment recorded', reference);
     return item;
   },
   expenses: (scope: AccountingScope, filters: Filters = {}) => visible(expenses, scope, filters),
   addExpense(scope: AccountingScope, actor: Actor, input: Omit<Expense, 'id' | 'tenantId' | 'history' | 'status'>) {
     assertScope(scope, input.branchId);
+    assertOpenAccountingPeriod(scope.tenantId, input.date, 'submit this expense');
     if (!Number.isFinite(input.amount) || input.amount <= 0 || !input.category.trim() || !input.reference.trim()) throw new Error('Category, reference and a positive amount are required.');
     if (!accounts.some((row) => row.id === input.accountId && row.tenantId === scope.tenantId && row.type === 'expense')) throw new Error('Select an expense account.');
     if (input.costCenterId && !referenceRecords.some((row) => row.id === input.costCenterId && row.tenantId === scope.tenantId && row.branchId === input.branchId && row.category === 'cost-centers' && row.status === 'active')) throw new Error('Select an active cost center in this branch.');
@@ -337,6 +344,64 @@ export const accountingService = {
     return [...sales, ...purchases];
   },
 };
+
+registerPeriodCloseHandler('general-ledger', {
+  validate(tenantId, period) {
+    const unposted = journals.filter(row => row.tenantId === tenantId && row.date >= period.startDate && row.date <= period.endDate && !['posted', 'reversed'].includes(row.status));
+    const pendingExpenses = expenses.filter(row => row.tenantId === tenantId && row.date >= period.startDate && row.date <= period.endDate && ['submitted', 'approved'].includes(row.status));
+    const postedSource = (source: string, sourceReference: string) => journals.some(row => row.tenantId === tenantId && row.source === source && row.sourceReference === sourceReference && ['posted', 'reversed'].includes(row.status));
+    const unmappedSales = salesStore.invoices().filter(row => row.tenantId === tenantId && row.invoiceDate >= period.startDate && row.invoiceDate <= period.endDate && !['draft', 'rejected', 'void'].includes(row.status) && !postedSource('Sales invoice', row.referenceNumber));
+    const unmappedPurchases = purchasingStore.invoices().filter(row => row.tenantId === tenantId && row.invoiceDate >= period.startDate && row.invoiceDate <= period.endDate && !['draft', 'rejected', 'cancelled'].includes(row.status) && !postedSource('Purchase invoice', row.referenceNumber));
+    const unmappedSettlements = settlements.filter(row => row.tenantId === tenantId && row.date >= period.startDate && row.date <= period.endDate && !postedSource(row.kind === 'receipt' ? 'Customer receipt' : 'Supplier payment', row.reference));
+    const problems: string[] = [];
+    if (unposted.length) problems.push(`${unposted.length} journal(s) are not posted or reversed.`);
+    if (pendingExpenses.length) problems.push(`${pendingExpenses.length} expense(s) are not paid or rejected.`);
+    if (unmappedSales.length) problems.push(`${unmappedSales.length} sales invoice(s) have no posted accounting journal.`);
+    if (unmappedPurchases.length) problems.push(`${unmappedPurchases.length} purchase invoice(s) have no posted accounting journal.`);
+    if (unmappedSettlements.length) problems.push(`${unmappedSettlements.length} settlement(s) have no posted accounting journal.`);
+    return problems;
+  },
+  close(tenantId, period, yearEnd, fiscalRange) {
+    const tenantAccounts = accounts.filter(row => row.tenantId === tenantId);
+    const fiscalJournals = journals.filter(row => row.tenantId === tenantId && ['posted', 'reversed'].includes(row.status) && row.date >= fiscalRange.startDate && row.date <= period.endDate);
+    const balances: Record<string, number> = {};
+    for (const journal of fiscalJournals) {
+      for (const line of journal.lines) balances[line.accountId] = round((balances[line.accountId] ?? 0) + line.debit - line.credit);
+    }
+    const netIncome = round(tenantAccounts.filter(row => row.type === 'revenue').reduce((sum, row) => sum - (balances[row.id] ?? 0), 0) - tenantAccounts.filter(row => row.type === 'expense').reduce((sum, row) => sum + (balances[row.id] ?? 0), 0));
+    let rolloverReference: string | undefined;
+    if (yearEnd) {
+      rolloverReference = `YE-CLOSE-${period.endDate.slice(0, 4)}`;
+      for (const branchId of new Set(fiscalJournals.map(row => row.branchId))) {
+        const reference = `${rolloverReference}-${branchId}`;
+        if (journals.some(row => row.tenantId === tenantId && row.reference === reference)) continue;
+        const branchBalances: Record<string, number> = {};
+        for (const journal of fiscalJournals.filter(row => row.branchId === branchId)) for (const line of journal.lines) branchBalances[line.accountId] = round((branchBalances[line.accountId] ?? 0) + line.debit - line.credit);
+        const branchNetIncome = round(tenantAccounts.filter(row => row.type === 'revenue').reduce((sum, row) => sum - (branchBalances[row.id] ?? 0), 0) - tenantAccounts.filter(row => row.type === 'expense').reduce((sum, row) => sum + (branchBalances[row.id] ?? 0), 0));
+        const lines: JournalLine[] = [];
+        for (const account of tenantAccounts.filter(row => row.type === 'revenue' || row.type === 'expense')) {
+          const balance = round(branchBalances[account.id] ?? 0);
+          if (balance > 0) lines.push({ accountId: account.id, debit: 0, credit: balance });
+          if (balance < 0) lines.push({ accountId: account.id, debit: -balance, credit: 0 });
+        }
+        const equity = tenantAccounts.find(row => row.type === 'equity' && row.active);
+        if (lines.length && !equity) throw new Error('An active equity account is required for year-end rollover.');
+        if (lines.length && equity) lines.push({ accountId: equity.id, debit: branchNetIncome < 0 ? -branchNetIncome : 0, credit: branchNetIncome > 0 ? branchNetIncome : 0 });
+        if (lines.length) journals.unshift({ id: id('year-end'), tenantId, branchId, date: period.endDate, reference, status: 'posted', notes: `Automatic year-end rollover for ${fiscalRange.startDate} to ${fiscalRange.endDate}.`, lines, attachments: [], history: [], source: 'year_end_rollover' });
+      }
+    }
+    return { checks: ['All journals are posted or reversed.', 'All expenses are paid or rejected.', 'Trial balance snapshot prepared.'], balances, netIncome, rolloverReference };
+  },
+  reopen(tenantId, period, snapshot) {
+    if (!snapshot?.rolloverReference) return;
+    const closingJournals = journals.filter(row => row.tenantId === tenantId && row.source === 'year_end_rollover' && row.reference.startsWith(`${snapshot.rolloverReference}-`));
+    for (const closing of closingJournals) {
+      const reference = `${closing.reference}-REV`;
+      if (journals.some(row => row.tenantId === tenantId && row.reference === reference)) continue;
+      journals.unshift({ ...closing, id: id('year-end-reversal'), reference, date: period.endDate, status: 'posted', source: 'year_end_reversal', notes: `Automatic reversal after unlocking ${period.name}.`, lines: closing.lines.map(line => ({ ...line, debit: line.credit, credit: line.debit })), attachments: [], history: [] });
+    }
+  },
+});
 
 // Backend persistence registration (see src/core/persistence).
 registerMap('accounting.postingDefaults', postingDefaults);

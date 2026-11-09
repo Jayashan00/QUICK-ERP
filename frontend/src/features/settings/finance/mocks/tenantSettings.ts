@@ -1,7 +1,7 @@
 import type { AccountingPeriod, DocumentSequence, GeneralSettings, LocalizationSettings, NotificationPreferences, PaymentMethod, PaymentTerm, TaxRate, FinancialYearSettings } from '@/features/settings/finance/types/tenant-settings';
 
 export const mockGeneralSettings: GeneralSettings = { tenantId: 'tenant-001', timezone: 'Asia/Colombo', dateFormat: 'YYYY-MM-DD', timeFormat: '24h', weekStartsOn: 'monday', defaultLanguage: 'en', fiscalCountry: 'Sri Lanka', enableBranchTimezones: false };
-export const mockLocalizationSettings: LocalizationSettings = { tenantId: 'tenant-001', baseCurrency: 'LKR', supportedCurrencies: ['LKR', 'USD'], currencyDisplay: 'symbol_code', currencyPosition: 'before', decimalPrecision: 2, locale: 'en-LK', thousandsSeparator: ',', decimalSeparator: '.', exchangeRateProvider: 'manual' };
+export const mockLocalizationSettings: LocalizationSettings = { tenantId: 'tenant-001', baseCurrency: 'LKR', supportedCurrencies: ['LKR', 'USD'], currencyDisplay: 'symbol_code', currencyPosition: 'before', decimalPrecision: 2, locale: 'en-LK', thousandsSeparator: ',', decimalSeparator: '.' };
 export const mockFinancialYearSettings: FinancialYearSettings = { tenantId: 'tenant-001', startMonth: 1, startDay: 1, endMonth: 12, endDay: 31, autoCreatePeriods: true };
 export const mockAccountingPeriods: AccountingPeriod[] = [
   { id: 'period-001', tenantId: 'tenant-001', name: 'January 2026', startDate: '2026-01-01', endDate: '2026-01-31', status: 'closed', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-02-01T00:00:00Z' },

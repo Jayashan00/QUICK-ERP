@@ -12,7 +12,8 @@ import { StatCard } from '@/shared/components/cards/StatCard';
 import { LoadingSpinner } from '@/shared/components/feedback/LoadingSpinner';
 import { EmptyState } from '@/shared/components/feedback/EmptyState';
 import { ErrorState } from '@/shared/components/feedback/ErrorState';
-import { formatCurrency, formatDate } from '@/shared/utils/formatters';
+import { formatDate } from '@/shared/utils/formatters';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 import type { Supplier } from '../types/supplier';
 import { useSupplierBalance } from '../hooks/useSupplierBalance';
 
@@ -21,6 +22,7 @@ interface SupplierBalanceSummaryProps {
 }
 
 export function SupplierBalanceSummary({ supplier }: SupplierBalanceSummaryProps) {
+  const { formatMoney } = useTenantCurrency();
   const { balance, isLoading, error } = useSupplierBalance(supplier.id);
 
   if (isLoading) {
@@ -84,23 +86,23 @@ export function SupplierBalanceSummary({ supplier }: SupplierBalanceSummaryProps
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Outstanding Balance"
-          value={formatCurrency(balance.outstandingBalance, balance.currency)}
+          value={formatMoney(balance.outstandingBalance, balance.currency)}
           icon={<DollarSign size={20} />}
           description={
             balance.overdueAmount > 0
-              ? `${formatCurrency(balance.overdueAmount, balance.currency)} overdue`
+              ? `${formatMoney(balance.overdueAmount, balance.currency)} overdue`
               : 'All current'
           }
         />
         <StatCard
           title="Total Purchases"
-          value={formatCurrency(balance.totalPurchases, balance.currency)}
+          value={formatMoney(balance.totalPurchases, balance.currency)}
           icon={<ShoppingCart size={20} />}
           description={`${balance.pendingOrdersCount} pending order(s)`}
         />
         <StatCard
           title="Total Payments"
-          value={formatCurrency(balance.totalPayments, balance.currency)}
+          value={formatMoney(balance.totalPayments, balance.currency)}
           icon={<CreditCard size={20} />}
           description={
             balance.lastPaymentDate
@@ -110,7 +112,7 @@ export function SupplierBalanceSummary({ supplier }: SupplierBalanceSummaryProps
         />
         <StatCard
           title="Overdue Amount"
-          value={formatCurrency(balance.overdueAmount, balance.currency)}
+          value={formatMoney(balance.overdueAmount, balance.currency)}
           icon={
             balance.overdueAmount > 0 ? (
               <AlertTriangle size={20} />
@@ -136,8 +138,8 @@ export function SupplierBalanceSummary({ supplier }: SupplierBalanceSummaryProps
           <div className="mb-2 flex items-center justify-between text-xs">
             <span className="font-medium text-slate-700">Credit Utilisation</span>
             <span className="font-semibold text-slate-900">
-              {formatCurrency(balance.outstandingBalance, balance.currency)} /{' '}
-              {formatCurrency(balance.creditLimit, balance.currency)}
+              {formatMoney(balance.outstandingBalance, balance.currency)} /{' '}
+              {formatMoney(balance.creditLimit, balance.currency)}
             </span>
           </div>
           <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
@@ -159,7 +161,7 @@ export function SupplierBalanceSummary({ supplier }: SupplierBalanceSummaryProps
           <span className="text-slate-600">
             Last payment of{' '}
             <span className="font-semibold text-slate-900">
-              {formatCurrency(balance.lastPaymentAmount, balance.currency)}
+              {formatMoney(balance.lastPaymentAmount, balance.currency)}
             </span>{' '}
             on {formatDate(balance.lastPaymentDate)}
           </span>

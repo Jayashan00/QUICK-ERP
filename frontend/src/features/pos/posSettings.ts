@@ -3,6 +3,7 @@ import { inventoryStore } from '@/features/inventory/services/inventoryStore';
 import { registerMap } from '@/core/persistence/stateRegistry';
 
 export const posSettingsSchema = z.object({
+  currency: z.enum(['LKR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED', 'INR']),
   defaultBranchId: z.string().min(1),
   warehouseId: z.string().min(1),
   locationId: z.string().min(1),
@@ -18,10 +19,10 @@ export type PosSettings = z.infer<typeof posSettingsSchema>;
 const settings = new Map<string, PosSettings>();
 export const posSettingsService = {
   get(tenantId: string, branchId: string): PosSettings {
-    const stored = settings.get(tenantId); if (stored) return { ...stored, allowedMethods: [...stored.allowedMethods] };
+    const stored = settings.get(tenantId); if (stored) return { ...stored, currency: stored.currency ?? 'LKR', allowedMethods: [...stored.allowedMethods] };
     const warehouse = inventoryStore.warehouses().find(w => w.tenantId === tenantId && w.branchId === branchId && w.isActive);
     const location = inventoryStore.locations().find(l => l.tenantId === tenantId && l.warehouseId === warehouse?.id);
-    return { defaultBranchId: branchId, warehouseId: warehouse?.id ?? '', locationId: location?.id ?? '', receiptFooter: 'Thank you for shopping with us.', autoPrint: false, allowedMethods: ['cash', 'card', 'credit'], scanner: 'ready', printer: 'ready', cashDrawer: 'ready', customerDisplay: 'ready' };
+    return { currency: 'LKR', defaultBranchId: branchId, warehouseId: warehouse?.id ?? '', locationId: location?.id ?? '', receiptFooter: 'Thank you for shopping with us.', autoPrint: false, allowedMethods: ['cash', 'card', 'credit'], scanner: 'ready', printer: 'ready', cashDrawer: 'ready', customerDisplay: 'ready' };
   },
   save(tenantId: string, permittedBranches: string[], value: PosSettings): PosSettings {
     const parsed = posSettingsSchema.parse(value);

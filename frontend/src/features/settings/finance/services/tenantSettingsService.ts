@@ -1,6 +1,7 @@
 import type { AccountingPeriod, AccountingPeriodStatus, DocumentSequence, FinancialYearSettings, GeneralSettings, LocalizationSettings, NotificationPreferences, PaymentMethod, PaymentTerm, TaxRate } from '@/features/settings/finance/types/tenant-settings';
 import { mockAccountingPeriods, mockDocumentSequences, mockFinancialYearSettings, mockGeneralSettings, mockLocalizationSettings, mockNotificationPreferences, mockPaymentMethods, mockPaymentTerms, mockTaxRates } from '@/features/settings/finance/mocks/tenantSettings';
 import { registerList } from '@/core/persistence/stateRegistry';
+import { canDeleteAccountingPeriod, closeAccountingPeriod, ensureMonthlyPeriods, periodCloseSnapshots, reopenAccountingPeriod } from '@/features/settings/finance/accountingPeriodEnforcement';
 
 let generalStore = [{ ...mockGeneralSettings }];
 let localizationStore = [{ ...mockLocalizationSettings, supportedCurrencies: [...mockLocalizationSettings.supportedCurrencies] }];
@@ -16,6 +17,26 @@ const createId = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 8
 const now = () => new Date().toISOString();
 const cloneNotificationGroups = (groups: NotificationPreferences['groups']): NotificationPreferences['groups'] => structuredClone(groups);
 
+const sequencePeriod = (rule: DocumentSequence['resetRule'], issuedAt: Date) => {
+  if (rule === 'never') return 'never';
+  const year = String(issuedAt.getFullYear());
+  return rule === 'yearly' ? year : `${year}-${String(issuedAt.getMonth() + 1).padStart(2, '0')}`;
+};
+
+function consumeSequence(tenantId: string, documentType: DocumentSequence['documentType'], issuedAt = new Date()) {
+  const index = sequencesStore.findIndex((item) => item.tenantId === tenantId && item.documentType === documentType);
+  const sequence = index >= 0 ? sequencesStore[index] : undefined;
+  const label = documentType.replace(/_/g, ' ');
+  if (!sequence) throw new Error(`Configure a numbering rule for ${label} before creating this document.`);
+  if (!sequence.isActive) throw new Error(`Activate the numbering rule for ${label} before creating this document.`);
+
+  const period = sequencePeriod(sequence.resetRule, issuedAt);
+  const nextNumber = sequence.lastResetPeriod && sequence.lastResetPeriod !== period ? 1 : sequence.nextNumber;
+  const reference = `${sequence.prefix}${String(nextNumber).padStart(sequence.padding, '0')}${sequence.suffix ?? ''}`;
+  sequencesStore[index] = { ...sequence, nextNumber: nextNumber + 1, lastResetPeriod: period, updatedAt: now() };
+  return reference;
+}
+
 function tenantSingleton<T extends { tenantId: string }>(store: T[], fallback: T, tenantId: string): T {
   const existing = store.find((item) => item.tenantId === tenantId);
   if (existing) return existing;
@@ -29,15 +50,19 @@ export const tenantSettingsService = {
   async saveGeneral(tenantId: string, data: Omit<GeneralSettings, 'tenantId'>) { await wait(240); const next = { ...data, tenantId }; generalStore = [...generalStore.filter((item) => item.tenantId !== tenantId), next]; return { ...next }; },
   async getLocalization(tenantId: string) { await wait(); const value = tenantSingleton(localizationStore, mockLocalizationSettings, tenantId); return { ...value, supportedCurrencies: [...value.supportedCurrencies] }; },
   async saveLocalization(tenantId: string, data: Omit<LocalizationSettings, 'tenantId'>) { await wait(240); const next = { ...data, tenantId, supportedCurrencies: [...data.supportedCurrencies] }; localizationStore = [...localizationStore.filter((item) => item.tenantId !== tenantId), next]; return { ...next, supportedCurrencies: [...next.supportedCurrencies] }; },
-  async getFinancialYear(tenantId: string) { await wait(); return { ...tenantSingleton(financialYearStore, mockFinancialYearSettings, tenantId) }; },
-  async saveFinancialYear(tenantId: string, data: Omit<FinancialYearSettings, 'tenantId'>) { await wait(240); const next = { ...data, tenantId }; financialYearStore = [...financialYearStore.filter((item) => item.tenantId !== tenantId), next]; return { ...next }; },
+  async getFinancialYear(tenantId: string) { await wait(); const value = tenantSingleton(financialYearStore, mockFinancialYearSettings, tenantId); ensureMonthlyPeriods(tenantId); return { ...value }; },
+  async saveFinancialYear(tenantId: string, data: Omit<FinancialYearSettings, 'tenantId'>) { await wait(240); const next = { ...data, tenantId }; financialYearStore = [...financialYearStore.filter((item) => item.tenantId !== tenantId), next]; ensureMonthlyPeriods(tenantId); return { ...next }; },
 
-  async getPeriods(tenantId: string) { await wait(); return periodsStore.filter((item) => item.tenantId === tenantId).map((item) => ({ ...item })); },
+  async getPeriods(tenantId: string) { await wait(); ensureMonthlyPeriods(tenantId); return periodsStore.filter((item) => item.tenantId === tenantId).map((item) => ({ ...item })); },
   async createPeriod(tenantId: string, data: Pick<AccountingPeriod, 'name' | 'startDate' | 'endDate'>) {
     await wait(240); const overlaps = periodsStore.some((period) => period.tenantId === tenantId && data.startDate <= period.endDate && data.endDate >= period.startDate); if (overlaps) throw new Error('The accounting period overlaps an existing period.');
     const timestamp = now(); const item: AccountingPeriod = { ...data, id: createId('period'), tenantId, status: 'open', createdAt: timestamp, updatedAt: timestamp }; periodsStore = [item, ...periodsStore]; return { ...item };
   },
-  async changePeriodStatus(tenantId: string, id: string, status: AccountingPeriodStatus) { await wait(220); const index = periodsStore.findIndex((item) => item.tenantId === tenantId && item.id === id); if (index < 0) throw new Error('Accounting period not found.'); if (periodsStore[index].status === 'locked') throw new Error('Locked periods cannot be changed.'); periodsStore[index] = { ...periodsStore[index], status, updatedAt: now() }; return { ...periodsStore[index] }; },
+  async changePeriodStatus(tenantId: string, id: string, status: AccountingPeriodStatus) { await wait(220); const index = periodsStore.findIndex((item) => item.tenantId === tenantId && item.id === id); if (index < 0) throw new Error('Accounting period not found.'); if (periodsStore[index].status === 'locked') throw new Error('Use the controlled unlock action for a locked period.'); if (status === 'closed' || status === 'locked') closeAccountingPeriod(tenantId, periodsStore[index], status); periodsStore[index] = { ...periodsStore[index], status, updatedAt: now() }; return { ...periodsStore[index] }; },
+  async unlockPeriod(tenantId: string, id: string, reason: string, actor: { id: string; name: string }) { await wait(220); const index = periodsStore.findIndex(item => item.tenantId === tenantId && item.id === id); if (index < 0) throw new Error('Accounting period not found.'); if (periodsStore[index].status !== 'locked') throw new Error('Only locked periods require controlled unlocking.'); reopenAccountingPeriod(tenantId, periodsStore[index], reason, actor); periodsStore[index] = { ...periodsStore[index], status: 'open', updatedAt: now() }; return { ...periodsStore[index] }; },
+  async deletePeriod(tenantId: string, id: string) { await wait(220); const period = periodsStore.find(item => item.tenantId === tenantId && item.id === id); if (!period) throw new Error('Accounting period not found.'); if (!canDeleteAccountingPeriod(tenantId, period)) throw new Error('This period has transactions or close history and cannot be deleted.'); periodsStore = periodsStore.filter(item => !(item.tenantId === tenantId && item.id === id)); },
+  canDeletePeriod(tenantId: string, period: AccountingPeriod) { return canDeleteAccountingPeriod(tenantId, period); },
+  getPeriodCloseSnapshots(tenantId: string) { return periodCloseSnapshots(tenantId); },
 
   async getTaxes(tenantId: string) { await wait(); return taxesStore.filter((item) => item.tenantId === tenantId).map((item) => ({ ...item })); },
   async createTax(tenantId: string, data: Omit<TaxRate, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>) { await wait(240); if (taxesStore.some((item) => item.tenantId === tenantId && item.code.toLowerCase() === data.code.toLowerCase())) throw new Error('A tax rate with this code already exists.'); const timestamp = now(); if (data.isDefault) taxesStore = taxesStore.map((item) => item.tenantId === tenantId ? { ...item, isDefault: false } : item); const item: TaxRate = { ...data, id: createId('tax'), tenantId, createdAt: timestamp, updatedAt: timestamp }; taxesStore = [item, ...taxesStore]; return { ...item }; },
@@ -56,8 +81,9 @@ export const tenantSettingsService = {
 
   async getSequences(tenantId: string) { await wait(); return sequencesStore.filter((item) => item.tenantId === tenantId).map((item) => ({ ...item })); },
   async createSequence(tenantId: string, data: Omit<DocumentSequence, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>) { await wait(220); if (sequencesStore.some((item) => item.tenantId === tenantId && item.documentType === data.documentType)) throw new Error('A numbering rule already exists for this document type.'); const timestamp = now(); const item: DocumentSequence = { ...data, id: createId('seq'), tenantId, createdAt: timestamp, updatedAt: timestamp }; sequencesStore = [item, ...sequencesStore]; return { ...item }; },
-  async updateSequence(tenantId: string, id: string, data: Partial<DocumentSequence>) { await wait(220); const index = sequencesStore.findIndex((item) => item.tenantId === tenantId && item.id === id); if (index < 0) throw new Error('Numbering rule not found.'); if (data.documentType && sequencesStore.some((item) => item.tenantId === tenantId && item.id !== id && item.documentType === data.documentType)) throw new Error('A numbering rule already exists for this document type.'); sequencesStore[index] = { ...sequencesStore[index], ...data, tenantId, updatedAt: now() }; return { ...sequencesStore[index] }; },
+  async updateSequence(tenantId: string, id: string, data: Partial<DocumentSequence>) { await wait(220); const index = sequencesStore.findIndex((item) => item.tenantId === tenantId && item.id === id); if (index < 0) throw new Error('Numbering rule not found.'); if (data.documentType && sequencesStore.some((item) => item.tenantId === tenantId && item.id !== id && item.documentType === data.documentType)) throw new Error('A numbering rule already exists for this document type.'); sequencesStore[index] = { ...sequencesStore[index], ...data, tenantId, lastResetPeriod: undefined, updatedAt: now() }; return { ...sequencesStore[index] }; },
   async deleteSequence(tenantId: string, id: string) { await wait(220); if (!sequencesStore.some((item) => item.tenantId === tenantId && item.id === id)) throw new Error('Numbering rule not found.'); sequencesStore = sequencesStore.filter((item) => !(item.tenantId === tenantId && item.id === id)); },
+  nextDocumentNumber(tenantId: string, documentType: DocumentSequence['documentType'], issuedAt = new Date()) { return consumeSequence(tenantId, documentType, issuedAt); },
 
   async getNotifications(tenantId: string, userId: string) { await wait(); const item = notificationsStore.find((value) => value.tenantId === tenantId && value.userId === userId) ?? { ...mockNotificationPreferences, tenantId, userId, groups: structuredClone(mockNotificationPreferences.groups) }; return { ...item, groups: cloneNotificationGroups(item.groups) }; },
   async saveNotifications(tenantId: string, userId: string, groups: NotificationPreferences['groups']) { await wait(240); const next: NotificationPreferences = { tenantId, userId, groups: cloneNotificationGroups(groups) }; notificationsStore = [...notificationsStore.filter((item) => !(item.tenantId === tenantId && item.userId === userId)), next]; return { ...next, groups: cloneNotificationGroups(next.groups) }; },

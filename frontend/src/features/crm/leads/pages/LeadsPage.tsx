@@ -41,6 +41,7 @@ import { Can } from "@/core/permissions/components";
 import { PERMISSIONS } from "@/core/permissions";
 import { usePermissions } from "@/core/permissions/permission-context";
 import type { DropdownItem } from "@/shared/components/common/Dropdown";
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 
 function formatSource(source: Lead["source"]) {
   return source
@@ -50,15 +51,12 @@ function formatSource(source: Lead["source"]) {
     );
 }
 
-function formatValue(value?: number) {
+function formatValue(value: number | undefined, formatMoney: (amount: number) => string) {
   if (value === undefined) {
     return "—";
   }
 
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(value);
+  return formatMoney(value);
 }
 
 const leadExportColumns: ExportColumn<Lead>[] = [
@@ -84,6 +82,7 @@ export function LeadsPage() {
   const searchRecord = useSearchRecord('leads', 'leads.view', leadService.getById);
   const navigate = useNavigate();
   const { hasPermission } = usePermissions();
+  const { formatMoney } = useTenantCurrency();
   const canCreate = hasPermission(PERMISSIONS.LEADS.CREATE);
   const canEdit = hasPermission(PERMISSIONS.LEADS.EDIT);
   const canDelete = hasPermission(PERMISSIONS.LEADS.DELETE);
@@ -201,6 +200,7 @@ export function LeadsPage() {
       render: (lead) =>
         formatValue(
           lead.estimatedValue,
+          formatMoney,
         ),
     },
     {

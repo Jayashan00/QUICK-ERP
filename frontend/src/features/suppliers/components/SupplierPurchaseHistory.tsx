@@ -4,7 +4,8 @@ import { Card } from '@/shared/components/common/Card';
 import { DataTable } from '@/shared/components/tables/DataTable';
 import { StatusBadge } from '@/shared/components/common/StatusBadge';
 import { ErrorState } from '@/shared/components/feedback/ErrorState';
-import { formatCurrency, formatDate } from '@/shared/utils/formatters';
+import { formatDate } from '@/shared/utils/formatters';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 import type { Column } from '@/shared/components/tables/TableHeader';
 import type { SupplierPurchaseHistoryOrder } from '../services/supplierService';
 import type { Supplier } from '../types/supplier';
@@ -22,7 +23,7 @@ const poStatusTone: Record<string, 'success' | 'warning' | 'primary' | 'info' | 
   cancelled: 'danger',
 };
 
-const columns: Column<SupplierPurchaseHistoryOrder>[] = [
+const columns = (formatMoney: (amount: number, currencyCode?: string) => string): Column<SupplierPurchaseHistoryOrder>[] => [
   {
     key: 'poNumber',
     header: 'PO Number',
@@ -56,7 +57,7 @@ const columns: Column<SupplierPurchaseHistoryOrder>[] = [
     header: 'Total',
     render: (row) => (
       <span className="font-semibold text-slate-900">
-        {formatCurrency(row.totalAmount, row.currency)}
+        {formatMoney(row.totalAmount, row.currency)}
       </span>
     ),
   },
@@ -70,6 +71,7 @@ const columns: Column<SupplierPurchaseHistoryOrder>[] = [
 ];
 
 export function SupplierPurchaseHistory({ supplier }: SupplierPurchaseHistoryProps) {
+  const { formatMoney } = useTenantCurrency();
   const { orders, isLoading, error } = useSupplierPurchaseHistory(supplier.id);
 
   if (error && !isLoading) {
@@ -95,7 +97,7 @@ export function SupplierPurchaseHistory({ supplier }: SupplierPurchaseHistoryPro
               <p className="text-xs text-slate-500">
                 {orders.length} order(s) · Total{' '}
                 <span className="font-medium text-slate-700">
-                  {formatCurrency(totalValue, supplier.currency)}
+                  {formatMoney(totalValue, supplier.currency)}
                 </span>
               </p>
             )}
@@ -104,7 +106,7 @@ export function SupplierPurchaseHistory({ supplier }: SupplierPurchaseHistoryPro
       </div>
 
       <DataTable<SupplierPurchaseHistoryOrder>
-        columns={columns}
+        columns={columns(formatMoney)}
         data={orders}
         keyField="id"
         isLoading={isLoading}

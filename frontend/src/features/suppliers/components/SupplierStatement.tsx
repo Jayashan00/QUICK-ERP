@@ -7,7 +7,8 @@ import { DataTable } from '@/shared/components/tables/DataTable';
 import type { Column } from '@/shared/components/tables/TableHeader';
 import { EmptyState } from '@/shared/components/feedback/EmptyState';
 import { ErrorState } from '@/shared/components/feedback/ErrorState';
-import { formatCurrency, formatDate } from '@/shared/utils/formatters';
+import { formatDate } from '@/shared/utils/formatters';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 import { downloadCsv } from '@/shared/utils/fileExport';
 import { appToast } from '@/shared/utils/toast';
 import type { Supplier, SupplierTransaction } from '../types/supplier';
@@ -17,7 +18,7 @@ interface SupplierStatementProps {
   supplier: Supplier;
 }
 
-const columns: Column<SupplierTransaction>[] = [
+const columns = (formatMoney: (amount: number, currencyCode?: string) => string): Column<SupplierTransaction>[] => [
   {
     key: 'date',
     header: 'Date',
@@ -41,13 +42,13 @@ const columns: Column<SupplierTransaction>[] = [
     key: 'debit',
     header: 'Debit',
     align: 'right',
-    render: (row) => row.debit ? formatCurrency(row.debit, row.currency) : '—',
+    render: (row) => row.debit ? formatMoney(row.debit, row.currency) : '—',
   },
   {
     key: 'credit',
     header: 'Credit',
     align: 'right',
-    render: (row) => row.credit ? formatCurrency(row.credit, row.currency) : '—',
+    render: (row) => row.credit ? formatMoney(row.credit, row.currency) : '—',
   },
   {
     key: 'balance',
@@ -55,7 +56,7 @@ const columns: Column<SupplierTransaction>[] = [
     align: 'right',
     render: (row) => (
       <span className="font-semibold text-slate-900">
-        {formatCurrency(row.balance, row.currency)}
+        {formatMoney(row.balance, row.currency)}
       </span>
     ),
   },
@@ -76,6 +77,7 @@ function getDefaultPeriod() {
 }
 
 export function SupplierStatement({ supplier }: SupplierStatementProps) {
+  const { formatMoney } = useTenantCurrency();
   const [defaultPeriod] = useState(getDefaultPeriod);
   const [startDate, setStartDate] = useState(defaultPeriod.startDate);
   const [endDate, setEndDate] = useState(defaultPeriod.endDate);
@@ -121,9 +123,9 @@ export function SupplierStatement({ supplier }: SupplierStatementProps) {
           { header: 'Date', value: (row) => formatDate(row.date) },
           { header: 'Reference', value: (row) => row.referenceNumber || row.transactionNumber },
           { header: 'Description', value: (row) => row.description },
-          { header: 'Debit', value: (row) => formatCurrency(row.debit, row.currency) },
-          { header: 'Credit', value: (row) => formatCurrency(row.credit, row.currency) },
-          { header: 'Balance', value: (row) => formatCurrency(row.balance, row.currency) },
+          { header: 'Debit', value: (row) => formatMoney(row.debit, row.currency) },
+          { header: 'Credit', value: (row) => formatMoney(row.credit, row.currency) },
+          { header: 'Balance', value: (row) => formatMoney(row.balance, row.currency) },
           { header: 'Status', value: (row) => row.status },
         ],
         statement.transactions,
@@ -224,13 +226,13 @@ export function SupplierStatement({ supplier }: SupplierStatementProps) {
               <span className="font-medium text-slate-700">
                 Closing balance{' '}
                 <span className="font-semibold text-slate-900">
-                  {formatCurrency(statement.closingBalance, statement.currency)}
+                  {formatMoney(statement.closingBalance, statement.currency)}
                 </span>
               </span>
             )}
           </div>
           <DataTable<SupplierTransaction>
-            columns={columns}
+            columns={columns(formatMoney)}
             data={statement?.transactions ?? []}
             keyField="id"
             isLoading={isLoading || isFetching}

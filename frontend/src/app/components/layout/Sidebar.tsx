@@ -61,11 +61,7 @@ export function Sidebar({
 
         <div className={cn('shrink-0 border-t border-slate-200 p-3', collapsed && 'lg:px-2')}>
           <div className={cn('rounded-lg bg-slate-50 px-3 py-2', collapsed && 'lg:px-2 lg:text-center')}>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              {collapsed ? <img src={vyroIcon} alt="VYRO" width={24} height={24} className="mx-auto hidden lg:block" /> : 'VYRO'}
-            </div>
             {import.meta.env.DEV && <div className={cn('mt-0.5 text-xs text-slate-500', collapsed && 'lg:hidden')}>
-              Mock development environment
             </div>}
           </div>
         </div>

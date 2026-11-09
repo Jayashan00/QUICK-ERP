@@ -8,6 +8,8 @@ import { auditEventService } from '@/core/audit';
 import type { User } from '@/core/auth/types/user';
 import { salesStore } from '@/features/sales/services/salesStore';
 import { getStateAccessor, registerList, replaceArray } from '@/core/persistence/stateRegistry';
+import { assertOpenAccountingPeriod } from '@/features/settings/finance/accountingPeriodEnforcement';
+import '@/features/settings/finance/services/tenantSettingsService';
 
 export type HrScope = { tenantId: string; branchId: string; permittedBranchIds: string[] };
 export type HrActor = { id: string; name: string };
@@ -245,6 +247,8 @@ export const hrService = {
   payrolls: (scope: HrScope, branchId?: string) => visible(payrolls, scope, branchId),
   commissionCandidates(scope: HrScope, period: string, branchId?: string) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error('Period must be YYYY-MM.');
+    const periodEnd = new Date(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0).toISOString().slice(0, 10);
+    assertOpenAccountingPeriod(scope.tenantId, periodEnd, 'prepare payroll');
     return salesStore.payments().filter(payment => payment.tenantId === scope.tenantId && permitted(scope, payment.branchId) && (!branchId || payment.branchId === branchId) && payment.paymentDate.startsWith(period) && payment.amount > 0).flatMap(payment => {
       const invoice = salesStore.invoices().find(row => row.id === payment.invoiceId && row.tenantId === scope.tenantId && row.branchId === payment.branchId && row.status !== 'void');
       if (!invoice?.salespersonId) return [];
