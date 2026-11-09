@@ -3,6 +3,8 @@ import type { EntityId } from "@/shared/types/common";
 import { productStore } from "@/features/products/services/productStore";
 import { inventoryStore } from "./inventoryStore";
 import { calculateAvailableQuantity } from "../utils/stockCalculations";
+import { assertOpenAccountingPeriod } from "@/features/settings/finance/accountingPeriodEnforcement";
+import "@/features/settings/finance/services/tenantSettingsService";
 import type {
   InventoryBatch,
   InventorySerialNumber,
@@ -418,6 +420,7 @@ export const inventoryWorkflowService = {
     for (const line of handoff.lines)
       validateTrackedLine(scope.tenantId, line, handoff.source);
     const now = handoff.occurredAt || new Date().toISOString();
+    assertOpenAccountingPeriod(scope.tenantId, now.slice(0, 10), "record this stock movement");
     handoff.lines.forEach((line, lineIndex) => {
       const effect = prepared.effects[lineIndex];
       const index = inventoryStore

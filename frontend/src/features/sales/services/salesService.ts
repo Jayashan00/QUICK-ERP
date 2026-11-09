@@ -8,6 +8,8 @@ import { productStore } from "@/features/products/services/productStore";
 import { masterDataStore } from "@/features/products/services/masterDataStore";
 import { warehouseService } from "@/features/inventory/services/warehouseService";
 import { inventoryWorkflowService } from "@/features/inventory/services/inventoryWorkflowService";
+import { tenantSettingsService } from "@/features/settings/finance/services/tenantSettingsService";
+import { assertOpenAccountingPeriod } from "@/features/settings/finance/accountingPeriodEnforcement";
 import type { ApprovalStatus } from "@/shared/types/approval";
 import type { AuditEntry } from "@/shared/types/audit";
 import type { DocumentRecord } from "@/shared/types/document-record";
@@ -634,7 +636,7 @@ export const salesService = {
     const quotation: SalesQuotation = {
       id: `sales-quote-${crypto.randomUUID().slice(0, 8)}`,
       tenantId: scope.tenantId,
-      referenceNumber: reference("QUO", salesStore.quotations().length),
+      referenceNumber: tenantSettingsService.nextDocumentNumber(scope.tenantId, "quotation"),
       ...data,
       opportunityId: data.opportunityId || undefined,
       notes: data.notes || undefined,
@@ -830,7 +832,7 @@ export const salesService = {
     const order: SalesOrder = {
       id: `sales-order-${crypto.randomUUID().slice(0, 8)}`,
       tenantId: scope.tenantId,
-      referenceNumber: reference("SO", salesStore.orders().length),
+      referenceNumber: tenantSettingsService.nextDocumentNumber(scope.tenantId, "sales_order"),
       ...data,
       sourceQuotationId,
       notes: data.notes || undefined,
@@ -1157,6 +1159,7 @@ export const salesService = {
   ) {
     requireScope(scope, permitted);
     const data = salesInvoiceSchema.parse(values);
+    assertOpenAccountingPeriod(scope.tenantId, data.invoiceDate, "create this sales invoice");
     assertBranch(permitted, data.branchId);
     await validateCustomer(scope, data.branchId, data.customerId);
     const salesperson = await validateSalesperson(
@@ -1199,7 +1202,7 @@ export const salesService = {
     const invoice: SalesInvoice = {
       id: `sales-invoice-${crypto.randomUUID().slice(0, 8)}`,
       tenantId: scope.tenantId,
-      referenceNumber: reference("INV", salesStore.invoices().length),
+      referenceNumber: tenantSettingsService.nextDocumentNumber(scope.tenantId, "invoice"),
       ...data,
       salesOrderId: data.salesOrderId || undefined,
       deliveryNoteId: data.deliveryNoteId || undefined,
@@ -1287,6 +1290,7 @@ export const salesService = {
     actor: SalesActor,
   ) {
     const data = customerPaymentSchema.parse(values);
+    assertOpenAccountingPeriod(scope.tenantId, data.paymentDate, "receive this customer payment");
     const index = salesStore
       .invoices()
       .findIndex(
@@ -1311,7 +1315,7 @@ export const salesService = {
       id: `customer-payment-${crypto.randomUUID().slice(0, 8)}`,
       tenantId: scope.tenantId,
       branchId: invoice.branchId,
-      referenceNumber: reference("PAY", salesStore.payments().length),
+      referenceNumber: tenantSettingsService.nextDocumentNumber(scope.tenantId, "payment"),
       customerId: invoice.customerId,
       ...data,
       invoiceId: invoice.id,
