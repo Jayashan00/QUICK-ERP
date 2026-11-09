@@ -14,6 +14,8 @@
     "qa:sales": "node scripts/run-sales-qa.mjs",
     "qa:suppliers": "node scripts/run-supplier-qa.mjs",
     "qa:accounting": "node scripts/run-accounting-qa.mjs",
+    "qa:document-numbering": "node scripts/run-document-numbering-qa.mjs",
+    "qa:financial-period": "node scripts/run-financial-period-qa.mjs",
     "qa:hr": "node scripts/run-hr-qa.mjs",
     "qa:advanced-hr": "node scripts/run-advanced-hr-qa.mjs",
     "qa:projects": "node scripts/run-projects-qa.mjs",

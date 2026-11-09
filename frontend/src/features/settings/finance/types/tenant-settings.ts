@@ -21,7 +21,6 @@ export interface LocalizationSettings {
   locale: string;
   thousandsSeparator: ',' | '.' | ' ';
   decimalSeparator: '.' | ',';
-  exchangeRateProvider: 'manual' | 'future_api';
 }
 
 export interface FinancialYearSettings {
@@ -87,6 +86,8 @@ export interface DocumentSequence extends BaseEntity {
   nextNumber: number;
   padding: number;
   resetRule: SequenceResetRule;
+  /** Calendar period in which the current counter was last consumed. */
+  lastResetPeriod?: string;
   isActive: boolean;
 }
 
