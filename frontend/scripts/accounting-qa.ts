@@ -47,6 +47,7 @@ const paymentInput = { branchId: payable.branchId, date: '2026-09-28', reference
 assert.throws(() => accountingService.createSettlement(scope, actor, { ...paymentInput, amount: payable.outstanding + 1 }));
 assert.throws(() => accountingService.createSettlement(other, actor, paymentInput));
 const supplierPayment = accountingService.createSettlement(scope, actor, paymentInput);
+assert.equal(supplierPayment.reference, 'P-00001');
 assert.equal(accountingService.payables(scope).find(row => row.id === payable.id)?.outstanding, Math.round((payable.outstanding - paymentInput.amount) * 100) / 100);
 assert.equal(accountingService.settlements(scope).find(row => row.id === supplierPayment.id)?.kind, 'payment');
 assert.equal(accountingService.settlements(other).find(row => row.id === supplierPayment.id), undefined);
@@ -120,6 +121,7 @@ const receivable = accountingService.receivables(scope).find((row) => row.outsta
 assert.ok(receivable);
 assert.throws(() => accountingService.createSettlement(scope, actor, { branchId: receivable.branchId, date: '2026-09-28', reference: 'QA-OVERPAY', kind: 'receipt', documentId: receivable.id, party: receivable.party, amount: receivable.outstanding + 1, accountId: 'acct-1200' }));
 const receipt = accountingService.createSettlement(scope, actor, { branchId: receivable.branchId, date: '2026-09-28', reference: 'QA-RECEIPT', kind: 'receipt', documentId: receivable.id, party: receivable.party, amount: Math.min(100, receivable.outstanding), accountId: 'acct-1200' });
+assert.equal(receipt.reference, 'R-00001');
 assert.ok(accountingService.receivables(scope).find((row) => row.id === receivable.id)!.outstanding < receivable.outstanding);
 assert.throws(() => accountingService.matchBankLine(scope, actor, 'bank-001', receipt.id));
 assert.ok(accountingService.audit(scope).length > 0);
