@@ -34,12 +34,12 @@ export function BranchListPage() {
   const { currentTenant } = useTenant();
 
   const canCreate = hasPermission(PERMISSIONS.SETTINGS.BRANCHES_CREATE);
-  const branchLimitReached = Boolean(currentTenant && currentTenant.entitlements.usage.currentBranches >= currentTenant.entitlements.limits.maxBranches);
   const canEdit = hasPermission(PERMISSIONS.SETTINGS.BRANCHES_EDIT);
   const canDelete = hasPermission(PERMISSIONS.SETTINGS.BRANCHES_DELETE);
 
   const {
     branches,
+    branchCount,
     total,
     isLoading,
     error,
@@ -57,6 +57,9 @@ export function BranchListPage() {
     deleteBranch,
     isDeleting,
   } = useBranches();
+
+  const actualBranchCount = branchCount ?? currentTenant?.entitlements.usage.currentBranches ?? 0;
+  const branchLimitReached = Boolean(currentTenant && actualBranchCount >= currentTenant.entitlements.limits.maxBranches);
 
   const [deletingBranch, setDeletingBranch] = useState<Branch | null>(null);
 
@@ -95,7 +98,7 @@ export function BranchListPage() {
               >
                 Add Branch
               </Button>
-              {currentTenant && <p className={`mt-1 text-xs ${branchLimitReached ? 'text-amber-700' : 'text-slate-500'}`}>{currentTenant.entitlements.usage.currentBranches} / {currentTenant.entitlements.limits.maxBranches} branches{branchLimitReached ? ' · limit reached' : ''}</p>}
+              {currentTenant && <p className={`mt-1 text-xs ${branchLimitReached ? 'text-amber-700' : 'text-slate-500'}`}>{actualBranchCount} / {currentTenant.entitlements.limits.maxBranches} branches{branchLimitReached ? ' · limit reached' : ''}</p>}
             </div>
           ) : undefined
         }

@@ -61,4 +61,8 @@ public class ApiException extends RuntimeException {
     public static ApiException tooManyRequests(String message) {
         return new ApiException(429, "too_many_requests", message);
     }
+
+    public static ApiException serviceUnavailable(String code, String message) {
+        return new ApiException(503, code, message);
+    }
 }

@@ -20,6 +20,7 @@ public class AppProperties {
     private final Files files = new Files();
     private final Access access = new Access();
     private final Limits limits = new Limits();
+    private final Ai ai = new Ai();
     /** "development" (default) or "production". Production refuses to start with unsafe settings. */
     private String environment = "development";
 
@@ -35,6 +36,7 @@ public class AppProperties {
     public Files getFiles() { return files; }
     public Access getAccess() { return access; }
     public Limits getLimits() { return limits; }
+    public Ai getAi() { return ai; }
     public String getEnvironment() { return environment; }
     public void setEnvironment(String environment) { this.environment = environment; }
     public boolean isProduction() { return "production".equalsIgnoreCase(environment == null ? "" : environment.trim()); }
@@ -82,6 +84,18 @@ public class AppProperties {
         private long maxJsonBytes = 16L * 1024 * 1024;
         public long getMaxJsonBytes() { return maxJsonBytes; }
         public void setMaxJsonBytes(long maxJsonBytes) { this.maxJsonBytes = maxJsonBytes; }
+    }
+
+    public static class Ai {
+        private String geminiApiKey = "";
+        private String geminiModel = "gemini-3.5-flash-lite";
+        private int maxHistoryMessages = 12;
+        public String getGeminiApiKey() { return geminiApiKey; }
+        public void setGeminiApiKey(String geminiApiKey) { this.geminiApiKey = geminiApiKey; }
+        public String getGeminiModel() { return geminiModel; }
+        public void setGeminiModel(String geminiModel) { this.geminiModel = geminiModel; }
+        public int getMaxHistoryMessages() { return maxHistoryMessages; }
+        public void setMaxHistoryMessages(int maxHistoryMessages) { this.maxHistoryMessages = maxHistoryMessages; }
     }
 
     public static class Mail {

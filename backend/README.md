@@ -127,6 +127,9 @@ java -jar target/quick-erp-backend.jar
 | `PASSWORD_RESET_URL` | `http://localhost:3000/reset-password` | Frontend page used in reset emails. Use your production URL |
 | `MAIL_FROM` | `no-reply@quickerp.local` | Sender address of reset emails |
 | `SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `SPRING_MAIL_USERNAME`, `SPRING_MAIL_PASSWORD`, `SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=true`, `SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true` | not set | SMTP server for reset emails. **Without it, reset emails are written to the backend log** |
+| `GEMINI_API_KEY` | not set | Backend-only Google Gemini credential used by the read-only ERP assistant. Never put this in a `VITE_*` variable |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used to summarize authorized tool results |
+| `AI_MAX_HISTORY_MESSAGES` | `12` | Maximum prior tenant/user-scoped messages sent as conversation context (capped at 30) |
 
 More settings, such as the public shop collections and the provisioning template, are in `src/main/resources/application.yml`.
 
@@ -142,6 +145,8 @@ All responses are JSON. Errors have the form `{ "status", "code", "message", "er
 | POST | `/auth/change-password` | Bearer | `{currentPassword, newPassword}` → `{token, expiresAt}`. Other sessions are signed out; use the returned token |
 | POST | `/auth/logout` | Bearer | Ends this session: the token stops working immediately |
 | POST | `/auth/logout-all` | Bearer | Signs the caller out on every device |
+| POST | `/ai/chat` | Bearer | Read-only assistant request `{message, conversationId?, currentBranchId?}`. Tenant/user/role are derived from the token |
+| DELETE | `/ai/conversations/{id}` | Bearer | Clears a conversation owned by the signed-in tenant user |
 | POST | `/auth/mfa/verify` | none | Second sign-in step `{challenge, code}` → session (code from the app or a recovery code) |
 | GET | `/auth/mfa` | Bearer | `{enabled}` |
 | POST | `/auth/mfa/setup` | Bearer | `{secret, otpauthUrl}` to add to an authenticator app |
@@ -276,7 +281,8 @@ curl -X POST http://localhost:8000/api/v1/users/usr-004/password \
 
 ## Upgrading an existing database
 
-Flyway applies `V3__security_hardening.sql` automatically. Existing sessions keep working. Starter data is only
+Flyway applies migrations through `V4__ai_assistant.sql` automatically. V4 adds tenant/user-scoped AI conversations,
+messages, and audit records; it does not alter ERP business records. Existing sessions keep working. Starter data is only
 written to an empty database, so an existing database keeps its data. The roles and users in a database created
 with an older version were uploaded by the first browser that signed in: check them in Settings > Roles and
 Settings > Users after upgrading.

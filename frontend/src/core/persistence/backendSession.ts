@@ -103,8 +103,9 @@ export function upsertIdentity(user: User, tenant: Tenant | null): void {
   if (userIndex >= 0) mockUsers[userIndex] = normalizedUser;
   else mockUsers.push(normalizedUser);
   if (tenant) {
-    const normalizedTenant = { ...tenant, slug: tenant.slug || toUrlSlug(tenant.subdomain || tenant.name), entitlements: tenantEntitlementsFromServer(tenant) };
-    tenantEntitlementService.set(normalizedTenant.id, normalizedTenant.entitlements);
+    const normalizedTenant = { ...tenant, slug: tenant.slug || toUrlSlug(tenant.subdomain || tenant.name) };
+    // Use the server's module configuration when it has one (normalized: known modules, dependencies, numeric limits).
+    if (tenant.entitlements) tenantEntitlementService.set(tenant.id, tenantEntitlementsFromServer(tenant));
     const tenantIndex = mockTenants.findIndex((candidate) => candidate.id === tenant.id);
     if (tenantIndex >= 0) mockTenants[tenantIndex] = normalizedTenant;
     else mockTenants.push(normalizedTenant);

@@ -8,6 +8,7 @@ import { useBranch } from '@/core/branch/branch-context';
 import { moduleForPath } from '@/core/tenant/tenantEntitlements';
 import { PermissionDenied } from '@/shared/components/feedback/PermissionDenied';
 import { buildTenantPath, getTenantRouteIdentity, isLegacyTenantPath, resolvePostLoginPath, stripTenantPath } from '@/core/routing';
+import { AiAssistantDrawer } from '@/features/ai-assistant';
 
 export function ERPLayout() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -52,6 +53,7 @@ export function ERPLayout() {
     <AppShell navigationSections={ERP_NAVIGATION_SECTIONS} area="tenant">
       <Breadcrumbs />
       <Outlet />
+      <AiAssistantDrawer />
     </AppShell>
   );
 }

@@ -5,6 +5,7 @@ import { Breadcrumbs } from '@/shared/components/layout/Breadcrumbs';
 import { SUPER_ADMIN_NAVIGATION_SECTIONS } from '@/app/config/navigationConfig';
 import { useAuth } from '@/core/auth/auth-context';
 import { PermissionDenied } from '@/shared/components/feedback/PermissionDenied';
+import { AiAssistantDrawer } from '@/features/ai-assistant';
 
 export function SuperAdminLayout() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -31,6 +32,7 @@ export function SuperAdminLayout() {
       </div>
       <Breadcrumbs />
       <Outlet />
+      <AiAssistantDrawer />
     </AppShell>
   );
 }

@@ -33,6 +33,16 @@ let usersStore: User[] = mockUsers.map((user) => {
   };
 });
 
+function synchronizeUserUsage(rows: readonly User[]) {
+  const tenantIds = new Set(rows.filter((user) => !user.isSuperAdmin).map((user) => user.tenantId));
+  for (const tenantId of tenantIds) {
+    const currentUsers = rows.filter((user) => user.tenantId === tenantId && !user.isSuperAdmin).length;
+    tenantEntitlementService.updateUsage(tenantId, { currentUsers });
+  }
+}
+
+synchronizeUserUsage(usersStore);
+
 export interface GetUsersParams {
   search?: string;
   status?: string;
@@ -90,6 +100,11 @@ async function validateAccessAssignment(tenantId: string, roleId: string, branch
 }
 
 export const userService = {
+  async getUserCount(tenantId: string): Promise<number> {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return usersStore.filter((user) => user.tenantId === tenantId && !user.isSuperAdmin).length;
+  },
+
   async getUsers(tenantId: string, params: GetUsersParams = {}): Promise<PaginatedUsersResult> {
     await new Promise((resolve) => setTimeout(resolve, 200));
     let filtered = usersStore.filter((user) => user.tenantId === tenantId && !user.isSuperAdmin);
@@ -172,6 +187,12 @@ export const userService = {
     return usersStore.filter((user) => user.tenantId === tenantId && user.roleId === roleId && !user.isSuperAdmin).length;
   },
 
+  getAssignedRoleUsers(tenantId: string, roleId: string): Array<Pick<User, 'id' | 'name' | 'email' | 'status'>> {
+    return usersStore
+      .filter((user) => user.tenantId === tenantId && user.roleId === roleId && !user.isSuperAdmin)
+      .map(({ id, name, email, status }) => ({ id, name, email, status }));
+  },
+
   syncRoleName(tenantId: string, roleId: string, roleName: string): void {
     usersStore = usersStore.map((user) => user.tenantId === tenantId && user.roleId === roleId
       ? { ...user, roleName, updatedAt: new Date().toISOString() }
@@ -180,4 +201,7 @@ export const userService = {
 };
 
 // Backend persistence registration (see src/core/persistence).
-registerList('core.users', () => usersStore, (rows) => { usersStore = normalizeUsers(rows); });
+registerList('core.users', () => usersStore, (rows) => {
+  usersStore = normalizeUsers(rows);
+  synchronizeUserUsage(usersStore);
+});
