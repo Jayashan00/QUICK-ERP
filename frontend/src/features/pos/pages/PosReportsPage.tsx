@@ -5,11 +5,15 @@ import { SummaryCard } from '@/shared/components/cards/SummaryCard';
 import { StatusBadge } from '@/shared/components/common/StatusBadge';
 import { EmptyState } from '@/shared/components/feedback/EmptyState';
 import { DataTable } from '@/shared/components/tables/DataTable';
-import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { useTenant } from '@/core/tenant/tenant-context';
+import { useBranch } from '@/core/branch/branch-context';
+import { usePosCurrency } from '../posCurrency';
 import type { ModuleDashboardOverview } from '@/features/dashboard/types/moduleDashboard';
 
 function PosDetailedReports({ overview }: { overview: ModuleDashboardOverview }) {
-  const { formatMoney } = useTenantCurrency();
+  const { tenantId } = useTenant();
+  const { branchId } = useBranch();
+  const { formatMoney } = usePosCurrency(tenantId ?? '', branchId ?? '');
   const details = overview.posDetails;
   if (!details) return null;
   return <div className="space-y-6">

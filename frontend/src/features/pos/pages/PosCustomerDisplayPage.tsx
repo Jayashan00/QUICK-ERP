@@ -3,6 +3,7 @@ import { useAuth } from '@/core/auth/auth-context';
 import { useTenant } from '@/core/tenant/tenant-context';
 import { usePermissions } from '@/core/permissions/permission-context';
 import { posDisplay, type CustomerDisplayState } from '../posDisplay';
+import { usePosCurrency } from '../posCurrency';
 
 export function PosCustomerDisplayPage() {
   const { user } = useAuth();
@@ -10,6 +11,7 @@ export function PosCustomerDisplayPage() {
   const { hasPermission } = usePermissions();
   const [branchId, setBranchId] = useState(user?.defaultBranchId ?? '');
   const branch = user?.branchIds.includes(branchId) ? branchId : user?.branchIds[0] ?? '';
+  const { formatDisplayMoney } = usePosCurrency(tenantId ?? '', branch);
   const [display, setDisplay] = useState<CustomerDisplayState | null>(null);
 
   useEffect(() => {
@@ -67,7 +69,7 @@ export function PosCustomerDisplayPage() {
                 {display!.items.map((item, index) => (
                   <li key={`${item.name}-${index}`} className="flex items-start justify-between gap-4 py-4 text-base sm:text-lg">
                     <span className="min-w-0 font-medium">{item.name} <span className="whitespace-nowrap font-normal text-slate-500">× {item.quantity}</span></span>
-                    <span className="shrink-0 font-semibold tabular-nums">{item.total.toFixed(2)}</span>
+                    <span className="shrink-0 font-semibold tabular-nums">{formatDisplayMoney(item.total)}</span>
                   </li>
                 ))}
               </ul>
@@ -85,7 +87,7 @@ export function PosCustomerDisplayPage() {
               <p className="text-sm font-medium text-blue-100">{isPaid ? 'Total paid' : 'Total due'}</p>
               <p className="mt-1 text-xs text-blue-200">{isPaid ? 'Thank you for your purchase.' : 'Your order total updates automatically.'}</p>
             </div>
-            <p className="text-4xl font-bold tabular-nums tracking-tight sm:text-5xl" aria-live="polite">{(display?.total ?? 0).toFixed(2)}</p>
+            <p className="text-4xl font-bold tabular-nums tracking-tight sm:text-5xl" aria-live="polite">{formatDisplayMoney(display?.total ?? 0)}</p>
           </div>
         </section>
       </div>

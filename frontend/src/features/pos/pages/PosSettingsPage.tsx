@@ -5,12 +5,15 @@ import { usePermissions } from '@/core/permissions/permission-context';
 import { inventoryStore } from '@/features/inventory/services/inventoryStore';
 import { appToast } from '@/shared/utils/toast';
 import { posSettingsService, type PosSettings } from '../posSettings';
+import { POS_STORED_CURRENCY } from '../posCurrency';
+import { useExchangeRates } from '@/features/settings/finance/exchangeRates';
 
 const input = 'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
 export function PosSettingsPage() {
   const { user } = useAuth(); const { tenantId } = useTenant(); const { hasPermission } = usePermissions();
   const [revision, setRevision] = useState(0); void revision;
   const [form, setForm] = useState<PosSettings>(() => posSettingsService.get(tenantId ?? '', user?.defaultBranchId ?? ''));
+  const exchange = useExchangeRates(form.currency);
   const warehouses = inventoryStore.warehouses().filter(w => w.tenantId === tenantId && w.branchId === form.defaultBranchId && w.isActive);
   const locations = inventoryStore.locations().filter(l => l.tenantId === tenantId && l.branchId === form.defaultBranchId && l.warehouseId === form.warehouseId);
   const update = <K extends keyof PosSettings>(key: K, value: PosSettings[K]) => setForm(old => ({ ...old, [key]: value }));
@@ -19,6 +22,7 @@ export function PosSettingsPage() {
     <label className="text-sm">Default branch<select className={input} value={form.defaultBranchId} onChange={e => { const branchId = e.target.value; const warehouse = inventoryStore.warehouses().find(w => w.tenantId === tenantId && w.branchId === branchId && w.isActive); const location = inventoryStore.locations().find(l => l.warehouseId === warehouse?.id && l.tenantId === tenantId); setForm(old => ({ ...old, defaultBranchId: branchId, warehouseId: warehouse?.id ?? '', locationId: location?.id ?? '' })); }}>{user?.branchIds.map(id => <option key={id} value={id}>{id}</option>)}</select></label>
     <label className="text-sm">Warehouse<select className={input} value={form.warehouseId} onChange={e => { const warehouseId = e.target.value; const location = inventoryStore.locations().find(l => l.warehouseId === warehouseId && l.tenantId === tenantId); setForm(old => ({ ...old, warehouseId, locationId: location?.id ?? '' })); }}>{warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
     <label className="text-sm">Stock location<select className={input} value={form.locationId} onChange={e => update('locationId', e.target.value)}>{locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+    <label className="text-sm">POS currency<select className={input} value={form.currency} onChange={e => update('currency', e.target.value as PosSettings['currency'])}>{['LKR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED', 'INR'].map(currency => <option key={currency} value={currency}>{currency}</option>)}</select><span className="mt-1 block text-xs text-slate-500">Stored POS prices remain in {POS_STORED_CURRENCY}. Displayed totals are converted to {form.currency}{exchange.rateDate ? ` using the ${exchange.rateDate} daily rate` : ''}.</span>{exchange.error && form.currency !== POS_STORED_CURRENCY && <span className="mt-1 block text-xs text-red-700">Rate unavailable. POS will keep showing {POS_STORED_CURRENCY} values.</span>}</label>
     <label className="text-sm">Receipt footer<input className={input} maxLength={200} value={form.receiptFooter} onChange={e => update('receiptFooter', e.target.value)}/></label>
     <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.autoPrint} onChange={e => update('autoPrint', e.target.checked)}/> Auto print receipts</label>
     <fieldset className="text-sm"><legend>Allowed payment methods</legend><div className="mt-2 flex flex-wrap gap-3">{(['cash','card','credit','other'] as const).map(method => <label key={method} className="flex items-center gap-1 capitalize"><input type="checkbox" checked={form.allowedMethods.includes(method)} onChange={e => update('allowedMethods', e.target.checked ? [...form.allowedMethods, method] : form.allowedMethods.filter(value => value !== method))}/>{method}</label>)}</div></fieldset>

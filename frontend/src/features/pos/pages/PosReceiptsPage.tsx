@@ -6,6 +6,7 @@ import { SyncStatusBadge, useSync } from "@/features/sync";
 import { posService } from "../posService";
 import { posSettingsService } from "../posSettings";
 import { ReceiptMessagePanel } from "../components/ReceiptMessagePanel";
+import { usePosCurrency } from '../posCurrency';
 
 export function PosReceiptsPage() {
   const { user } = useAuth();
@@ -17,6 +18,7 @@ export function PosReceiptsPage() {
     ? branchId
     : user?.branchIds[0] ?? "";
   const scope = { tenantId: tenantId ?? "", branchId: branch };
+  const { formatMoney } = usePosCurrency(scope.tenantId, scope.branchId);
   const [saleId, setSaleId] = useState("");
   const sales = posService.sales(scope);
   const sale = sales.find((item) => item.id === saleId) ?? sales[0];
@@ -52,7 +54,7 @@ export function PosReceiptsPage() {
               className="mb-2 flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               onClick={() => setSaleId(item.id)}
             >
-              <span>#{item.id.slice(0, 8)} · {item.total.toFixed(2)}</span>
+              <span>#{item.id.slice(0, 8)} · {formatMoney(item.total)}</span>
               <SyncStatusBadge status={sync.getRecordStatus("pos", item.id)} />
             </button>
           ))}
@@ -67,15 +69,15 @@ export function PosReceiptsPage() {
             <p className="text-xs">#{sale.id.slice(0, 8)} · {new Date(sale.at).toLocaleString()}</p>
             <p className="text-xs">Customer: {sale.customerId ?? "Walk-in"}</p>
             <div className="my-3 border-y py-2 text-sm">
-              {sale.lines.map((line) => <div key={line.productId} className="flex justify-between"><span>{line.name} × {line.quantity}</span><span>{(line.unitPrice * line.quantity).toFixed(2)}</span></div>)}
+              {sale.lines.map((line) => <div key={line.productId} className="flex justify-between"><span>{line.name} × {line.quantity}</span><span>{formatMoney(line.unitPrice * line.quantity)}</span></div>)}
             </div>
-            <p className="text-right text-sm">Discounts {(sale.discount + sale.couponDiscount).toFixed(2)}</p>
-            <p className="text-right text-sm">Tax {sale.tax.toFixed(2)}</p>
-            <p className="text-right font-semibold">Total {(sale.total + sale.giftUsed + sale.loyaltyUsed).toFixed(2)}</p>
-            {sale.giftUsed > 0 && <p className="text-right text-xs">Gift card {sale.giftUsed.toFixed(2)}</p>}
-            {sale.loyaltyUsed > 0 && <p className="text-right text-xs">Loyalty {sale.loyaltyUsed.toFixed(2)}</p>}
-            {sale.payments.map((payment, index) => <p key={index} className="text-right text-xs capitalize">{payment.method} {payment.amount.toFixed(2)}</p>)}
-            <p className="text-right text-xs">Change {sale.change.toFixed(2)}</p>
+            <p className="text-right text-sm">Discounts {formatMoney(sale.discount + sale.couponDiscount)}</p>
+            <p className="text-right text-sm">Tax {formatMoney(sale.tax)}</p>
+            <p className="text-right font-semibold">Total {formatMoney(sale.total + sale.giftUsed + sale.loyaltyUsed)}</p>
+            {sale.giftUsed > 0 && <p className="text-right text-xs">Gift card {formatMoney(sale.giftUsed)}</p>}
+            {sale.loyaltyUsed > 0 && <p className="text-right text-xs">Loyalty {formatMoney(sale.loyaltyUsed)}</p>}
+            {sale.payments.map((payment, index) => <p key={index} className="text-right text-xs capitalize">{payment.method} {formatMoney(payment.amount)}</p>)}
+            <p className="text-right text-xs">Change {formatMoney(sale.change)}</p>
             <p className="mt-3 text-center text-xs">{settings.receiptFooter}</p>
             <div className="mt-4 flex gap-2 print:hidden">
               <button className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50" disabled={!hasPermission("pos.receipt.reprint")} onClick={() => window.print()}>Print / reprint</button>
