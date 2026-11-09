@@ -1,10 +1,15 @@
 import type { DashboardPeriod, DashboardTrend } from '../types/dashboard';
+import { fiscalYearRange } from '@/features/settings/finance/accountingPeriodEnforcement';
 export const dashboardPeriods: { value: DashboardPeriod; label: string }[] = [
   { value: 'today', label: 'Today' }, { value: 'week', label: 'This Week' }, { value: 'month', label: 'This Month' },
   { value: 'quarter', label: 'This Quarter' }, { value: 'year', label: 'This Year' }, { value: 'custom', label: 'Custom Range' },
 ];
 export const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-export function periodRange(period: DashboardPeriod, now = new Date()) {
+export function periodRange(period: DashboardPeriod, now = new Date(), tenantId?: string) {
+  if (period === 'year' && tenantId) {
+    const fiscal = fiscalYearRange(tenantId, now);
+    return { dateFrom: fiscal.startDate, dateTo: dateKey(now) < fiscal.endDate ? dateKey(now) : fiscal.endDate };
+  }
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (period === 'week') start.setDate(start.getDate() - (start.getDay() + 6) % 7);
   if (period === 'month') start.setDate(1);

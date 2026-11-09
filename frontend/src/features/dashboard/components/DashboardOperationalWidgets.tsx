@@ -23,13 +23,13 @@ export function DashboardApprovals({ items, count }: { items: DashboardApproval[
   </SummaryCard></section>;
 }
 
-export function DashboardTransactions({ title, items, to, currency }: { title: string; items: DashboardTransaction[]; to: string; currency: string }) {
+export function DashboardTransactions({ title, items, to, formatMoney }: { title: string; items: DashboardTransaction[]; to: string; formatMoney: (value: number) => string }) {
   const { toTenantPath } = useTenantRoute();
   return <SummaryCard title={title} subtitle="Latest 5 records in the selected period" action={<Link to={toTenantPath(to)} className={dashboardLinkClass}>View All</Link>}>
     <DataTable data={items} keyField="id" emptyTitle="No transactions" emptyMessage="No transactions recorded for this period." columns={[
       { key: 'reference', header: 'Reference', render: row => <Link to={toTenantPath(row.to)} className={dashboardLinkClass}>{row.reference}</Link> },
       { key: 'party', header: 'Customer / Supplier', render: row => row.party },
-      { key: 'total', header: 'Total', render: row => new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(row.total) },
+      { key: 'total', header: 'Total', render: row => formatMoney(row.total) },
       { key: 'status', header: 'Status', render: row => <StatusBadge status={row.status} /> },
       { key: 'date', header: 'Date', render: row => row.date },
     ]} />
