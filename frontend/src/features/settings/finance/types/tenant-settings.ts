@@ -64,19 +64,6 @@ export interface PaymentTerm extends BaseEntity {
   isActive: boolean;
 }
 
-export type PaymentMethodType = 'cash' | 'card' | 'bank_transfer' | 'credit' | 'other';
-export interface PaymentMethod extends BaseEntity {
-  tenantId: EntityId;
-  code: string;
-  name: string;
-  type: PaymentMethodType;
-  isActive: boolean;
-  isDefault: boolean;
-  requiresReference: boolean;
-  clearingAccount?: string;
-  instructions?: string;
-}
-
 export type SequenceResetRule = 'never' | 'yearly' | 'monthly';
 export interface DocumentSequence extends BaseEntity {
   tenantId: EntityId;
@@ -95,6 +82,7 @@ export type NotificationChannel = 'inApp' | 'email' | 'sms' | 'whatsapp';
 export type NotificationEventGroup = 'approvals' | 'sales' | 'purchases' | 'stock' | 'finance' | 'hr' | 'projects' | 'documents' | 'sync' | 'system';
 export type NotificationChannelPreferences = Record<NotificationChannel, boolean>;
 export interface NotificationPreferences {
+  id: EntityId;
   tenantId: EntityId;
   userId: EntityId;
   groups: Record<NotificationEventGroup, NotificationChannelPreferences>;
