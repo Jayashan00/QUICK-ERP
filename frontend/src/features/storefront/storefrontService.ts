@@ -16,7 +16,7 @@ export const checkoutSchema = z.object({
 });
 export type CheckoutDetails = z.infer<typeof checkoutSchema>;
 export type CartItem = { productId: string; quantity: number };
-export type StoreOrder = { id: string; trackingToken: string; scope: TenantBranchScope; customer: CheckoutDetails; items: { productId: string; name: string; quantity: number; unitPrice: number; tax: number; total: number }[]; subtotal: number; tax: number; total: number; status: 'new' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled'; paymentStatus: 'pending' | 'paid' | 'failed'; createdAt: string; updatedAt: string; locationId?: string };
+export type StoreOrder = { id: string; trackingToken: string; scope: TenantBranchScope; customer: CheckoutDetails; items: { productId: string; name: string; quantity: number; unitPrice: number; taxCode?: string; taxPercent: number; tax: number; total: number }[]; subtotal: number; tax: number; total: number; status: 'new' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled'; paymentStatus: 'pending' | 'paid' | 'failed'; createdAt: string; updatedAt: string; locationId?: string };
 const orders: StoreOrder[] = [];
 const sameScope = (a: TenantBranchScope, b: TenantBranchScope) => a.tenantId === b.tenantId && a.branchId === b.branchId;
 const checkedScope = (scope: TenantBranchScope) => { if (!scope.tenantId || !scope.branchId || !tenantEntitlementService.isModuleEnabled(scope.tenantId, 'web_store') || !inventoryStore.locations().some(l => sameScope(l, scope) && l.isActive)) throw new Error('This store is unavailable.'); };
@@ -46,7 +46,7 @@ export const storefrontService = {
     const customer = checkoutSchema.parse(details);
     const quote = await this.quote(scope, cart);
     const now = new Date().toISOString();
-    const order: StoreOrder = { id: crypto.randomUUID(), trackingToken: crypto.randomUUID(), scope: { ...scope }, customer, items: quote.lines.map(line => ({ productId: line.product.id, name: line.product.name, quantity: line.quantity, unitPrice: line.unitPrice, tax: line.tax, total: money(line.lineTotal + (line.product.pricesIncludeTax ? 0 : line.tax)) })), subtotal: quote.subtotal, tax: quote.tax, total: quote.total, status: 'new', paymentStatus: 'pending', createdAt: now, updatedAt: now };
+    const order: StoreOrder = { id: crypto.randomUUID(), trackingToken: crypto.randomUUID(), scope: { ...scope }, customer, items: quote.lines.map(line => ({ productId: line.product.id, name: line.product.name, quantity: line.quantity, unitPrice: line.unitPrice, taxCode: line.taxCode, taxPercent: line.taxPercent, tax: line.tax, total: money(line.lineTotal + (line.product.pricesIncludeTax ? 0 : line.tax)) })), subtotal: quote.subtotal, tax: quote.tax, total: quote.total, status: 'new', paymentStatus: 'pending', createdAt: now, updatedAt: now };
     orders.unshift(order);
     return order;
   },

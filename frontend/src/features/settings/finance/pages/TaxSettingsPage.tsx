@@ -30,7 +30,6 @@ import {
 
 const blank: TaxRateValues = {
   name: "",
-  code: "",
   percentage: 0,
   type: "both",
   effectiveFrom: new Date().toISOString().slice(0, 10),
@@ -242,7 +241,6 @@ function TaxModal({
   const values: TaxRateValues = item
     ? {
         name: item.name,
-        code: item.code,
         percentage: item.percentage,
         type: item.type,
         effectiveFrom: item.effectiveFrom,
@@ -302,9 +300,6 @@ function TaxModal({
         >
           <FormField label="Tax name" required error={errors.name?.message}>
             <TextInput {...register("name")} />
-          </FormField>
-          <FormField label="Code" required error={errors.code?.message}>
-            <TextInput {...register("code")} />
           </FormField>
           <FormField
             label="Percentage"

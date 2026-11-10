@@ -31,6 +31,7 @@ export interface Customer extends BaseEntity {
   taxNumber?: string;
   currency: string;
   creditLimit?: number;
+  paymentTermCode?: string;
   paymentTermsDays?: number;
   status: CustomerStatus;
   billingAddress: {

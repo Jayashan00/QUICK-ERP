@@ -31,7 +31,6 @@ const LocalizationSettingsPage = settingsPage(() => import('@/features/settings/
 const FinancialSettingsPage = settingsPage(() => import('@/features/settings/finance'), 'FinancialSettingsPage');
 const TaxSettingsPage = settingsPage(() => import('@/features/settings/finance'), 'TaxSettingsPage');
 const PaymentTermsPage = settingsPage(() => import('@/features/settings/finance'), 'PaymentTermsPage');
-const PaymentMethodsPage = settingsPage(() => import('@/features/settings/finance'), 'PaymentMethodsPage');
 const DocumentNumberingPage = settingsPage(() => import('@/features/settings/finance'), 'DocumentNumberingPage');
 const NotificationPreferencesPage = settingsPage(() => import('@/features/settings/finance'), 'NotificationPreferencesPage');
 const EmailIntegrationPage = settingsPage(() => import('@/features/settings/integrations'), 'EmailIntegrationPage');
@@ -218,7 +217,6 @@ export const settingsRoutes: RouteObject[] = [
     { path: 'financial-year', element: <RequirePermission permission={PERMISSIONS.SETTINGS.FINANCIAL_YEAR_VIEW}><FinancialSettingsPage /></RequirePermission> },
     { path: 'taxes', element: <RequirePermission permission={PERMISSIONS.SETTINGS.TAXES_VIEW}><TaxSettingsPage /></RequirePermission> },
     { path: 'payment-terms', element: <RequirePermission permission={PERMISSIONS.SETTINGS.PAYMENT_TERMS_VIEW}><PaymentTermsPage /></RequirePermission> },
-    { path: 'payment-methods', element: <RequirePermission permission={PERMISSIONS.SETTINGS.PAYMENT_METHODS_VIEW}><PaymentMethodsPage /></RequirePermission> },
     { path: 'document-numbering', element: <RequirePermission permission={PERMISSIONS.SETTINGS.DOCUMENT_SETTINGS_VIEW}><DocumentNumberingPage /></RequirePermission> },
     { path: 'notification-preferences', element: <RequirePermission permission={PERMISSIONS.SETTINGS.NOTIFICATION_PREFERENCES_VIEW}><NotificationPreferencesPage /></RequirePermission> },
     { path: 'integrations/email', element: <RequirePermission permission={PERMISSIONS.INTEGRATIONS.EMAIL_INTEGRATION_VIEW}><EmailIntegrationPage /></RequirePermission> },

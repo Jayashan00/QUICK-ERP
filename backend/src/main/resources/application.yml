@@ -156,7 +156,6 @@ app:
       - hr.leaveTypes
       - hr.shifts
       - documents.categories
-      - notifications.templates
       - pos.settings
 
   # ------------------------------------------------------------------------------------------
@@ -200,8 +199,21 @@ app:
       - collection: "settings.*"
         write: ["settings.*.create", "settings.*.edit", "settings.*.delete", "settings.*.configure", "settings.*.test"]
       - collection: settings.notificationPreferences
+        read: [notifications.view]
         write: [notificationPreferences.manage, "settings.notification_preferences.edit", "settings.notification_preferences.configure"]
       - collection: settings.loginSessions
+      # --- Notifications: collection access plus StateStore row ownership checks ---
+      - collection: notifications.records
+        read: [notifications.view]
+        write: [notifications.view]
+      - collection: notifications.state
+        read: [notifications.view]
+        write: [notifications.view]
+      - collection: notifications.notices
+        read: [notices.view]
+        write: [notices.view]
+      - collection: notifications.templates
+        platform-only: true
       # --- Accounting: finance users (and auditors, read only) ---
       - collection: accounting.accounts
         write: [finance.chart_of_accounts.create, finance.chart_of_accounts.edit, finance.chart_of_accounts.delete]

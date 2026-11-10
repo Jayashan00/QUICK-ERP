@@ -14,6 +14,10 @@ import { Textarea } from "@/shared/components/forms/Textarea";
 import { TextInput } from "@/shared/components/forms/TextInput";
 import { getErrorMessage } from "@/shared/utils/errors";
 import { appToast } from "@/shared/utils/toast";
+import { usePaymentTerms, useTaxRates } from '@/features/settings/finance/hooks/useTenantSettings';
+import { PaymentTermSelect } from '@/features/settings/finance/components/PaymentTermSelect';
+import { addPaymentTermDays, matchPaymentTerm } from '@/features/settings/finance/paymentTerms';
+import { isSalesTaxApplicable } from '@/features/settings/finance/tax';
 import {
   customerPaymentSchema,
   deliverySchema,
@@ -58,6 +62,7 @@ interface EditableLine {
   quantity: number;
   unitPrice: number;
   discountPercent: number;
+  taxCode?: string;
   taxPercent: number;
 }
 const today = () => new Date().toISOString().slice(0, 10);
@@ -69,6 +74,7 @@ const blankLine = (): EditableLine => ({
   quantity: 1,
   unitPrice: 0,
   discountPercent: 0,
+  taxCode: "",
   taxPercent: 0,
 });
 const option = (
@@ -111,11 +117,15 @@ function Footer({
 function SalesLineEditor({
   value,
   onChange,
+  taxDate,
 }: {
   value: EditableLine[];
   onChange: (value: EditableLine[]) => void;
+  taxDate: string;
 }) {
   const products = useSalesProductOptions();
+  const taxQuery = useTaxRates();
+  const taxes = taxQuery.taxes.filter((tax) => isSalesTaxApplicable(tax, taxDate));
   const update = (index: number, patch: Partial<EditableLine>) =>
     onChange(
       value.map((line, itemIndex) =>
@@ -154,9 +164,12 @@ function SalesLineEditor({
                 const product = products.data?.find(
                   (item) => item.id === event.target.value,
                 );
+                const tax = taxes.find((item) => item.code === product?.taxCode);
                 update(index, {
                   productId: event.target.value,
                   unitPrice: product?.sellingPrice ?? line.unitPrice,
+                  taxCode: tax?.code ?? "",
+                  taxPercent: tax?.percentage ?? 0,
                   quantity:
                     product?.quantityDecimalPlaces === 0 && !Number.isInteger(line.quantity)
                       ? 1
@@ -205,15 +218,14 @@ function SalesLineEditor({
               }
             />
           </FormField>
-          <FormField label="Tax %">
-            <TextInput
-              type="number"
-              min="0"
-              max="100"
-              value={line.taxPercent}
-              onChange={(event) =>
-                update(index, { taxPercent: Number(event.target.value) })
-              }
+          <FormField label="Sales tax">
+            <Select
+              value={line.taxCode ?? ""}
+              onChange={(event) => {
+                const tax = taxes.find((item) => item.code === event.target.value);
+                update(index, { taxCode: tax?.code ?? "", taxPercent: tax?.percentage ?? 0 });
+              }}
+              options={[{ value: "", label: "No tax / Exempt" }, ...taxes.map((tax) => ({ value: tax.code, label: `${tax.name} (${tax.percentage}%)` }))]}
             />
           </FormField>
           {value.length > 1 && (
@@ -281,6 +293,7 @@ export function SalesQuotationFormModal({
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               discountPercent: item.discountPercent,
+              taxCode: item.taxCode,
               taxPercent: item.taxPercent,
             })),
           }
@@ -418,7 +431,7 @@ export function SalesQuotationFormModal({
           control={form.control}
           name="items"
           render={({ field }) => (
-            <SalesLineEditor value={field.value} onChange={field.onChange} />
+            <SalesLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("quotationDate")} />
           )}
         />
         <FormField
@@ -451,7 +464,7 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
       orderDate: today(),
       expectedDeliveryDate: future(7),
       deliveryAddress: "",
-      paymentTerms: "Net 30",
+      paymentTerms: "",
       currency: "USD",
       notes: "",
       items: [blankLine()],
@@ -480,6 +493,7 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               discountPercent: item.discountPercent,
+              taxCode: item.taxCode,
               taxPercent: item.taxPercent,
             })),
           }
@@ -491,7 +505,7 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
             orderDate: today(),
             expectedDeliveryDate: future(7),
             deliveryAddress: "",
-            paymentTerms: "Net 30",
+            paymentTerms: "",
             currency: "USD",
             notes: "",
             items: [blankLine()],
@@ -580,7 +594,7 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
             <DatePicker {...form.register("expectedDeliveryDate")} />
           </FormField>
           <FormField label="Payment terms">
-            <TextInput {...form.register("paymentTerms")} />
+            <Controller control={form.control} name="paymentTerms" render={({ field }) => <PaymentTermSelect value={field.value} onChange={(code) => field.onChange(code)} />} />
           </FormField>
           <FormField label="Currency">
             <TextInput {...form.register("currency")} />
@@ -593,7 +607,7 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
           control={form.control}
           name="items"
           render={({ field }) => (
-            <SalesLineEditor value={field.value} onChange={field.onChange} />
+            <SalesLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("orderDate")} />
           )}
         />
         <FormField label="Notes">
@@ -828,6 +842,7 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
     orders = useSalesOrders({ branchId: "all", pageSize: 100 }),
     deliveries = useDeliveryNotes({ branchId: "all", pageSize: 100 }),
     mutations = useSalesMutations();
+  const { terms } = usePaymentTerms();
   const form = useForm<SalesInvoiceFormValues>({
     resolver: zodResolver(salesInvoiceSchema),
     defaultValues: {
@@ -838,7 +853,7 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
       deliveryNoteId: "",
       invoiceDate: today(),
       dueDate: future(30),
-      paymentTerms: "Net 30",
+      paymentTerms: "",
       currency: "USD",
       notes: "",
       items: [blankLine()],
@@ -846,6 +861,11 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
   });
   const orderId = form.watch("salesOrderId"),
     deliveryId = form.watch("deliveryNoteId");
+  const invoiceDate = form.watch("invoiceDate"), paymentTerms = form.watch("paymentTerms");
+  useEffect(() => {
+    const term = matchPaymentTerm(terms, paymentTerms);
+    if (term && invoiceDate) form.setValue("dueDate", addPaymentTermDays(invoiceDate, term.dueDays));
+  }, [form, invoiceDate, paymentTerms, terms]);
   useEffect(() => {
     const order = orders.data?.data.find((item) => item.id === orderId);
     if (order) {
@@ -862,6 +882,7 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
           quantity: item.quantity,
           unitPrice: item.unitPrice,
           discountPercent: item.discountPercent,
+          taxCode: item.taxCode,
           taxPercent: item.taxPercent,
         })),
       );
@@ -887,6 +908,7 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
             quantity: item.deliveredQuantity,
             unitPrice: source?.unitPrice ?? 0,
             discountPercent: source?.discountPercent ?? 0,
+            taxCode: source?.taxCode,
             taxPercent: source?.taxPercent ?? 0,
           };
         }),
@@ -945,7 +967,7 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
           </FormField>
           <FormField label="Customer" required>
             <Select
-              {...form.register("customerId")}
+              {...form.register("customerId", { onChange: (event) => { const customer = customers.data?.find((item) => item.id === event.target.value); if (customer) { form.setValue("branchId", customer.branchId); form.setValue("currency", customer.currency); form.setValue("paymentTerms", customer.paymentTerms); } } })}
               options={option(customers.data ?? [])}
             />
           </FormField>
@@ -962,10 +984,10 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
             <DatePicker {...form.register("invoiceDate")} />
           </FormField>
           <FormField label="Due date">
-            <DatePicker {...form.register("dueDate")} />
+            <DatePicker {...form.register("dueDate")} readOnly aria-readonly="true" />
           </FormField>
           <FormField label="Payment terms">
-            <TextInput {...form.register("paymentTerms")} />
+            <Controller control={form.control} name="paymentTerms" render={({ field }) => <PaymentTermSelect value={field.value} onChange={(code) => field.onChange(code)} />} />
           </FormField>
           <FormField label="Currency">
             <TextInput {...form.register("currency")} />
@@ -975,7 +997,7 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
           control={form.control}
           name="items"
           render={({ field }) => (
-            <SalesLineEditor value={field.value} onChange={field.onChange} />
+            <SalesLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("invoiceDate")} />
           )}
         />
         <FormField label="Notes">
@@ -1327,7 +1349,7 @@ export function RecurringInvoiceFormModal({ isOpen, onClose }: Props) {
       frequency: "monthly",
       startDate: future(1),
       endDate: "",
-      paymentTerms: "Net 30",
+      paymentTerms: "",
       currency: "USD",
       notes: "",
       items: [blankLine()],
@@ -1409,7 +1431,7 @@ export function RecurringInvoiceFormModal({ isOpen, onClose }: Props) {
             <DatePicker {...form.register("endDate")} />
           </FormField>
           <FormField label="Payment terms">
-            <TextInput {...form.register("paymentTerms")} />
+            <Controller control={form.control} name="paymentTerms" render={({ field }) => <PaymentTermSelect value={field.value} onChange={(code) => field.onChange(code)} />} />
           </FormField>
           <FormField label="Currency">
             <TextInput {...form.register("currency")} />
@@ -1419,7 +1441,7 @@ export function RecurringInvoiceFormModal({ isOpen, onClose }: Props) {
           control={form.control}
           name="items"
           render={({ field }) => (
-            <SalesLineEditor value={field.value} onChange={field.onChange} />
+            <SalesLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("startDate")} />
           )}
         />
         <FormField label="Notes">

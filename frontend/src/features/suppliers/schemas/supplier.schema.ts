@@ -218,6 +218,7 @@ export const supplierSchema = z.object({
   taxCategory: optionalString('Tax category', 60),
   registrationNumber: optionalString('Business registration number', 60),
   currency: requiredString('Currency', 10),
+  paymentTermCode: optionalString('Payment term', 50).optional(),
   paymentTermsDays: nonNegativeNumber('Payment terms')
     .int('Payment terms must be a whole number of days.')
     .max(365, 'Payment terms cannot exceed 365 days.')

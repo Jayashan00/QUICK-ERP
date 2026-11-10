@@ -3,7 +3,6 @@ export * from './pages/LocalizationSettingsPage';
 export * from './pages/FinancialSettingsPage';
 export * from './pages/TaxSettingsPage';
 export * from './pages/PaymentTermsPage';
-export * from './pages/PaymentMethodsPage';
 export * from './pages/DocumentNumberingPage';
 export * from './pages/NotificationPreferencesPage';
 export * from './types/tenant-settings';

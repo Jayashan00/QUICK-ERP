@@ -28,6 +28,7 @@ export const customerSchema = z.object({
     'Select a valid currency.',
   ),
   creditLimit: optionalNonNegativeNumber('Credit limit'),
+  paymentTermCode: optionalString('Payment term', 50).optional(),
   paymentTermsDays: nonNegativeNumber('Payment terms')
     .int('Payment terms must be a whole number of days.')
     .optional(),

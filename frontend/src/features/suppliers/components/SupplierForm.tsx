@@ -10,9 +10,9 @@ import { FormSection } from '@/shared/components/forms/FormSection';
 import { FormSubmitError } from '@/shared/components/forms/FormSubmitError';
 import { TextInput } from '@/shared/components/forms/TextInput';
 import { Select } from '@/shared/components/forms/Select';
-import { NumberInput } from '@/shared/components/forms/NumberInput';
 import { Textarea } from '@/shared/components/forms/Textarea';
 import { getErrorMessage } from '@/shared/validation';
+import { PaymentTermSelect } from '@/features/settings/finance/components/PaymentTermSelect';
 
 import {
   supplierSchema,
@@ -22,7 +22,6 @@ import {
   SUPPLIER_CURRENCIES,
   SUPPLIER_COUNTRIES,
   SUPPLIER_PAYMENT_METHOD_OPTIONS,
-  SUPPLIER_PAYMENT_TERM_OPTIONS,
   type SupplierFormValues,
 } from '../schemas/supplier.schema';
 
@@ -54,6 +53,7 @@ const defaultFormValues: SupplierFormValues = {
   taxCategory: '',
   registrationNumber: '',
   currency: 'USD',
+  paymentTermCode: '',
   paymentTermsDays: 30,
   paymentMethod: 'bank_transfer',
   bankDetails: {
@@ -484,54 +484,22 @@ export function SupplierForm({
               </FormField>
 
               <FormField
-                label="Payment Terms Preset"
-                htmlFor="supplier-terms-preset"
-                hint="Quick select standard settlement window"
-              >
-                <Controller
-                  name="paymentTermsDays"
-                  control={control}
-                  render={({ field }) => {
-                    const currentVal = field.value !== undefined ? String(field.value) : '';
-                    const isKnownPreset = ['0', '15', '30', '45', '60', '90'].includes(currentVal);
-                    const selectVal = isKnownPreset ? currentVal : (currentVal ? 'custom' : '30');
-
-                    return (
-                      <Select
-                        id="supplier-terms-preset"
-                        options={SUPPLIER_PAYMENT_TERM_OPTIONS}
-                        value={selectVal}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (val !== 'custom') {
-                            field.onChange(Number(val));
-                          }
-                        }}
-                      />
-                    );
-                  }}
-                />
-              </FormField>
-
-              <FormField
-                label="Payment Terms (Days)"
+                label="Payment Terms"
                 htmlFor="supplier-terms"
-                error={errors.paymentTermsDays?.message}
-                hint="Net payment period in whole days (0 to 365)"
+                required
+                error={errors.paymentTermCode?.message}
+                hint="Controls the automatically calculated supplier invoice due date."
               >
                 <Controller
-                  name="paymentTermsDays"
+                  name="paymentTermCode"
                   control={control}
                   render={({ field }) => (
-                    <NumberInput
+                    <PaymentTermSelect
                       id="supplier-terms"
-                      min={0}
-                      max={365}
-                      step={1}
-                      placeholder="e.g. 30"
-                      value={field.value ?? ''}
-                      onChange={(val) => field.onChange(val === undefined ? undefined : Number(val))}
-                      error={Boolean(errors.paymentTermsDays)}
+                      required
+                      value={field.value || String(initialValues?.paymentTermsDays ?? '')}
+                      onChange={(code, term) => { field.onChange(code); setValue('paymentTermsDays', term.dueDays); }}
+                      error={Boolean(errors.paymentTermCode)}
                     />
                   )}
                 />

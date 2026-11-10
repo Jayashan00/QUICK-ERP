@@ -1,5 +1,5 @@
 import type { TenantBranchScope } from '@/core/tenant/dataScope';
-import { getTenantTaxRates } from '@/features/settings/finance/tax';
+import { getTenantTaxRates, isSalesTaxApplicable } from '@/features/settings/finance/tax';
 import type { ProductVariantListItem } from '../types/product';
 import type { PosProductOption, ProductTaxReference, PurchaseProductOption, StorefrontProductItem } from '../types/productHandoffs';
 import { productService } from './productService';
@@ -12,7 +12,7 @@ function variantLabel(variant: ProductVariantListItem) {
 
 async function taxMap(tenantId: string) {
   const taxes = await getTenantTaxRates(tenantId);
-  return new Map<string, ProductTaxReference>(taxes.map((tax) => [tax.code, {
+  return new Map<string, ProductTaxReference>(taxes.filter((tax) => isSalesTaxApplicable(tax)).map((tax) => [tax.code, {
     code: tax.code,
     name: tax.name,
     percentage: tax.percentage,

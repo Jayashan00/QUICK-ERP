@@ -19,7 +19,9 @@ export interface PurchaseLine {
   quantity: number;
   unitPrice: number;
   discountPercent: number;
+  taxCode?: string;
   taxPercent: number;
+  pricesIncludeTax?: boolean;
   subtotal: number;
   taxAmount: number;
   total: number;

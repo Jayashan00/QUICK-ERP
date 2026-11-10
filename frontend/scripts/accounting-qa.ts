@@ -40,7 +40,9 @@ assert.equal(accountingService.vatReturns(other).length, 0);
 assert.throws(() => accountingService.prepareVatReturn(scope, actor, { branchId: scope.branchId, from: '2026-09-01', to: '2026-09-30' }));
 accountingService.reviewVatReturn(scope, actor, vat.id);
 assert.equal(vat.status, 'reviewed');
-const whtRate = await tenantSettingsService.createTax(scope.tenantId, { name: 'QA withholding', code: 'QA-WHT', percentage: 5, type: 'withholding', effectiveFrom: '2026-01-01', isActive: true, isDefault: false });
+const whtRate = await tenantSettingsService.createTax(scope.tenantId, { name: 'QA withholding', percentage: 5, type: 'withholding', effectiveFrom: '2026-01-01', isActive: true, isDefault: false });
+assert.equal(whtRate.code, 'QA_WITHHOLDING');
+await assert.rejects(() => tenantSettingsService.deleteTax(scope.tenantId, 'tax-002'), /products are using it/);
 const payable = accountingService.payables(scope)[0];
 assert.ok(payable && payable.outstanding > 0);
 const paymentInput = { branchId: payable.branchId, date: '2026-09-28', reference: 'QA-SUPPLIER-PAY', kind: 'payment' as const, documentId: payable.id, party: payable.party, amount: Math.min(100, payable.outstanding), accountId: 'acct-1200' };
@@ -53,6 +55,7 @@ assert.equal(accountingService.settlements(scope).find(row => row.id === supplie
 assert.equal(accountingService.settlements(other).find(row => row.id === supplierPayment.id), undefined);
 const wht = await accountingService.addWithholding(scope, actor, { branchId: scope.branchId, invoiceId: payable.id, date: '2026-09-28', reference: 'QA-WHT-001', taxRateId: whtRate.id, baseAmount: 100, notes: 'Test deduction' });
 assert.equal(wht.amount, 5);
+await assert.rejects(() => tenantSettingsService.deleteTax(scope.tenantId, whtRate.id), /transaction history uses it/);
 assert.equal(accountingService.withholdingRecords(other).length, 0);
 await assert.rejects(() => accountingService.addWithholding(scope, actor, { branchId: scope.branchId, invoiceId: payable.id, date: '2026-09-28', reference: 'QA-WHT-002', taxRateId: whtRate.id, baseAmount: payable.total + 1, notes: '' }));
 assert.equal(accountingService.postingDefaults(other.tenantId).length, 0);

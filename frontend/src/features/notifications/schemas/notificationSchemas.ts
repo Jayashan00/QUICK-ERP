@@ -18,13 +18,3 @@ export const noticeSchema = z.object({
   if (value.expiryDate && value.expiryDate < value.publishDate) context.addIssue({ code: 'custom', path: ['expiryDate'], message: 'Expiry date cannot be before publish date.' });
 });
 export type NoticeFormValues = z.infer<typeof noticeSchema>;
-
-export const notificationTemplateSchema = z.object({
-  name: required('Template name').max(100),
-  eventType: required('Event type').max(100),
-  subject: required('Title or subject').max(160),
-  body: required('Body').max(4000),
-  channel: z.enum(['in_app', 'email', 'sms', 'whatsapp']),
-  isActive: z.boolean(),
-});
-export type NotificationTemplateFormValues = z.infer<typeof notificationTemplateSchema>;

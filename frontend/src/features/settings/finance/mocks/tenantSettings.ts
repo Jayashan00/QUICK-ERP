@@ -1,4 +1,4 @@
-import type { AccountingPeriod, DocumentSequence, GeneralSettings, LocalizationSettings, NotificationPreferences, PaymentMethod, PaymentTerm, TaxRate, FinancialYearSettings } from '@/features/settings/finance/types/tenant-settings';
+import type { AccountingPeriod, DocumentSequence, GeneralSettings, LocalizationSettings, NotificationPreferences, PaymentTerm, TaxRate, FinancialYearSettings } from '@/features/settings/finance/types/tenant-settings';
 
 export const mockGeneralSettings: GeneralSettings = { tenantId: 'tenant-001', timezone: 'Asia/Colombo', dateFormat: 'YYYY-MM-DD', timeFormat: '24h', weekStartsOn: 'monday', defaultLanguage: 'en', fiscalCountry: 'Sri Lanka', enableBranchTimezones: false };
 export const mockLocalizationSettings: LocalizationSettings = { tenantId: 'tenant-001', baseCurrency: 'LKR', supportedCurrencies: ['LKR', 'USD'], currencyDisplay: 'symbol_code', currencyPosition: 'before', decimalPrecision: 2, locale: 'en-LK', thousandsSeparator: ',', decimalSeparator: '.' };
@@ -18,10 +18,6 @@ export const mockPaymentTerms: PaymentTerm[] = [
   { id: 'term-001', tenantId: 'tenant-001', name: 'Net 30', code: 'NET30', dueDays: 30, description: 'Payment due within 30 days.', isDefault: true, isActive: true, createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z' },
   { id: 'term-002', tenantId: 'tenant-001', name: 'Due on Receipt', code: 'DOR', dueDays: 0, description: 'Payment is due immediately.', isDefault: false, isActive: true, createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z' },
 ];
-export const mockPaymentMethods: PaymentMethod[] = [
-  { id: 'method-001', tenantId: 'tenant-001', code: 'CASH', name: 'Cash', type: 'cash', isActive: true, isDefault: true, requiresReference: false, createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z' },
-  { id: 'method-002', tenantId: 'tenant-001', code: 'BANK', name: 'Bank Transfer', type: 'bank_transfer', isActive: true, isDefault: false, requiresReference: true, clearingAccount: 'Main Operating Account', createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z' },
-];
 export const mockDocumentSequences: DocumentSequence[] = ['quotation', 'sales_order', 'invoice', 'purchase_order', 'grn', 'payment', 'receipt'].map((documentType, index) => ({ id: `seq-${index + 1}`, tenantId: 'tenant-001', documentType: documentType as DocumentSequence['documentType'], prefix: `${documentType.split('_').map((part) => part[0]).join('').toUpperCase()}-`, suffix: '', nextNumber: 1, padding: 5, resetRule: 'yearly', isActive: true, createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z' }));
 const channels = { inApp: true, email: true, sms: false, whatsapp: false };
-export const mockNotificationPreferences: NotificationPreferences = { tenantId: 'tenant-001', userId: 'usr-001', groups: { approvals: { ...channels }, sales: { ...channels }, purchases: { ...channels }, stock: { ...channels }, finance: { ...channels }, hr: { ...channels }, projects: { ...channels }, documents: { ...channels }, sync: { ...channels }, system: { ...channels } } };
+export const mockNotificationPreferences: NotificationPreferences = { id: 'usr-001', tenantId: 'tenant-001', userId: 'usr-001', groups: { approvals: { ...channels }, sales: { ...channels }, purchases: { ...channels }, stock: { ...channels }, finance: { ...channels }, hr: { ...channels }, projects: { ...channels }, documents: { ...channels }, sync: { ...channels }, system: { ...channels } } };
