@@ -16,6 +16,7 @@ import type { DocumentRecord } from '@/shared/types/document-record';
 import { mockSuppliers } from '@/features/suppliers/mocks/suppliers';
 import { mockDocuments } from '@/shared/mocks/documents';
 import { documentService } from '@/features/documents/documentService';
+import { tenantSettingsService } from '@/features/settings/finance/services/tenantSettingsService';
 
 let suppliersStore: Supplier[] = [...mockSuppliers];
 
@@ -283,10 +284,13 @@ export const supplierService = {
     if (duplicate) {
       throw new Error(`Supplier with code "${data.code}" already exists.`);
     }
+    const paymentTerm = tenantSettingsService.requirePaymentTerm(tenantId, data.paymentTermCode ?? data.paymentTermsDays);
 
     const now = new Date().toISOString();
     const newSupplier: Supplier = {
       ...data,
+      paymentTermCode: paymentTerm.code,
+      paymentTermsDays: paymentTerm.dueDays,
       id: crypto.randomUUID(),
       tenantId,
       createdAt: now,
@@ -306,10 +310,13 @@ export const supplierService = {
       (s) => s.id === id && s.tenantId === tenantId,
     );
     if (index === -1) throw new Error('Supplier not found');
+    const paymentTerm = tenantSettingsService.requirePaymentTerm(tenantId, data.paymentTermCode ?? data.paymentTermsDays ?? suppliersStore[index].paymentTermCode ?? suppliersStore[index].paymentTermsDays);
 
     const updated: Supplier = {
       ...suppliersStore[index],
       ...data,
+      paymentTermCode: paymentTerm.code,
+      paymentTermsDays: paymentTerm.dueDays,
       id: suppliersStore[index].id,
       tenantId: suppliersStore[index].tenantId,
       createdAt: suppliersStore[index].createdAt,
@@ -589,7 +596,9 @@ export const supplierService = {
 
       const supplierSeed = [...supplier.id].reduce((sum, character) => sum + character.charCodeAt(0), 0);
       const subtotal = 5000 + ((supplierSeed * 137 + i * 7919) % 25000);
-      const taxAmount = Math.round(subtotal * 0.15 * 100) / 100;
+      const taxRate = tenantSettingsService.resolveDefaultTaxRate(tenantId, 'purchase', orderDate.toISOString().slice(0, 10))?.percentage ?? 0;
+      const taxFactor = taxRate / 100;
+      const taxAmount = Math.round(subtotal * taxFactor * 100) / 100;
       const totalAmount = Math.round((subtotal + taxAmount) * 100) / 100;
       const status = statuses[i % statuses.length];
 
@@ -613,10 +622,10 @@ export const supplierService = {
             unit: 'unit',
             quantity: 10 + i * 5,
             unitPrice: Math.round((subtotal * 0.6) / (10 + i * 5) * 100) / 100,
-            taxPercent: 15,
-            taxAmount: Math.round(subtotal * 0.6 * 0.15 * 100) / 100,
+            taxPercent: taxRate,
+            taxAmount: Math.round(subtotal * 0.6 * taxFactor * 100) / 100,
             subtotal: Math.round(subtotal * 0.6 * 100) / 100,
-            total: Math.round(subtotal * 0.6 * 1.15 * 100) / 100,
+            total: Math.round(subtotal * 0.6 * (1 + taxFactor) * 100) / 100,
           },
           {
             id: `item-${i}-2`,
@@ -626,10 +635,10 @@ export const supplierService = {
             unit: 'unit',
             quantity: 5 + i * 2,
             unitPrice: Math.round((subtotal * 0.4) / (5 + i * 2) * 100) / 100,
-            taxPercent: 15,
-            taxAmount: Math.round(subtotal * 0.4 * 0.15 * 100) / 100,
+            taxPercent: taxRate,
+            taxAmount: Math.round(subtotal * 0.4 * taxFactor * 100) / 100,
             subtotal: Math.round(subtotal * 0.4 * 100) / 100,
-            total: Math.round(subtotal * 0.4 * 1.15 * 100) / 100,
+            total: Math.round(subtotal * 0.4 * (1 + taxFactor) * 100) / 100,
           },
         ],
         subtotal,

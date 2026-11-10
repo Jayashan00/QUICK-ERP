@@ -54,6 +54,7 @@ export interface Supplier extends BaseEntity {
   taxCategory?: string;
   registrationNumber?: string;
   currency: string;
+  paymentTermCode?: string;
   paymentTermsDays?: number;
   paymentMethod?: SupplierPaymentMethod;
   bankDetails?: SupplierBankDetails;
