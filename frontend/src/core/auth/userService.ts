@@ -135,7 +135,7 @@ export const userService = {
     await new Promise((resolve) => setTimeout(resolve, 120));
     return usersStore
       .filter((user) => user.tenantId === tenantId && !user.isSuperAdmin)
-      .map((user) => ({ id: user.id, name: user.name, roleName: user.roleName, jobTitle: user.jobTitle, departmentId: user.departmentId, departmentName: user.department, isActive: user.status === 'active' }));
+      .map((user) => ({ id: user.id, name: user.name, roleName: user.roleName, jobTitle: user.jobTitle, departmentId: user.departmentId, departmentName: user.department, branchIds: [...user.branchIds], isActive: user.status === 'active' }));
   },
 
   async createUser(tenantId: string, data: CreateUserInput): Promise<User> {

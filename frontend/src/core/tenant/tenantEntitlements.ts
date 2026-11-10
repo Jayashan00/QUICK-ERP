@@ -58,7 +58,7 @@ export const TENANT_MODULE_CATALOG: TenantModuleDefinition[] = [
   { id: 'finance', label: 'Finance & Accounting', group: 'Finance', description: 'Ledgers, journals, banking and tax.' },
   { id: 'reports', label: 'Reports', group: 'Workspace', description: 'Operational and analytical reporting.' },
   { id: 'documents', label: 'Documents', group: 'Workspace', description: 'Company documents and attachments.' },
-  { id: 'notifications', label: 'Notifications', group: 'Workspace', description: 'Notifications, notices and templates.' },
+  { id: 'notifications', label: 'Notifications', group: 'Workspace', description: 'Role-aware notifications, notices and delivery preferences.' },
   { id: 'settings', label: 'Settings', group: 'Workspace', description: 'Tenant users, roles, branches and company settings.' },
 ];
 
@@ -83,7 +83,7 @@ const permissionModuleAliases: Record<string, TenantModule> = {
   products: 'products', sales: 'sales', quotation: 'sales', salesOrder: 'sales', delivery: 'sales', invoice: 'sales', payment: 'sales', salesReturn: 'sales',
   pos: 'pos', purchases: 'purchases', purchasing: 'purchases', purchase: 'purchases', rfq: 'purchases', grn: 'purchases', purchaseInvoice: 'purchases',
   finance: 'finance', accounting: 'finance', projects: 'projects', storefront: 'web_store', reports: 'reports',
-  documents: 'documents', notifications: 'notifications', notices: 'notifications', notificationTemplates: 'notifications', notificationPreferences: 'notifications',
+  documents: 'documents', notifications: 'notifications', notices: 'notifications', notificationPreferences: 'notifications',
   settings: 'settings', users: 'settings', roles: 'settings', branches: 'settings',
 };
 
@@ -97,7 +97,7 @@ export function moduleForPermission(permission: string): TenantModule | null {
   if (permission === '*') return null;
   if (/^(stock\.|inventory\.(stock|movements|batches|serial_numbers|expiry|adjustments|transfers|requests|counts|returns|velocity|reorder))/.test(permission)) return 'stock';
   if (/^settings\.(departments|designations)\./.test(permission)) return 'hr';
-  if (/^settings\.(financial_year|taxes|payment_terms|payment_methods|settlement_bank)\./.test(permission)) return 'finance';
+  if (/^settings\.(financial_year|taxes|payment_terms|settlement_bank)\./.test(permission)) return 'finance';
   if (/^settings\.(notification_preferences|email_integration|sms_integration|whatsapp_integration)\./.test(permission)) return 'notifications';
   if (/^settings\.(barcode_scanner|printers|cash_drawer|customer_display)\./.test(permission)) return 'pos';
   if (/^settings\.biometric_device\./.test(permission)) return 'hr';
@@ -132,7 +132,7 @@ export function moduleForPath(path: string): TenantModule | null {
   const mappings: Array<[string, TenantModule]> = [
     ['/settings/departments', 'hr'], ['/settings/designations', 'hr'], ['/settings/devices/biometric', 'hr'],
     ['/settings/financial-year', 'finance'], ['/settings/taxes', 'finance'], ['/settings/payment-terms', 'finance'],
-    ['/settings/payment-methods', 'finance'], ['/settings/settlement-bank', 'finance'],
+    ['/settings/settlement-bank', 'finance'],
     ['/settings/notification-preferences', 'notifications'], ['/settings/integrations/email', 'notifications'],
     ['/settings/integrations/sms', 'notifications'], ['/settings/integrations/whatsapp', 'notifications'],
     ['/settings/devices/barcode-scanner', 'pos'], ['/settings/devices/printer', 'pos'],
