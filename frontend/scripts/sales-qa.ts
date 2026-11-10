@@ -29,6 +29,9 @@ await assert.rejects(
 const quotation = await salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", currency: "USD", notes: "QA quotation", items: [item] }, actor);
 assert.equal(quotation.status, "draft");
 assert.equal(quotation.referenceNumber, "Q-00001");
+assert.equal(quotation.items[0].taxCode, "VAT18");
+assert.equal(quotation.items[0].taxPercent, 18);
+assert.ok(Math.abs(quotation.items[0].taxAmount - (quotation.items[0].subtotal - quotation.items[0].discountAmount) * 0.18) < 1e-9);
 await assert.rejects(
   () => salesService.updateQuotation(scope, branches, quotation.id, { customerId: quotation.customerId, branchId: quotation.branchId, salespersonId: quotation.salespersonId, opportunityId: "", quotationDate: quotation.quotationDate, expiryDate: quotation.expiryDate, terms: "Over limit", currency: quotation.currency, notes: "Over limit", items: [overCreditLimitItem] }, actor),
   /credit limit/,
@@ -57,8 +60,10 @@ assert.equal(afterDelivery.reduce((sum, balance) => sum + balance.quantityOnHand
 const saleMovements = await inventoryService.listStockMovements(scope, { branchId: "branch-001", reference: delivery.referenceNumber });
 assert(saleMovements.some((movement) => movement.type === "sale" && movement.quantity === -2));
 
-const invoice = await salesService.createInvoice(scope, branches, { customerId: order.customerId, branchId: order.branchId, salespersonId: order.salespersonId, salesOrderId: order.id, deliveryNoteId: delivery.id, invoiceDate: "2026-10-02", dueDate: "2026-11-01", paymentTerms: order.paymentTerms, currency: order.currency, notes: "QA invoice", items: [{ ...item, quantity: 2 }] }, actor);
+const invoice = await salesService.createInvoice(scope, branches, { customerId: order.customerId, branchId: order.branchId, salespersonId: order.salespersonId, salesOrderId: order.id, deliveryNoteId: delivery.id, invoiceDate: "2026-10-02", dueDate: "2026-10-02", paymentTerms: order.paymentTerms, currency: order.currency, notes: "QA invoice", items: [{ ...item, quantity: 2 }] }, actor);
 assert.equal(invoice.referenceNumber, "I-00001");
+assert.equal(invoice.paymentTerms, "NET30");
+assert.equal(invoice.dueDate, "2026-11-01");
 await salesService.transitionInvoice(scope, branches, invoice.id, "approve", actor);
 await salesService.transitionInvoice(scope, branches, invoice.id, "send", actor);
 await assert.rejects(() => salesService.receivePayment(scope, branches, { invoiceId: invoice.id, amount: invoice.outstandingAmount + 1, paymentMethod: "bank_transfer", paymentDate: "2026-10-03", externalReference: "OVERPAY" }, actor));
@@ -87,8 +92,9 @@ assert.equal(afterReturn.reduce((sum, balance) => sum + balance.quantityOnHand, 
 const returnMovements = await inventoryService.listStockMovements(scope, { branchId: "branch-001", reference: result.salesReturn.referenceNumber });
 assert(returnMovements.some((movement) => movement.type === "return_in" && movement.quantity === 1));
 
-const recurring = await salesService.createRecurring(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", frequency: "monthly", startDate: "2026-11-01", endDate: "2027-10-31", paymentTerms: "Net 30", currency: "USD", notes: "QA recurring", items: [{ ...item, quantity: 1 }] }, actor);
+const recurring = await salesService.createRecurring(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", frequency: "monthly", startDate: "2026-11-01", endDate: "2027-10-31", paymentTerms: "", currency: "USD", notes: "QA recurring", items: [{ ...item, quantity: 1 }] }, actor);
 assert.equal(recurring.status, "active");
+assert.equal(recurring.paymentTerms, "NET30");
 assert.equal((await salesService.toggleRecurring(scope, branches, recurring.id, actor)).status, "paused");
 assert((await salesService.getCommissions(scope, branches)).length > 0);
 const exported = await salesService.export("invoices", scope, { branchId: "all", permittedBranchIds: branches, pageSize: 100 });

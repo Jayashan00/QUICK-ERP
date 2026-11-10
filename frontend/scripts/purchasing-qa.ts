@@ -97,7 +97,7 @@ const quotation = await purchasingService.createQuotation(
     quotationDate: "2026-09-28",
     validityDate: "2026-10-28",
     deliveryDays: 7,
-    paymentTerms: "Net 30",
+    paymentTerms: "",
     currency: "LKR",
     notes: "",
     items: [line],
@@ -122,6 +122,9 @@ const order = await purchasingService.createOrder(
   actor,
 );
 assert.equal(order.referenceNumber, "PO-00001");
+assert.equal(order.items[0].taxCode, "VAT18");
+assert.equal(order.items[0].taxPercent, 18);
+assert.ok(Math.abs(order.items[0].taxAmount - (order.items[0].subtotal - order.items[0].subtotal * order.items[0].discountPercent / 100) * 0.18) < 1e-9);
 const updatedOrder = await purchasingService.updateOrder(
   scope,
   branches,
@@ -229,7 +232,7 @@ const invoice = await purchasingService.createInvoice(
     grnId: grn.id,
     supplierInvoiceNumber: "QA-INV-001",
     invoiceDate: "2026-10-05",
-    dueDate: "2026-11-04",
+    dueDate: "2026-10-05",
     paymentTerms: "Net 30",
     notes: "",
     items: [{ ...line, quantity: 3 }],
@@ -237,6 +240,8 @@ const invoice = await purchasingService.createInvoice(
   actor,
 );
 assert.equal(invoice.status, "pending");
+assert.equal(invoice.paymentTerms, "NET30");
+assert.equal(invoice.dueDate, "2026-11-04");
 const matches = await purchasingService.getMatches(scope, branches);
 assert(matches.some((item) => item.purchaseOrderId === order.id));
 
