@@ -146,20 +146,34 @@ function lines(
     quantity: number;
     unitPrice: number;
     discountPercent: number;
+    taxCode?: string;
     taxPercent: number;
+    pricesIncludeTax?: boolean;
   }>,
+  taxContext?: { tenantId: string; date: string },
 ): PurchaseLine[] {
   return values.map((value) => {
     const subtotal = value.quantity * value.unitPrice;
     const discount = (subtotal * value.discountPercent) / 100;
-    const taxAmount = ((subtotal - discount) * value.taxPercent) / 100;
+    const product = taxContext ? productStore.all().find((item) => item.tenantId === taxContext.tenantId && item.id === value.productId) : undefined;
+    const requestedTaxCode = value.taxCode === undefined ? product?.taxCode : value.taxCode || undefined;
+    const rate = taxContext ? tenantSettingsService.resolveTaxRate(taxContext.tenantId, requestedTaxCode, 'purchase', taxContext.date) : undefined;
+    const taxPercent = taxContext ? rate?.percentage ?? 0 : value.taxPercent;
+    const pricesIncludeTax = taxContext ? Boolean(rate && product?.pricesIncludeTax) : Boolean(value.pricesIncludeTax);
+    const taxableAmount = subtotal - discount;
+    const taxAmount = pricesIncludeTax
+      ? taxableAmount - taxableAmount / (1 + taxPercent / 100)
+      : taxableAmount * taxPercent / 100;
     return {
       id: `purchase-line-${crypto.randomUUID().slice(0, 8)}`,
       ...value,
+      taxCode: rate?.code ?? (taxContext ? undefined : value.taxCode),
+      taxPercent,
+      pricesIncludeTax,
       variantId: value.variantId || undefined,
       subtotal,
       taxAmount,
-      total: subtotal - discount + taxAmount,
+      total: pricesIncludeTax ? taxableAmount : taxableAmount + taxAmount,
     };
   });
 }
@@ -247,7 +261,7 @@ export const purchasingService = {
     values: PurchaseOrderFormValues,
     actor: PurchasingActor,
   ) {
-    const data = purchaseOrderSchema.parse(values);
+    const data = purchaseOrderSchema.parse({ ...values, paymentTerms: values.paymentTerms || tenantSettingsService.requirePaymentTerm(scope.tenantId).code });
     const index = purchasingStore
       .orders()
       .findIndex(
@@ -275,10 +289,11 @@ export const purchasingService = {
     ).find((item) => item.id === data.warehouseId);
     if (!warehouse)
       throw new Error("The warehouse is unavailable for the selected branch.");
-    const items = lines(data.items);
+    const items = lines(data.items, { tenantId: scope.tenantId, date: data.orderDate });
     const next: PurchaseOrder = {
       ...current,
       ...data,
+      paymentTerms: tenantSettingsService.requirePaymentTerm(scope.tenantId, data.paymentTerms).code,
       notes: data.notes || undefined,
       items,
       ...totals(items),
@@ -415,7 +430,7 @@ export const purchasingService = {
       id: item.id,
       name: item.name,
       code: item.code,
-      paymentTerms: `Net ${item.paymentTermsDays ?? 30}`,
+      paymentTerms: (tenantSettingsService.resolvePaymentTerm(tenantId, item.paymentTermCode ?? item.paymentTermsDays) ?? tenantSettingsService.requirePaymentTerm(tenantId)).code,
       currency: item.currency,
       score: Math.max(75, 96 - index * 3),
     }));
@@ -435,6 +450,8 @@ export const purchasingService = {
           name: item.name,
           sku: item.sku,
           costPrice: item.costPrice,
+          taxCode: item.taxCode,
+          pricesIncludeTax: item.pricesIncludeTax,
           trackByBatch: item.trackByBatch,
           trackBySerialNumber: item.trackBySerialNumber,
           trackExpiry: item.trackExpiry,
@@ -453,7 +470,7 @@ export const purchasingService = {
     data.items.forEach((item) => tenantProduct(scope.tenantId, item.productId));
     const now = new Date().toISOString(),
       referenceNumber = reference("PR", purchasingStore.requests().length);
-    const items = lines(data.items);
+    const items = lines(data.items, { tenantId: scope.tenantId, date: data.requiredDate });
     const item: PurchaseRequest = {
       id: `pr-${crypto.randomUUID().slice(0, 8)}`,
       tenantId: scope.tenantId,
@@ -503,7 +520,7 @@ export const purchasingService = {
       ...current,
       ...data,
       notes: data.notes || undefined,
-      items: lines(data.items),
+      items: lines(data.items, { tenantId: scope.tenantId, date: data.requiredDate }),
       auditEntries: [...current.auditEntries, audit(current, "Edited", actor)],
       updatedAt: new Date().toISOString(),
     };
@@ -634,7 +651,7 @@ export const purchasingService = {
     values: SupplierQuotationFormValues,
     actor: PurchasingActor,
   ) {
-    const data = supplierQuotationSchema.parse(values);
+    const data = supplierQuotationSchema.parse({ ...values, paymentTerms: values.paymentTerms || tenantSettingsService.requirePaymentTerm(scope.tenantId).code });
     const rfq = purchasingStore
       .rfqs()
       .find(
@@ -647,7 +664,7 @@ export const purchasingService = {
     if (!rfq || rfq.status === "cancelled")
       throw new Error("The supplier is not invited to this RFQ.");
     const supplier = await tenantSupplier(scope.tenantId, data.supplierId);
-    const items = lines(data.items);
+    const items = lines(data.items, { tenantId: scope.tenantId, date: data.quotationDate });
     const now = new Date().toISOString(),
       referenceNumber = reference("SQ", purchasingStore.quotations().length);
     const item: SupplierQuotation = {
@@ -656,6 +673,7 @@ export const purchasingService = {
       branchId: rfq.branchId,
       referenceNumber,
       ...data,
+      paymentTerms: tenantSettingsService.requirePaymentTerm(scope.tenantId, data.paymentTerms).code,
       notes: data.notes || undefined,
       supplierScore:
         (await this.supplierOptions(scope.tenantId)).find(
@@ -730,7 +748,7 @@ export const purchasingService = {
     sourceQuotationId?: string,
   ) {
     requireScope(scope, permitted);
-    const data = purchaseOrderSchema.parse(values);
+    const data = purchaseOrderSchema.parse({ ...values, paymentTerms: values.paymentTerms || tenantSettingsService.requirePaymentTerm(scope.tenantId).code });
     assertBranch(permitted, data.branchId);
     await tenantSupplier(scope.tenantId, data.supplierId);
     const warehouse = (
@@ -741,7 +759,7 @@ export const purchasingService = {
     ).find((item) => item.id === data.warehouseId);
     if (!selected)
       throw new Error("The warehouse is unavailable for the selected branch.");
-    const items = lines(data.items);
+    const items = lines(data.items, { tenantId: scope.tenantId, date: data.orderDate });
     const now = new Date().toISOString(),
       referenceNumber = tenantSettingsService.nextDocumentNumber(scope.tenantId, "purchase_order");
     const item: PurchaseOrder = {
@@ -749,6 +767,7 @@ export const purchasingService = {
       tenantId: scope.tenantId,
       referenceNumber,
       ...data,
+      paymentTerms: tenantSettingsService.requirePaymentTerm(scope.tenantId, data.paymentTerms).code,
       sourceQuotationId,
       notes: data.notes || undefined,
       status: "draft",
@@ -1071,7 +1090,7 @@ export const purchasingService = {
     values: PurchaseInvoiceFormValues,
     actor: PurchasingActor,
   ) {
-    const data = purchaseInvoiceSchema.parse(values);
+    const data = purchaseInvoiceSchema.parse({ ...values, paymentTerms: values.paymentTerms || tenantSettingsService.requirePaymentTerm(scope.tenantId).code });
     assertOpenAccountingPeriod(scope.tenantId, data.invoiceDate, "create this purchase invoice");
     const po = purchasingStore
       .orders()
@@ -1105,9 +1124,10 @@ export const purchasingService = {
       throw new Error(
         "The selected GRN does not belong to this purchase order.",
       );
-    const items = lines(data.items),
+    const items = lines(data.items, { tenantId: scope.tenantId, date: data.invoiceDate }),
       now = new Date().toISOString(),
       referenceNumber = reference("PINV", purchasingStore.invoices().length);
+    const payment = tenantSettingsService.calculatePaymentDueDate(scope.tenantId, data.invoiceDate, data.paymentTerms);
     const item: PurchaseInvoice = {
       id: `pinv-${crypto.randomUUID().slice(0, 8)}`,
       tenantId: scope.tenantId,
@@ -1118,8 +1138,8 @@ export const purchasingService = {
       referenceNumber,
       supplierInvoiceNumber: data.supplierInvoiceNumber,
       invoiceDate: data.invoiceDate,
-      dueDate: data.dueDate,
-      paymentTerms: data.paymentTerms,
+      dueDate: payment.dueDate,
+      paymentTerms: payment.term.code,
       currency: po.currency,
       status: "pending",
       items,
