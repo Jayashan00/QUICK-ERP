@@ -8,9 +8,11 @@ import { GenericErrorPage } from '@/app/pages/errors/GenericErrorPage';
 import { StorefrontPage } from '@/features/storefront/StorefrontPage';
 import { LegacyTenantRoute } from '@/core/routing/LegacyTenantRoute';
 import { WelcomePage } from '@/features/welcome/WelcomePage';
+import { inquiryAdminRoute } from './inquiryAdmin.routes';
 
 export const router = createBrowserRouter([
   { path: '/', element: <WelcomePage /> },
+  inquiryAdminRoute,
   authRoutes,
   superAdminRoutes,
   erpRoutes,
