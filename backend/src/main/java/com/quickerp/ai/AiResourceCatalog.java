@@ -53,8 +53,6 @@ public final class AiResourceCatalog {
                 "notification", "notifications", "alerts", "messages pennann"));
         resources.add(r("notices", "Company notices", "notifications", "notifications.notices", "notices.view",
                 "notice", "notices", "company announcements", "announcements"));
-        resources.add(r("notification_templates", "Notification templates", "notifications", "notifications.templates", "notificationTemplates.manage",
-                "notification templates", "message templates", "email templates"));
         resources.add(r("company_settings", "Company settings", "settings", "settings.company", "settings.company.view",
                 "company settings", "company profile", "company details", "organization settings",
                 "company name", "my company", "our company", "current company"));
