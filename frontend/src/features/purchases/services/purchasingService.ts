@@ -4,6 +4,8 @@ import { auditEventService } from "@/core/audit";
 import { productStore } from "@/features/products/services/productStore";
 import { supplierService } from "@/features/suppliers/services/supplierService";
 import { inventoryWorkflowService } from "@/features/inventory/services/inventoryWorkflowService";
+import { tenantSettingsService } from "@/features/settings/finance/services/tenantSettingsService";
+import { assertOpenAccountingPeriod } from "@/features/settings/finance/accountingPeriodEnforcement";
 import type { ApprovalStatus } from "@/shared/types/approval";
 import type { AuditEntry } from "@/shared/types/audit";
 import type { DocumentRecord } from "@/shared/types/document-record";
@@ -741,7 +743,7 @@ export const purchasingService = {
       throw new Error("The warehouse is unavailable for the selected branch.");
     const items = lines(data.items);
     const now = new Date().toISOString(),
-      referenceNumber = reference("PO", purchasingStore.orders().length);
+      referenceNumber = tenantSettingsService.nextDocumentNumber(scope.tenantId, "purchase_order");
     const item: PurchaseOrder = {
       id: `po-${crypto.randomUUID().slice(0, 8)}`,
       tenantId: scope.tenantId,
@@ -901,6 +903,7 @@ export const purchasingService = {
   ) {
     requireScope(scope, permitted);
     const data = grnSchema.parse(values);
+    assertOpenAccountingPeriod(scope.tenantId, data.receivedDate, "receive these goods");
     const poIndex = purchasingStore
       .orders()
       .findIndex(
@@ -972,7 +975,7 @@ export const purchasingService = {
       };
     });
     const now = new Date().toISOString(),
-      referenceNumber = reference("GRN", purchasingStore.receipts().length);
+      referenceNumber = tenantSettingsService.nextDocumentNumber(scope.tenantId, "grn");
     inventoryWorkflowService.apply(scope, permitted, {
       source: "grn",
       referenceNumber,
@@ -1069,6 +1072,7 @@ export const purchasingService = {
     actor: PurchasingActor,
   ) {
     const data = purchaseInvoiceSchema.parse(values);
+    assertOpenAccountingPeriod(scope.tenantId, data.invoiceDate, "create this purchase invoice");
     const po = purchasingStore
       .orders()
       .find(

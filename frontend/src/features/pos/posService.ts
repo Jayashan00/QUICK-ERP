@@ -5,6 +5,7 @@ import { inventoryStore } from '@/features/inventory/services/inventoryStore';
 import type { StockMovement } from '@/features/inventory/types/inventory';
 import { productRelationshipStore } from '@/features/products/services/productRelationshipStore';
 import { tenantSettingsService } from '@/features/settings/finance/services/tenantSettingsService';
+import { assertOpenAccountingPeriod } from '@/features/settings/finance/accountingPeriodEnforcement';
 import { posSettingsService } from './posSettings';
 import { money, priceCart } from './posPricing';
 import { posSalesHandoff } from '@/features/sales/services/posSalesHandoff';
@@ -68,6 +69,7 @@ export const posService = {
   approveShift(shift: PosShift, approverId: string) { if (shift.status !== 'pending_approval' || shift.cashierId === approverId) throw new Error('Another authorized user must approve this shift.'); shift.approvedBy = approverId; shift.status = 'closed'; shift.closedAt = new Date().toISOString(); },
   async checkout(scope: TenantBranchScope, branches: string[], cashierId: string, cashierName: string, input: Checkout, warehouseId: string, locationId: string) {
     requireBranch(scope, branches); const parsed = checkoutSchema.parse(input);
+    assertOpenAccountingPeriod(scope.tenantId, new Date().toISOString().slice(0, 10), 'complete this POS sale');
     const settings = posSettingsService.get(scope.tenantId, scope.branchId);
     if (parsed.payments.some(payment => !settings.allowedMethods.includes(payment.method))) throw new Error('Payment method is disabled in POS settings.');
     const shift = this.activeShift(scope, cashierId); if (!shift?.drawerConfirmed) throw new Error('Open a shift and confirm the drawer first.');
@@ -136,6 +138,7 @@ export const posService = {
   },
   refund(scope: TenantBranchScope, branches: string[], saleId: string, productId: string, quantity: number, reason: string, method: PosRefund['method'], userId: string, userName: string, restock = true) {
     requireBranch(scope, branches); z.number().int().positive().parse(quantity); if (!reason.trim()) throw new Error('Refund reason is required.');
+    assertOpenAccountingPeriod(scope.tenantId, new Date().toISOString().slice(0, 10), 'record this POS refund');
     const sale = sales.find(s => s.id === saleId && sameScope(s.scope, scope)); const line = sale?.lines.find(l => l.productId === productId);
     if (!sale || !line || line.returned + quantity > line.quantity) throw new Error('Return quantity exceeds the original sale.');
     const effects: StockEffect[] = line.bundleComponents ? line.bundleComponents.map(component => { const tracking = line.componentTracking?.find(item => item.productId === component.productId); return { productId: component.productId, quantity: component.quantity * quantity, batchReference: tracking?.batchReference, serialReferences: tracking?.serialReferences?.slice(component.quantity * line.returned, component.quantity * (line.returned + quantity)) }; }) : line.locationId ? [{ productId, quantity, batchReference: line.batchReference, serialReferences: line.serialReferences?.slice(line.returned, line.returned + quantity) }] : [];

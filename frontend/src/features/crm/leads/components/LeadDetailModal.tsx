@@ -10,6 +10,7 @@ import { useBranch } from "@/core/branch/branch-context";
 import { useTenant } from "@/core/tenant/tenant-context";
 import { customerService } from "@/features/customers/services/customerService";
 import { useUserOptions } from '@/features/settings/users/hooks/useUserOptions';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 
 import type { Lead } from '@/features/crm/leads/types/lead';
 import type { LeadActivity } from '@/features/crm/leads/types/lead-activity';
@@ -46,18 +47,12 @@ function formatSource(
     );
 }
 
-function formatValue(value?: number) {
+function formatValue(value: number | undefined, formatMoney: (amount: number) => string) {
   if (value === undefined) {
     return "—";
   }
 
-  return new Intl.NumberFormat(
-    "en-US",
-    {
-      style: "currency",
-      currency: "USD",
-    },
-  ).format(value);
+  return formatMoney(value);
 }
 
 function formatDate(value?: string) {
@@ -114,6 +109,7 @@ export function LeadDetailModal({
   onCreateOpportunity,
 }: LeadDetailModalProps) {
   const { tenantId } = useTenant();
+  const { formatMoney } = useTenantCurrency();
   const { branchId } = useBranch();
   const { users } = useUserOptions({ includeInactive: true });
   const getAssignedUserName = (assignedTo?: string) => users.find(user => user.id === assignedTo)?.name || assignedTo || "Unassigned";
@@ -292,6 +288,7 @@ export function LeadDetailModal({
               label="Estimated Value"
               value={formatValue(
                 lead.estimatedValue,
+                formatMoney,
               )}
             />
 

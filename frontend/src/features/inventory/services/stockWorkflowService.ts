@@ -2,6 +2,8 @@ import type { TenantBranchScope } from "@/core/tenant/dataScope";
 import { auditEventService } from "@/core/audit";
 import { branchService } from "@/core/branch/branchService";
 import { productStore } from "@/features/products/services/productStore";
+import { assertOpenAccountingPeriod } from "@/features/settings/finance/accountingPeriodEnforcement";
+import "@/features/settings/finance/services/tenantSettingsService";
 import type { ApprovalStatus } from "@/shared/types/approval";
 import type { AuditEntry } from "@/shared/types/audit";
 import {
@@ -703,6 +705,7 @@ export const stockWorkflowService = {
     const current = inventoryStore.adjustments()[index];
     if (current.status !== "pending_approval") throw new Error("This adjustment has already been reviewed.");
     if (decision === "approved") {
+      assertOpenAccountingPeriod(scope.tenantId, new Date().toISOString().slice(0, 10), "approve this stock adjustment");
       for (const line of current.lines) {
         const outgoing = current.direction === "decrease";
         validateTracking(current.tenantId, current.locationId, line, outgoing);
@@ -769,6 +772,7 @@ export const stockWorkflowService = {
     const expected = { approve: "draft", dispatch: "approved", mark_in_transit: "dispatched", receive: "in_transit", complete: "received" } as const;
     if (current.status !== expected[action]) throw new Error("This transfer cannot perform the selected action in its current status.");
     if (action === "dispatch") {
+      assertOpenAccountingPeriod(scope.tenantId, new Date().toISOString().slice(0, 10), "dispatch this stock transfer");
       for (const line of current.lines) {
         validateTracking(current.tenantId, current.sourceLocationId, line, true);
         const sourceIndex = findBalance(current.tenantId, current.sourceBranchId, current.sourceWarehouseId, current.sourceLocationId, line.productId, line.variantId);
@@ -782,6 +786,7 @@ export const stockWorkflowService = {
       }
     }
     if (action === "receive") {
+      assertOpenAccountingPeriod(scope.tenantId, new Date().toISOString().slice(0, 10), "receive this stock transfer");
       for (const line of current.lines) {
         const destination = applyBalance(current.tenantId, current.destinationBranchId, current.destinationWarehouseId, current.destinationLocationId, line, line.quantity, -line.quantity);
         updateTrackedRecords(current.tenantId, current.sourceLocationId, { branchId: current.destinationBranchId, warehouseId: current.destinationWarehouseId, locationId: current.destinationLocationId }, line, "receive");
@@ -992,6 +997,7 @@ export const stockWorkflowService = {
       tenantId: current.tenantId,
       branchId: current.branchId,
     });
+    if (!approvalRequired) assertOpenAccountingPeriod(scope.tenantId, new Date().toISOString().slice(0, 10), "complete this stock count");
     if (!approvalRequired) applyCountCorrections(prepared, actor);
     const now = new Date().toISOString();
     const next: StockCount = {
@@ -1053,6 +1059,7 @@ export const stockWorkflowService = {
     const current = inventoryStore.stockCounts()[index];
     if (current.status !== "pending_review") throw new Error("This stock count has already been reviewed.");
     if (decision === "approved") {
+      assertOpenAccountingPeriod(scope.tenantId, new Date().toISOString().slice(0, 10), "approve this stock count");
       validateCountCorrections(current);
       applyCountCorrections(current, actor);
     }
@@ -1088,6 +1095,7 @@ export const stockWorkflowService = {
     const current = inventoryStore.returnsWastage()[index];
     if (current.status !== "pending_approval") throw new Error("This workflow has already been reviewed.");
     if (decision === "approved") {
+      assertOpenAccountingPeriod(scope.tenantId, new Date().toISOString().slice(0, 10), "approve this stock return or wastage");
       const isReturn = current.workflowType === "return";
       for (const line of current.lines) {
         validateTracking(current.tenantId, current.locationId, line, !isReturn);

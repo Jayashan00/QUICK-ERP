@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { CalendarDays, CalendarPlus, LockKeyhole, Save } from 'lucide-react';
+import { CalendarDays, CalendarPlus, LockKeyhole, Save, Trash2, UnlockKeyhole } from 'lucide-react';
 import { Button } from '@/shared/components/common/Button';
 import { Card } from '@/shared/components/common/Card';
 import { Modal } from '@/shared/components/common/Modal';
@@ -37,8 +37,15 @@ export function FinancialSettingsPage() {
   const { hasPermission } = usePermissions();
   const canEdit = hasPermission(PERMISSIONS.SETTINGS.FINANCIAL_YEAR_EDIT) || hasPermission(PERMISSIONS.SETTINGS.FINANCIAL_YEAR_CONFIGURE);
   const canCreate = hasPermission(PERMISSIONS.SETTINGS.FINANCIAL_YEAR_CREATE) || canEdit;
+  const canUnlock = hasPermission(PERMISSIONS.SETTINGS.FINANCIAL_YEAR_CONFIGURE);
+  const canDelete = hasPermission(PERMISSIONS.SETTINGS.FINANCIAL_YEAR_DELETE);
   const [showPeriod, setShowPeriod] = useState(false);
   const [statusChange, setStatusChange] = useState<{ period: AccountingPeriod; status: AccountingPeriodStatus } | null>(null);
+  const [locking, setLocking] = useState<AccountingPeriod | null>(null);
+  const [lockName, setLockName] = useState('');
+  const [unlocking, setUnlocking] = useState<AccountingPeriod | null>(null);
+  const [unlockReason, setUnlockReason] = useState('');
+  const [deleting, setDeleting] = useState<AccountingPeriod | null>(null);
 
   if (data.isLoading) return <div className="flex h-48 items-center justify-center"><LoadingSpinner /></div>;
   if (data.error || !data.financialYear) return <ErrorState message={data.error ?? 'Financial settings are unavailable.'} onRetry={() => void data.refetch()} />;
@@ -48,10 +55,30 @@ export function FinancialSettingsPage() {
       {[{ label: 'Total periods', value: data.periods.length, tone: 'text-slate-900' }, { label: 'Open periods', value: data.periods.filter(period => period.status === 'open').length, tone: 'text-emerald-700' }, { label: 'Locked periods', value: data.periods.filter(period => period.status === 'locked').length, tone: 'text-amber-700' }].map(item => <div key={item.label} className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm"><p className="text-sm font-medium text-slate-500">{item.label}</p><p className={`mt-1 text-2xl font-bold tabular-nums ${item.tone}`}>{item.value}</p></div>)}
     </div>
     <YearForm values={data.financialYear} disabled={!canEdit} onSave={data.saveYear} saving={data.isSaving} />
-    <section aria-labelledby="accounting-periods-heading" className="space-y-3"><div><h2 id="accounting-periods-heading" className="text-lg font-semibold text-slate-900">Accounting periods</h2><p className="mt-1 text-sm text-slate-500">Open, close or lock a period from its row actions.</p></div>
-    <DataTable columns={columns} data={data.periods} keyField="id" emptyTitle="No accounting periods" emptyMessage="Create the first accounting period for this tenant." rowActions={canEdit ? (period) => period.status === 'locked' ? [] : [period.status !== 'open' ? { key: 'open', label: 'Open period', onClick: () => setStatusChange({ period, status: 'open' }) } : { key: 'close', label: 'Close period', onClick: () => setStatusChange({ period, status: 'closed' }) }, { key: 'lock', label: 'Lock period', danger: true, icon: <LockKeyhole size={15} />, onClick: () => setStatusChange({ period, status: 'locked' }) }] : undefined} /></section>
+    <section aria-labelledby="accounting-periods-heading" className="space-y-3"><div><h2 id="accounting-periods-heading" className="text-lg font-semibold text-slate-900">Accounting periods</h2><p className="mt-1 text-sm text-slate-500">Open, close, lock or recover a period from its row actions.</p></div>
+    <DataTable columns={columns} data={data.periods} keyField="id" emptyTitle="No accounting periods" emptyMessage="Create the first accounting period for this tenant." rowActions={(canEdit || canUnlock || canDelete) ? (period) => {
+      if (period.status === 'locked') {
+        return [
+          ...(canUnlock ? [{ key: 'unlock', label: 'Unlock period', icon: <UnlockKeyhole size={15} />, onClick: () => { setUnlockReason(''); setUnlocking(period); } }] : []),
+          ...(canDelete && data.canDeletePeriod(period) ? [{ key: 'delete', label: 'Delete period', danger: true, icon: <Trash2 size={15} />, onClick: () => setDeleting(period) }] : []),
+        ];
+      }
+      if (!canEdit) return [];
+      return [
+        period.status !== 'open' ? { key: 'open', label: 'Open period', onClick: () => setStatusChange({ period, status: 'open' as const }) } : { key: 'close', label: 'Close period', onClick: () => setStatusChange({ period, status: 'closed' as const }) },
+        { key: 'lock', label: 'Lock period', danger: true, icon: <LockKeyhole size={15} />, onClick: () => { setLockName(''); setLocking(period); } },
+      ];
+    } : undefined} /></section>
+    {data.closeSnapshots.length > 0 && <section className="space-y-3" aria-labelledby="period-close-history"><div><h2 id="period-close-history" className="text-lg font-semibold text-slate-900">Period close history</h2><p className="mt-1 text-sm text-slate-500">Saved trial-balance snapshots and year-end rollover results remain available after an unlock.</p></div><div className="grid gap-3 lg:grid-cols-2">{data.closeSnapshots.map(snapshot => <Card key={snapshot.id} className="rounded-xl"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{snapshot.periodName}</p><p className="mt-1 text-xs text-slate-500">Closed {new Date(snapshot.closedAt).toLocaleString()}</p>{snapshot.reopenedAt && <p className="mt-1 text-xs font-medium text-amber-700">Unlocked by {snapshot.reopenedBy} on {new Date(snapshot.reopenedAt).toLocaleString()}</p>}</div><StatusBadge status={snapshot.status} /></div><dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-slate-500">Net income</dt><dd className="font-semibold">{snapshot.netIncome.toLocaleString()}</dd></div><div><dt className="text-slate-500">Accounts captured</dt><dd className="font-semibold">{Object.keys(snapshot.balances).length}</dd></div>{snapshot.rolloverReference && <div className="col-span-2"><dt className="text-slate-500">Year-end rollover</dt><dd className="font-semibold">{snapshot.rolloverReference}</dd></div>}{snapshot.reopenReason && <div className="col-span-2"><dt className="text-slate-500">Unlock reason</dt><dd className="font-semibold">{snapshot.reopenReason}</dd></div>}</dl></Card>)}</div></section>}
     <PeriodModal open={showPeriod} saving={data.isSaving} onClose={() => setShowPeriod(false)} onCreate={async (values) => { await data.createPeriod(values); setShowPeriod(false); }} />
-    <ConfirmDialog isOpen={Boolean(statusChange)} title={`${statusChange?.status === 'open' ? 'Open' : statusChange?.status === 'closed' ? 'Close' : 'Lock'} Accounting Period`} message={`Change ${statusChange?.period.name ?? 'this period'} to ${statusChange?.status}?${statusChange?.status === 'locked' ? ' Locked periods cannot be reopened.' : ''}`} confirmLabel="Confirm Change" variant={statusChange?.status === 'locked' ? 'danger' : 'primary'} isLoading={data.isSaving} onCancel={() => setStatusChange(null)} onConfirm={() => { if (!statusChange) return; void data.changePeriodStatus(statusChange.period.id, statusChange.status).then(() => { appToast.success('Accounting period updated.'); setStatusChange(null); }).catch((error: unknown) => appToast.error(error instanceof Error ? error.message : 'Unable to update period.')); }} />
+    <ConfirmDialog isOpen={Boolean(statusChange)} title={`${statusChange?.status === 'open' ? 'Open' : 'Close'} Accounting Period`} message={`Change ${statusChange?.period.name ?? 'this period'} to ${statusChange?.status}?`} confirmLabel="Confirm Change" isLoading={data.isSaving} onCancel={() => setStatusChange(null)} onConfirm={() => { if (!statusChange) return; void data.changePeriodStatus(statusChange.period.id, statusChange.status).then(() => { appToast.success('Accounting period updated.'); setStatusChange(null); }).catch((error: unknown) => appToast.error(error instanceof Error ? error.message : 'Unable to update period.')); }} />
+    <Modal isOpen={Boolean(locking)} onClose={() => setLocking(null)} title="Lock Accounting Period" footer={<><Button variant="secondary" onClick={() => setLocking(null)}>Cancel</Button><Button variant="danger" isLoading={data.isSaving} disabled={lockName !== locking?.name} onClick={() => { if (!locking || lockName !== locking.name) return; void data.changePeriodStatus(locking.id, 'locked').then(() => { appToast.success('Accounting period locked.'); setLocking(null); }).catch((error: unknown) => appToast.error(error instanceof Error ? error.message : 'Unable to lock period.')); }}>Lock Period</Button></>}>
+      <div className="space-y-4"><p className="text-sm text-slate-600">Locking blocks transactions dated in this period and runs close checks. To confirm, type <strong>{locking?.name}</strong>.</p><FormField label="Period name" required><TextInput value={lockName} onChange={event => setLockName(event.target.value)} autoComplete="off" /></FormField></div>
+    </Modal>
+    <Modal isOpen={Boolean(unlocking)} onClose={() => setUnlocking(null)} title="Unlock Accounting Period" footer={<><Button variant="secondary" onClick={() => setUnlocking(null)}>Cancel</Button><Button isLoading={data.isSaving} disabled={!unlockReason.trim()} onClick={() => { if (!unlocking || !unlockReason.trim()) return; void data.unlockPeriod(unlocking.id, unlockReason).then(() => { appToast.success('Accounting period unlocked and the action was audited.'); setUnlocking(null); }).catch((error: unknown) => appToast.error(error instanceof Error ? error.message : 'Unable to unlock period.')); }}>Unlock Period</Button></>}>
+      <div className="space-y-4"><p className="text-sm text-slate-600">This controlled recovery reopens the period. Close snapshots are retained, and any year-end rollover is reversed with a posted journal.</p><FormField label="Reason for unlocking" required><textarea className="min-h-28 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700" value={unlockReason} onChange={event => setUnlockReason(event.target.value)} placeholder="Explain why this locked period must be reopened" /></FormField></div>
+    </Modal>
+    <ConfirmDialog isOpen={Boolean(deleting)} title="Delete Accounting Period" message={`Delete ${deleting?.name ?? 'this period'}? This is allowed only because it has no transactions or close history.`} confirmLabel="Delete Period" variant="danger" isLoading={data.isDeleting} onCancel={() => setDeleting(null)} onConfirm={() => { if (!deleting) return; void data.deletePeriod(deleting.id).then(() => { appToast.success('Empty accounting period deleted.'); setDeleting(null); }).catch((error: unknown) => appToast.error(error instanceof Error ? error.message : 'Unable to delete period.')); }} />
   </div>;
 }
 

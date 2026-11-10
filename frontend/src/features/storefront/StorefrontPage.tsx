@@ -6,12 +6,13 @@ import { appToast } from '@/shared/utils/toast';
 import { checkoutSchema, storefrontService, type CartItem, type CheckoutDetails } from './storefrontService';
 import { CustomerReviews, ProductReviewSummary } from './CustomerReviews';
 import { abandonedCartService } from './abandonedCartService';
+import { usePosCurrency } from '@/features/pos/posCurrency';
 
 const input = 'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
 const action = 'rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50';
-const money = (n: number) => `LKR ${n.toFixed(2)}`;
 export function StorefrontPage({ view = 'catalog' }: { view?: 'catalog' | 'cart' | 'checkout' | 'order' }) {
   const { tenantId = '', branchId = '', orderId = '' } = useParams();
+  const { formatMoney: money } = usePosCurrency(tenantId, branchId);
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const scope = useMemo(() => ({ tenantId, branchId }), [tenantId, branchId]);

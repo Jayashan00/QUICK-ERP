@@ -121,6 +121,7 @@ const order = await purchasingService.createOrder(
   },
   actor,
 );
+assert.equal(order.referenceNumber, "PO-00001");
 const updatedOrder = await purchasingService.updateOrder(
   scope,
   branches,
@@ -197,6 +198,7 @@ const grn = await purchasingService.completeGrn(
   },
   actor,
 );
+assert.equal(grn.referenceNumber, "G-00001");
 const after = await inventoryService.listStockBalances(scope, {
   branchId: "branch-001",
   warehouseId: "warehouse-hq-main",

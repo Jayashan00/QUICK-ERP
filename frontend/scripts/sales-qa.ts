@@ -28,6 +28,7 @@ await assert.rejects(
 
 const quotation = await salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", currency: "USD", notes: "QA quotation", items: [item] }, actor);
 assert.equal(quotation.status, "draft");
+assert.equal(quotation.referenceNumber, "Q-00001");
 await assert.rejects(
   () => salesService.updateQuotation(scope, branches, quotation.id, { customerId: quotation.customerId, branchId: quotation.branchId, salespersonId: quotation.salespersonId, opportunityId: "", quotationDate: quotation.quotationDate, expiryDate: quotation.expiryDate, terms: "Over limit", currency: quotation.currency, notes: "Over limit", items: [overCreditLimitItem] }, actor),
   /credit limit/,
@@ -40,6 +41,7 @@ await salesService.transitionQuotation(scope, branches, quotation.id, "accept", 
 await assert.rejects(() => salesService.createOrderFromQuotation(scope, ["branch-002"], quotation.id, "warehouse-hq-main", actor));
 
 const order = await salesService.createOrderFromQuotation(scope, branches, quotation.id, "warehouse-hq-main", actor);
+assert.equal(order.referenceNumber, "SO-00001");
 await assert.rejects(
   () => salesService.createOrderFromQuotation(scope, branches, quotation.id, "warehouse-hq-main", actor),
   /has already been created from this quotation/,
@@ -56,10 +58,12 @@ const saleMovements = await inventoryService.listStockMovements(scope, { branchI
 assert(saleMovements.some((movement) => movement.type === "sale" && movement.quantity === -2));
 
 const invoice = await salesService.createInvoice(scope, branches, { customerId: order.customerId, branchId: order.branchId, salespersonId: order.salespersonId, salesOrderId: order.id, deliveryNoteId: delivery.id, invoiceDate: "2026-10-02", dueDate: "2026-11-01", paymentTerms: order.paymentTerms, currency: order.currency, notes: "QA invoice", items: [{ ...item, quantity: 2 }] }, actor);
+assert.equal(invoice.referenceNumber, "I-00001");
 await salesService.transitionInvoice(scope, branches, invoice.id, "approve", actor);
 await salesService.transitionInvoice(scope, branches, invoice.id, "send", actor);
 await assert.rejects(() => salesService.receivePayment(scope, branches, { invoiceId: invoice.id, amount: invoice.outstandingAmount + 1, paymentMethod: "bank_transfer", paymentDate: "2026-10-03", externalReference: "OVERPAY" }, actor));
 const payment = await salesService.receivePayment(scope, branches, { invoiceId: invoice.id, amount: 100, paymentMethod: "bank_transfer", paymentDate: "2026-10-03", externalReference: "QA-PAY-001" }, actor);
+assert.equal(payment.referenceNumber, "P-00001");
 assert.equal(payment.accountingStatus, "prepared");
 assert.equal(payment.remainingBalance, invoice.outstandingAmount - 100);
 
