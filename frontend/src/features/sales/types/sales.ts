@@ -42,7 +42,9 @@ export interface SalesLine {
   quantity: number;
   unitPrice: number;
   discountPercent: number;
+  taxCode?: string;
   taxPercent: number;
+  pricesIncludeTax?: boolean;
   subtotal: number;
   discountAmount: number;
   taxAmount: number;

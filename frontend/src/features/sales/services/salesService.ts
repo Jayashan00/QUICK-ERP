@@ -103,6 +103,8 @@ export interface SalesProductOption {
   name: string;
   sku: string;
   sellingPrice: number;
+  taxCode?: string;
+  pricesIncludeTax: boolean;
   trackInventory: boolean;
   trackByBatch: boolean;
   trackBySerialNumber: boolean;
@@ -168,21 +170,35 @@ const lineItems = (
     quantity: number;
     unitPrice: number;
     discountPercent: number;
+    taxCode?: string;
     taxPercent: number;
+    pricesIncludeTax?: boolean;
   }>,
+  taxContext?: { tenantId: string; date: string },
 ): SalesLine[] =>
   values.map((value) => {
     const subtotal = value.quantity * value.unitPrice;
     const discountAmount = (subtotal * value.discountPercent) / 100;
-    const taxAmount = ((subtotal - discountAmount) * value.taxPercent) / 100;
+    const product = taxContext ? productStore.all().find((item) => item.tenantId === taxContext.tenantId && item.id === value.productId) : undefined;
+    const requestedTaxCode = value.taxCode === undefined ? product?.taxCode : value.taxCode || undefined;
+    const rate = taxContext ? tenantSettingsService.resolveTaxRate(taxContext.tenantId, requestedTaxCode, 'sales', taxContext.date) : undefined;
+    const taxPercent = taxContext ? rate?.percentage ?? 0 : value.taxPercent;
+    const pricesIncludeTax = taxContext ? Boolean(rate && product?.pricesIncludeTax) : Boolean(value.pricesIncludeTax);
+    const taxableAmount = subtotal - discountAmount;
+    const taxAmount = pricesIncludeTax
+      ? taxableAmount - taxableAmount / (1 + taxPercent / 100)
+      : taxableAmount * taxPercent / 100;
     return {
       id: `sales-line-${crypto.randomUUID().slice(0, 8)}`,
       ...value,
+      taxCode: rate?.code ?? (taxContext ? undefined : value.taxCode),
+      taxPercent,
+      pricesIncludeTax,
       variantId: value.variantId || undefined,
       subtotal,
       discountAmount,
       taxAmount,
-      total: subtotal - discountAmount + taxAmount,
+      total: pricesIncludeTax ? taxableAmount : taxableAmount + taxAmount,
     };
   });
 const totals = (items: SalesLine[]) => ({
@@ -461,7 +477,7 @@ export const salesService = {
         code: customer.code,
         branchId: customer.branchId,
         currency: customer.currency,
-        paymentTerms: `Net ${customer.paymentTermsDays ?? 30}`,
+        paymentTerms: (tenantSettingsService.resolvePaymentTerm(tenantId, customer.paymentTermCode ?? customer.paymentTermsDays) ?? tenantSettingsService.requirePaymentTerm(tenantId)).code,
         deliveryAddress: customer.shippingAddress
           ? `${customer.shippingAddress.street}, ${customer.shippingAddress.city}, ${customer.shippingAddress.postalCode}, ${customer.shippingAddress.country}`
           : `${customer.billingAddress.street}, ${customer.billingAddress.city}, ${customer.billingAddress.postalCode}, ${customer.billingAddress.country}`,
@@ -503,6 +519,8 @@ export const salesService = {
             name: item.name,
             sku: item.sku,
             sellingPrice: item.sellingPrice,
+            taxCode: item.taxCode,
+            pricesIncludeTax: item.pricesIncludeTax,
             trackInventory: item.trackInventory,
             trackByBatch: item.trackByBatch,
             trackBySerialNumber: item.trackBySerialNumber,
@@ -629,7 +647,7 @@ export const salesService = {
           "The opportunity does not match the selected customer and branch.",
         );
     }
-    const items = lineItems(data.items),
+    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.quotationDate }),
       amount = totals(items),
       now = new Date().toISOString();
     assertWithinCreditLimit(customer, amount.totalAmount);
@@ -687,7 +705,7 @@ export const salesService = {
     data.items.forEach((item) =>
       requireValidQuantity(scope.tenantId, item.productId, item.quantity),
     );
-    const items = lineItems(data.items);
+    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.quotationDate });
     const amount = totals(items);
     assertWithinCreditLimit(customer, amount.totalAmount);
     const next: SalesQuotation = {
@@ -795,7 +813,7 @@ export const salesService = {
     sourceQuotationId?: string,
   ) {
     requireScope(scope, permitted);
-    const data = salesOrderSchema.parse(values);
+    const data = salesOrderSchema.parse({ ...values, paymentTerms: values.paymentTerms || tenantSettingsService.requirePaymentTerm(scope.tenantId).code });
     assertBranch(permitted, data.branchId);
     await validateCustomer(scope, data.branchId, data.customerId);
     const salesperson = await validateSalesperson(
@@ -827,13 +845,14 @@ export const salesService = {
       );
     }
 
-    const items = lineItems(data.items),
+    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.orderDate }),
       now = new Date().toISOString();
     const order: SalesOrder = {
       id: `sales-order-${crypto.randomUUID().slice(0, 8)}`,
       tenantId: scope.tenantId,
       referenceNumber: tenantSettingsService.nextDocumentNumber(scope.tenantId, "sales_order"),
       ...data,
+      paymentTerms: tenantSettingsService.requirePaymentTerm(scope.tenantId, data.paymentTerms).code,
       sourceQuotationId,
       notes: data.notes || undefined,
       salespersonName: salesperson.name,
@@ -897,7 +916,7 @@ export const salesService = {
         deliveryAddress: customer.shippingAddress
           ? `${customer.shippingAddress.street}, ${customer.shippingAddress.city}, ${customer.shippingAddress.postalCode}, ${customer.shippingAddress.country}`
           : `${customer.billingAddress.street}, ${customer.billingAddress.city}, ${customer.billingAddress.postalCode}, ${customer.billingAddress.country}`,
-        paymentTerms: `Net ${customer.paymentTermsDays ?? 30}`,
+        paymentTerms: (tenantSettingsService.resolvePaymentTerm(scope.tenantId, customer.paymentTermCode ?? customer.paymentTermsDays) ?? tenantSettingsService.requirePaymentTerm(scope.tenantId)).code,
         currency: quotation.currency,
         notes: `Created from ${quotation.referenceNumber}.`,
         items: quotation.items.map((item) => ({
@@ -920,7 +939,7 @@ export const salesService = {
     values: SalesOrderFormValues,
     actor: SalesActor,
   ) {
-    const data = salesOrderSchema.parse(values);
+    const data = salesOrderSchema.parse({ ...values, paymentTerms: values.paymentTerms || tenantSettingsService.requirePaymentTerm(scope.tenantId).code });
     const index = salesStore
       .orders()
       .findIndex(
@@ -945,10 +964,11 @@ export const salesService = {
       data.branchId,
       data.warehouseId,
     );
-    const items = lineItems(data.items);
+    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.orderDate });
     const next: SalesOrder = {
       ...current,
       ...data,
+      paymentTerms: tenantSettingsService.requirePaymentTerm(scope.tenantId, data.paymentTerms).code,
       notes: data.notes || undefined,
       salespersonName: salesperson.name,
       items,
@@ -1158,7 +1178,7 @@ export const salesService = {
     actor: SalesActor,
   ) {
     requireScope(scope, permitted);
-    const data = salesInvoiceSchema.parse(values);
+    const data = salesInvoiceSchema.parse({ ...values, paymentTerms: values.paymentTerms || tenantSettingsService.requirePaymentTerm(scope.tenantId).code });
     assertOpenAccountingPeriod(scope.tenantId, data.invoiceDate, "create this sales invoice");
     assertBranch(permitted, data.branchId);
     await validateCustomer(scope, data.branchId, data.customerId);
@@ -1196,14 +1216,17 @@ export const salesService = {
     data.items.forEach((item) =>
       requireProduct(scope.tenantId, item.productId),
     );
-    const items = lineItems(data.items),
+    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.invoiceDate }),
       amount = totals(items),
       now = new Date().toISOString();
+    const payment = tenantSettingsService.calculatePaymentDueDate(scope.tenantId, data.invoiceDate, data.paymentTerms);
     const invoice: SalesInvoice = {
       id: `sales-invoice-${crypto.randomUUID().slice(0, 8)}`,
       tenantId: scope.tenantId,
       referenceNumber: tenantSettingsService.nextDocumentNumber(scope.tenantId, "invoice"),
       ...data,
+      paymentTerms: payment.term.code,
+      dueDate: payment.dueDate,
       salesOrderId: data.salesOrderId || undefined,
       deliveryNoteId: data.deliveryNoteId || undefined,
       notes: data.notes || undefined,
@@ -1472,7 +1495,9 @@ export const salesService = {
           quantity: item.quantity,
           unitPrice: source.unitPrice,
           discountPercent: source.discountPercent,
+          taxCode: source.taxCode,
           taxPercent: source.taxPercent,
+          pricesIncludeTax: source.pricesIncludeTax,
         },
       ])[0];
     });
@@ -1567,20 +1592,21 @@ export const salesService = {
     values: RecurringInvoiceFormValues,
     actor: SalesActor,
   ) {
-    const data = recurringInvoiceSchema.parse(values);
+    const data = recurringInvoiceSchema.parse({ ...values, paymentTerms: values.paymentTerms || tenantSettingsService.requirePaymentTerm(scope.tenantId).code });
     assertBranch(permitted, data.branchId);
     await validateCustomer(scope, data.branchId, data.customerId);
     const salesperson = await validateSalesperson(
       scope.tenantId,
       data.salespersonId,
     );
-    const items = lineItems(data.items),
+    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.startDate }),
       now = new Date().toISOString();
     const recurring: RecurringInvoice = {
       id: `recurring-${crypto.randomUUID().slice(0, 8)}`,
       tenantId: scope.tenantId,
       referenceNumber: reference("REC", salesStore.recurring().length),
       ...data,
+      paymentTerms: tenantSettingsService.requirePaymentTerm(scope.tenantId, data.paymentTerms).code,
       endDate: data.endDate || undefined,
       notes: data.notes || undefined,
       salespersonName: salesperson.name,
