@@ -169,7 +169,12 @@ class AiSecurityTest {
 
         var audit = AiResourceCatalog.find("audit_logs").orElseThrow();
         AccessContext auditViewer = new AccessContext("tenant-a", "auditor", "role-v", Set.of("audit.view"), Set.of(), List.of("branch-a"), "branch-a");
+        assertFalse(AiDataTools.genericRowAllowed(mapper.readTree("{\"tenantId\":\"tenant-a\",\"branchId\":\"branch-a\",\"sensitivity\":\"normal\"}"), auditViewer, audit));
         assertFalse(AiDataTools.genericRowAllowed(mapper.readTree("{\"tenantId\":\"tenant-a\",\"branchId\":\"branch-a\",\"sensitivity\":\"security\"}"), auditViewer, audit));
+        AccessContext tenantAdmin = new AccessContext("tenant-a", "admin", "role-001", Set.of("*"), Set.of(), List.of("branch-a"), "branch-a");
+        assertTrue(AiDataTools.genericRowAllowed(mapper.readTree("{\"tenantId\":\"tenant-a\",\"branchId\":\"branch-a\",\"sensitivity\":\"security\"}"), tenantAdmin, audit));
+        assertTrue(AiDataTools.genericRowAllowed(mapper.readTree("{\"tenantId\":\"tenant-a\",\"branchId\":\"branch-b\",\"sensitivity\":\"normal\"}"), tenantAdmin, audit));
+        assertFalse(AiDataTools.genericRowAllowed(mapper.readTree("{\"tenantId\":\"tenant-b\",\"branchId\":\"branch-a\",\"sensitivity\":\"normal\"}"), tenantAdmin, audit));
 
         var notifications = AiResourceCatalog.find("notifications").orElseThrow();
         AccessContext notificationViewer = new AccessContext("tenant-a", "user-a", "role-v", Set.of("notifications.view"), Set.of("notifications"), List.of("branch-a"), "branch-a");
