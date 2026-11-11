@@ -93,11 +93,31 @@ function tenantSingleton<T extends { tenantId: string }>(store: T[], fallback: T
   return created;
 }
 
+function preserveCrmRecordCurrencies(tenantId: string, currentBaseCurrency: string) {
+  const leadAccessor = getStateAccessor('crm.leads');
+  if (leadAccessor?.kind === 'list') {
+    leadAccessor.set(leadAccessor.get().map((value) => {
+      const lead = value as { tenantId?: string; estimatedValue?: number; estimatedCurrency?: string };
+      if (lead.tenantId !== tenantId || lead.estimatedValue === undefined || lead.estimatedCurrency) return value;
+      return { ...lead, estimatedCurrency: currentBaseCurrency };
+    }));
+  }
+
+  const opportunityAccessor = getStateAccessor('crm.opportunities');
+  if (opportunityAccessor?.kind === 'list') {
+    opportunityAccessor.set(opportunityAccessor.get().map((value) => {
+      const opportunity = value as { tenantId?: string; expectedValue?: number; expectedCurrency?: string };
+      if (opportunity.tenantId !== tenantId || opportunity.expectedValue === undefined || opportunity.expectedCurrency) return value;
+      return { ...opportunity, expectedCurrency: currentBaseCurrency };
+    }));
+  }
+}
+
 export const tenantSettingsService = {
   async getGeneral(tenantId: string) { await wait(); return { ...tenantSingleton(generalStore, mockGeneralSettings, tenantId) }; },
   async saveGeneral(tenantId: string, data: Omit<GeneralSettings, 'tenantId'>) { await wait(240); const next = { ...data, tenantId }; generalStore = [...generalStore.filter((item) => item.tenantId !== tenantId), next]; return { ...next }; },
   async getLocalization(tenantId: string) { await wait(); const value = tenantSingleton(localizationStore, mockLocalizationSettings, tenantId); return { ...value, supportedCurrencies: [...value.supportedCurrencies] }; },
-  async saveLocalization(tenantId: string, data: Omit<LocalizationSettings, 'tenantId'>) { await wait(240); const next = { ...data, tenantId, supportedCurrencies: [...data.supportedCurrencies] }; localizationStore = [...localizationStore.filter((item) => item.tenantId !== tenantId), next]; return { ...next, supportedCurrencies: [...next.supportedCurrencies] }; },
+  async saveLocalization(tenantId: string, data: Omit<LocalizationSettings, 'tenantId'>) { await wait(240); const current = tenantSingleton(localizationStore, mockLocalizationSettings, tenantId); if (current.baseCurrency !== data.baseCurrency) preserveCrmRecordCurrencies(tenantId, current.baseCurrency); const next = { ...data, tenantId, supportedCurrencies: [...data.supportedCurrencies] }; localizationStore = [...localizationStore.filter((item) => item.tenantId !== tenantId), next]; return { ...next, supportedCurrencies: [...next.supportedCurrencies] }; },
   async getFinancialYear(tenantId: string) { await wait(); const value = tenantSingleton(financialYearStore, mockFinancialYearSettings, tenantId); ensureMonthlyPeriods(tenantId); return { ...value }; },
   async saveFinancialYear(tenantId: string, data: Omit<FinancialYearSettings, 'tenantId'>) { await wait(240); const next = { ...data, tenantId }; financialYearStore = [...financialYearStore.filter((item) => item.tenantId !== tenantId), next]; ensureMonthlyPeriods(tenantId); return { ...next }; },
 

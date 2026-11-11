@@ -28,7 +28,7 @@ export const CurrencyInput = forwardRef<HTMLInputElement, CurrencyInputProps>(fu
         ref={ref}
         aria-invalid={error || undefined}
         step="0.01"
-        className={cn(controlBase, 'pl-8', error && controlError, className)}
+        className={cn(controlBase, currency.length > 1 ? 'pl-16' : 'pl-8', error && controlError, className)}
         value={value === undefined ? '' : value}
         onChange={(e) => {
           const val = e.target.value;
