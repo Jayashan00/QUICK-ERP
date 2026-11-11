@@ -1,25 +1,52 @@
-import { Target, DollarSign, PieChart, CheckCircle2, CircleDot, XCircle } from 'lucide-react';
+import { Target, Banknote, PieChart, CheckCircle2, CircleDot, XCircle } from 'lucide-react';
 import { StatCard } from '@/shared/components/cards/StatCard';
 import type { Opportunity } from '@/features/crm/opportunities/types/opportunity';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
 
 interface PipelineSummaryProps {
   opportunities: Opportunity[];
 }
 
 export function PipelineSummary({ opportunities }: PipelineSummaryProps) {
+  const {
+    currencyCode,
+    convertToBaseAmount,
+    formatWholeMoneyInCurrency,
+    isLoading: isCurrencyLoading,
+    rateDate,
+  } = useTenantCurrency();
   const totalCount = opportunities.length;
-
-  const totalValue = opportunities.reduce(
-    (sum, opp) => sum + (opp.expectedValue || 0),
-    0
+  const baseTotals = opportunities.reduce(
+    (totals, opportunity) => {
+      const sourceCurrency = resolveCrmValueCurrency(opportunity.expectedCurrency);
+      const baseValue = convertToBaseAmount(opportunity.expectedValue || 0, sourceCurrency);
+      if (baseValue === null) {
+        totals.unavailableCurrencies.add(sourceCurrency ?? 'unknown');
+        return totals;
+      }
+      totals.total += baseValue;
+      totals.weighted += (baseValue * (opportunity.probability || 0)) / 100;
+      return totals;
+    },
+    { total: 0, weighted: 0, unavailableCurrencies: new Set<string>() },
   );
-
-  const weightedValue = Math.round(
-    opportunities.reduce(
-      (sum, opp) => sum + ((opp.expectedValue || 0) * (opp.probability || 0)) / 100,
-      0
-    )
+  const hasForeignCurrency = opportunities.some(
+    (opportunity) => resolveCrmValueCurrency(opportunity.expectedCurrency) !== currencyCode,
   );
+  const isWaitingForRates = isCurrencyLoading && hasForeignCurrency;
+  const missingRates = [...baseTotals.unavailableCurrencies].filter((code) => code !== 'unknown');
+  const hasMissingRates = baseTotals.unavailableCurrencies.size > 0;
+  const formatBaseTotal = (amount: number) => {
+    if (isWaitingForRates) return 'Converting…';
+    if (hasMissingRates) return 'Rate unavailable';
+    return formatWholeMoneyInCurrency(amount, currencyCode);
+  };
+  const conversionDescription = isWaitingForRates
+    ? `Converting to company base currency${currencyCode ? ` (${currencyCode})` : ''}`
+    : hasMissingRates
+      ? `Missing ${missingRates.join(', ') || 'currency'} exchange rate`
+      : `Converted to company base currency${currencyCode ? ` (${currencyCode})` : ''}${rateDate && hasForeignCurrency ? ` using ${rateDate} rates` : ''}`;
 
   const openCount = opportunities.filter((opp) => opp.status === 'open').length;
   const wonCount = opportunities.filter(
@@ -61,15 +88,15 @@ export function PipelineSummary({ opportunities }: PipelineSummaryProps) {
 
       <StatCard
         title="Pipeline Value"
-        value={`$${totalValue.toLocaleString()}`}
-        description="Gross expected revenue"
-        icon={<DollarSign size={20} />}
+        value={formatBaseTotal(baseTotals.total)}
+        description={conversionDescription}
+        icon={<Banknote size={20} />}
       />
 
       <StatCard
         title="Weighted Forecast"
-        value={`$${weightedValue.toLocaleString()}`}
-        description="Probability-adjusted value"
+        value={formatBaseTotal(baseTotals.weighted)}
+        description={conversionDescription}
         icon={<PieChart size={20} />}
       />
 

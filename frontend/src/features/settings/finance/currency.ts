@@ -23,17 +23,20 @@ export function useTenantCurrency() {
   const exchange = useExchangeRates(settings?.baseCurrency);
   const storedCurrency = currentTenant?.currency ?? settings?.baseCurrency;
 
-  const formatMoney = useCallback((amount: number, currencyCode?: string) => {
-    if (!settings) return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(amount);
-    const sourceCode = currencyCode ?? storedCurrency ?? settings.baseCurrency;
-    const converted = convertCurrency(amount, sourceCode, settings.baseCurrency, exchange.rates);
-    const code = converted === null ? sourceCode : settings.baseCurrency;
-    const value = converted ?? amount;
+  const formatConfiguredAmount = useCallback((amount: number, code: string, fractionDigits?: number) => {
+    if (!settings) {
+      const precision = fractionDigits ?? 2;
+      return new Intl.NumberFormat(undefined, {
+        minimumFractionDigits: precision,
+        maximumFractionDigits: precision,
+      }).format(amount);
+    }
+    const precision = fractionDigits ?? settings.decimalPrecision;
     const formattedAmount = new Intl.NumberFormat(settings.locale, {
-      minimumFractionDigits: settings.decimalPrecision,
-      maximumFractionDigits: settings.decimalPrecision,
+      minimumFractionDigits: precision,
+      maximumFractionDigits: precision,
       useGrouping: true,
-    }).formatToParts(value).map((part) => {
+    }).formatToParts(amount).map((part) => {
       if (part.type === 'group') return settings.thousandsSeparator;
       if (part.type === 'decimal') return settings.decimalSeparator;
       return part.value;
@@ -47,16 +50,44 @@ export function useTenantCurrency() {
     return settings.currencyPosition === 'after'
       ? `${formattedAmount} ${label}`
       : `${label} ${formattedAmount}`;
-  }, [exchange.rates, settings, storedCurrency]);
+  }, [settings]);
+
+  const formatMoney = useCallback((amount: number, currencyCode?: string) => {
+    if (!settings) return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(amount);
+    const sourceCode = currencyCode ?? storedCurrency ?? settings.baseCurrency;
+    const converted = convertCurrency(amount, sourceCode, settings.baseCurrency, exchange.rates);
+    return formatConfiguredAmount(converted ?? amount, converted === null ? sourceCode : settings.baseCurrency);
+  }, [exchange.rates, formatConfiguredAmount, settings, storedCurrency]);
+
+  const formatMoneyInCurrency = useCallback((amount: number, currencyCode?: string) => {
+    const code = currencyCode ?? storedCurrency ?? settings?.baseCurrency ?? '';
+    return formatConfiguredAmount(amount, code);
+  }, [formatConfiguredAmount, settings?.baseCurrency, storedCurrency]);
+
+  const formatWholeMoneyInCurrency = useCallback((amount: number, currencyCode?: string) => {
+    const code = currencyCode ?? storedCurrency ?? settings?.baseCurrency ?? '';
+    return formatConfiguredAmount(Math.round(amount), code, 0);
+  }, [formatConfiguredAmount, settings?.baseCurrency, storedCurrency]);
+
+  const convertToBaseAmount = useCallback((amount: number, sourceCurrency?: string) => {
+    const baseCurrency = settings?.baseCurrency ?? storedCurrency;
+    const sourceCode = sourceCurrency ?? storedCurrency ?? baseCurrency;
+    if (!baseCurrency || !sourceCode) return null;
+    return convertCurrency(amount, sourceCode, baseCurrency, exchange.rates);
+  }, [exchange.rates, settings?.baseCurrency, storedCurrency]);
 
   return {
     currencyCode: settings?.baseCurrency,
+    supportedCurrencies: settings?.supportedCurrencies ?? [],
     currencyLabel: settings
       ? settings.currencyDisplay === 'code'
         ? settings.baseCurrency
         : currencySymbol(settings.baseCurrency, settings.locale)
       : '…',
     formatMoney,
+    formatMoneyInCurrency,
+    formatWholeMoneyInCurrency,
+    convertToBaseAmount,
     rateDate: exchange.rateDate,
     isLoading: localization.isLoading || exchange.isLoading,
     error: localization.error ?? exchange.error,

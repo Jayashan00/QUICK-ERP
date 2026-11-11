@@ -9,7 +9,7 @@ import { documentService } from '@/features/documents/documentService';
 import { readRecentSearches, rememberSearch } from '@/features/global-search/utils/recentSearches';
 
 Object.defineProperty(globalThis, 'window', { value: { setTimeout: globalThis.setTimeout, addEventListener: () => undefined }, configurable: true });
-const scope: GlobalSearchScope = { tenantId: 'tenant-001', branchId: 'branch-001', permittedBranchIds: ['branch-001', 'branch-002'], permissions: getPermissionsForScope('tenant'), user: { id: 'user-001', name: 'QA User', email: 'qa@example.com' } };
+const scope: GlobalSearchScope = { tenantId: 'tenant-001', companyName: 'Acme Corporation', branchId: 'branch-001', permittedBranchIds: ['branch-001', 'branch-002'], permissions: getPermissionsForScope('tenant'), user: { id: 'usr-001', name: 'Admin User', email: 'admin@quickerp.test' }, roleId: 'role-001', isTenantAdministrator: true };
 const index = await globalSearchService.getIndex(scope);
 assert.deepEqual(index.unavailableModules, [], 'all permitted services load');
 const expectedModules = ['CRM', 'Customers', 'Suppliers', 'Products', 'Sales', 'Purchases', 'Inventory', 'Finance', 'HR', 'Projects', 'Documents', 'Support'];
@@ -55,7 +55,7 @@ assert.ok(second.entries.every(row => !row.branchId || row.branchId === 'branch-
 const scopedIds = index.entries.filter(row => row.branchId).map(row => `${row.module}/${row.type}/${row.id}`);
 assert.ok(second.entries.filter(row => row.branchId).every(row => !scopedIds.includes(`${row.module}/${row.type}/${row.id}`)), 'branch record isolation');
 assert.deepEqual(second.entries.filter(row => row.module === 'Products').map(row => row.id).sort(), productsOnly.entries.map(row => row.id).sort(), 'Products remain tenant-level');
-const otherTenant = await globalSearchService.getIndex({ ...scope, tenantId: 'tenant-002', branchId: 'branch-003', permittedBranchIds: ['branch-003'] });
+const otherTenant = await globalSearchService.getIndex({ ...scope, tenantId: 'tenant-002', companyName: 'Northwind Retail', branchId: 'branch-003', permittedBranchIds: ['branch-003'] });
 assert.ok(otherTenant.entries.every(row => !index.entries.some(first => row.module === first.module && row.type === first.type && row.id === first.id)), 'tenant isolation');
 await assert.rejects(globalSearchService.getIndex({ ...scope, tenantId: 'platform' }));
 await assert.rejects(globalSearchService.getIndex({ ...scope, branchId: 'forbidden' }));

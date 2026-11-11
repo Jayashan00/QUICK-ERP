@@ -10,7 +10,7 @@ import type { TenantModule } from '@/core/tenant/tenantEntitlements';
 import { useAiAssistant } from '../hooks/useAiAssistant';
 import { AssistantResponse } from './AssistantResponse';
 
-type Suggestion = { question: string; module?: TenantModule; permissions: string[] };
+type Suggestion = { question: string; module?: TenantModule; permissions: string[]; tenantAdminOnly?: boolean };
 const SUGGESTIONS: Suggestion[] = [
   { question: "What is today's sales total?", module: 'sales', permissions: ['sales.view'] },
   { question: 'Which products are low in stock?', module: 'inventory', permissions: ['inventory.stock.view'] },
@@ -23,7 +23,7 @@ const SUGGESTIONS: Suggestion[] = [
   { question: 'What are the latest purchase orders?', module: 'purchases', permissions: ['purchase.view'] },
   { question: "Show this month's expenses.", module: 'finance', permissions: ['finance.expenses.view'] },
   { question: 'Show my accessible support tickets.', permissions: ['support.view'] },
-  { question: 'Show the latest audit logs.', permissions: ['audit.view'] },
+  { question: 'Show the latest audit logs.', permissions: ['audit.view'], tenantAdminOnly: true },
   { question: 'Show my notifications.', module: 'notifications', permissions: ['notifications.view'] },
   { question: 'Show our company settings.', module: 'settings', permissions: ['settings.company.view'] },
 ];
@@ -69,8 +69,10 @@ export function AiAssistantDrawer() {
   const suggestions = useMemo(() => user?.isSuperAdmin
     ? PLATFORM_SUGGESTIONS.map((question) => ({ question }))
     : SUGGESTIONS.filter((item) =>
-      (!item.module || currentTenant?.entitlements.enabledModules.includes(item.module)) && hasAnyPermission(item.permissions),
-    ).slice(0, 8), [currentTenant, hasAnyPermission, user?.isSuperAdmin]);
+      (!item.tenantAdminOnly || user?.roleId === 'role-001')
+      && (!item.module || currentTenant?.entitlements.enabledModules.includes(item.module))
+      && hasAnyPermission(item.permissions),
+    ).slice(0, 8), [currentTenant, hasAnyPermission, user?.isSuperAdmin, user?.roleId]);
 
   useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages, isLoading]);

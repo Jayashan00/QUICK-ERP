@@ -7,7 +7,6 @@ import {
 import { useState } from 'react';
 
 import { useDebounce } from '@/shared/hooks/useDebounce';
-import type { Opportunity } from '@/features/crm/opportunities/types/opportunity';
 import { useTenant } from '@/core/tenant/tenant-context';
 import { useBranch } from '@/core/branch/branch-context';
 
@@ -15,6 +14,8 @@ import { opportunityKeys } from '../queries/opportunityKeys';
 import {
   opportunityService,
   type GetOpportunitiesParams,
+  type OpportunityCreateInput,
+  type OpportunityUpdateInput,
 } from '../services/opportunityService';
 
 export function useOpportunities(initialParams: GetOpportunitiesParams = {}) {
@@ -56,7 +57,7 @@ export function useOpportunities(initialParams: GetOpportunitiesParams = {}) {
 
   const createMutation = useMutation({
     mutationFn: (
-      data: Omit<Opportunity, 'id' | 'createdAt' | 'updatedAt' | 'tenantId' | 'branchId'>,
+      data: OpportunityCreateInput,
     ) => opportunityService.createOpportunity(scope, data),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: opportunityKeys.lists() });
@@ -64,7 +65,7 @@ export function useOpportunities(initialParams: GetOpportunitiesParams = {}) {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, updates }: { id: string; updates: Partial<Opportunity> }) =>
+    mutationFn: ({ id, updates }: { id: string; updates: OpportunityUpdateInput }) =>
       opportunityService.updateOpportunity(scope, id, updates),
     onSuccess: async (opportunity) => {
       queryClient.setQueryData(opportunityKeys.detail(scope, opportunity.id), opportunity);
@@ -80,10 +81,10 @@ export function useOpportunities(initialParams: GetOpportunitiesParams = {}) {
   });
 
   const createOpportunity = (
-    data: Omit<Opportunity, 'id' | 'createdAt' | 'updatedAt' | 'tenantId' | 'branchId'>,
+    data: OpportunityCreateInput,
   ) => createMutation.mutateAsync(data);
 
-  const updateOpportunity = (id: string, updates: Partial<Opportunity>) =>
+  const updateOpportunity = (id: string, updates: OpportunityUpdateInput) =>
     updateMutation.mutateAsync({ id, updates });
 
   const deleteOpportunity = (id: string) => deleteMutation.mutateAsync(id);

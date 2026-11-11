@@ -232,9 +232,9 @@ return response.data;
 
 **Sources/shapes:** `src/core/audit/auditEventService.ts`, types.ts; `src/features/audit/services/auditExportService.ts`. TenantAuditEntry/input/access/filters/page; legacy entries are adapted.
 
-**Actions/filters/access:** internal record/recordLegacy, immutable list/export; read-only UI without edit/delete. Search/user/module/action/branch/sensitivity/date/sort/page; tenant + allowed branches and branchless company events. audit.view/export/security.view/sensitive.view gate rows; platform audit stays separate.
+**Actions/filters/access:** internal record/recordLegacy, immutable list/export; read-only UI without edit/delete. Search/user/module/action/branch/sensitivity/date/sort/page. Tenant audit list/export access is reserved for the authenticated `role-001` company tenant administrator and remains limited to that tenant plus its allowed branches; permission strings cannot grant another role access. Platform audit stays separate.
 
-**Files/handoff:** authorized exports. Server creates authoritative actor/entity/reference/action/snapshots/time/sensitivity evidence transactionally; browser events are not security evidence. Agree retention/immutability/redaction.
+**Files/handoff:** authorized exports. The server now creates an authoritative audit event for every accepted persisted create/update/delete, derives actor identity from the authenticated principal, and applies tenant/branch/sensitivity access on reads. Browser workflow events are append-only supplemental context with server-overwritten actor/time identity. A daily idempotent maintenance job removes event payloads and record history older than three calendar months, removes AI audit rows on the same schedule, and creates one high-priority export reminder per month for each active tenant administrator. The audit page explains the rolling retention period and preserves CSV/Excel export.
 
 ### Offline Sync
 

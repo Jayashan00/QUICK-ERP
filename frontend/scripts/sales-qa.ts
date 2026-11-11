@@ -83,7 +83,7 @@ assert.deepEqual(returnAudit?.changes, [
   { field: "salesReturn", before: undefined, after: result.salesReturn.referenceNumber },
 ]);
 const tenantReturnAudit = await auditEventService.list(
-  { tenantId: scope.tenantId, permittedBranchIds: branches, canView: true, canExport: false, canViewSensitive: true, canViewSecurity: false },
+  { tenantId: scope.tenantId, permittedBranchIds: branches, isTenantAdministrator: true, canView: true, canExport: false, canViewSensitive: true, canViewSecurity: false },
   { search: order.referenceNumber, pageSize: 100 },
 );
 assert(tenantReturnAudit.data.some((entry) => entry.action === "Returned" && entry.newValues?.status === "returned"));

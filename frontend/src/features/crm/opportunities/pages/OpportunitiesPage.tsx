@@ -23,15 +23,15 @@ import type { DropdownItem } from '@/shared/components/common/Dropdown';
 import { appToast } from '@/shared/utils/toast';
 import { controlBase } from '@/shared/components/forms/controlStyles';
 import { cn } from '@/shared/utils/cn';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
 
 import { useOpportunities } from '../hooks/useOpportunities';
 import { OpportunityFilters } from '../components/OpportunityFilters';
-import { OpportunityFormModal } from '../components/OpportunityFormModal';
 import { OpportunityDetailView } from '../components/OpportunityDetailView';
 import { PipelineBoard } from '../components/PipelineBoard';
 import { PipelineSummary } from '../components/PipelineSummary';
 import { OpportunityLostModal, type LostOpportunityValues } from '../components/OpportunityLostModal';
-import type { OpportunityFormValues } from '../schemas/opportunitySchema';
 
 export function OpportunitiesPage() {
   const navigate = useNavigate();
@@ -40,6 +40,7 @@ export function OpportunitiesPage() {
   const canCreate = usePermission(PERMISSIONS.CRM.OPPORTUNITIES_CREATE);
   const canEdit = usePermission(PERMISSIONS.CRM.OPPORTUNITIES_EDIT);
   const canDelete = usePermission(PERMISSIONS.CRM.OPPORTUNITIES_DELETE);
+  const { formatWholeMoneyInCurrency } = useTenantCurrency();
 
   const {
     opportunities,
@@ -62,7 +63,6 @@ export function OpportunitiesPage() {
     closeDateTo,
     setCloseDateTo,
     resetFilters,
-    createOpportunity,
     updateOpportunity,
     deleteOpportunity,
     isDeleting,
@@ -71,8 +71,6 @@ export function OpportunitiesPage() {
   // Modals state
   const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingOpportunity, setEditingOpportunity] = useState<Opportunity | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingLostOpportunity, setPendingLostOpportunity] = useState<Opportunity | null>(null);
@@ -197,7 +195,7 @@ export function OpportunitiesPage() {
       sortable: true,
       render: (row) => (
         <div className="text-right font-semibold text-slate-900">
-          ${row.expectedValue.toLocaleString()}
+          {formatWholeMoneyInCurrency(row.expectedValue, resolveCrmValueCurrency(row.expectedCurrency))}
         </div>
       ),
     },
@@ -248,14 +246,6 @@ export function OpportunitiesPage() {
     },
   ];
 
-  const handleCreateOrUpdate = async (data: OpportunityFormValues) => {
-    if (editingOpportunity) {
-      await updateOpportunity(editingOpportunity.id, data);
-    } else {
-      await createOpportunity(data);
-    }
-  };
-
   const handleConfirmDelete = async () => {
     if (deletingId) {
       setActionError(null);
@@ -278,10 +268,7 @@ export function OpportunitiesPage() {
             <Button
               variant="primary"
               leftIcon={<Plus size={16} />}
-              onClick={() => {
-                setEditingOpportunity(null);
-                setIsFormOpen(true);
-              }}
+              onClick={() => navigate('/crm/opportunities/new')}
             >
               Create Opportunity
             </Button>
@@ -362,10 +349,7 @@ export function OpportunitiesPage() {
               <Button
                 variant="primary"
                 size="sm"
-                onClick={() => {
-                  setEditingOpportunity(null);
-                  setIsFormOpen(true);
-                }}
+                onClick={() => navigate('/crm/opportunities/new')}
               >
                 Add First Opportunity
               </Button>
@@ -398,10 +382,7 @@ export function OpportunitiesPage() {
               actions.push({
                 key: 'edit',
                 label: 'Edit Opportunity',
-                onClick: () => {
-                  setEditingOpportunity(opp);
-                  setIsFormOpen(true);
-                },
+                onClick: () => navigate(`/crm/opportunities/${opp.id}/edit`),
               });
 
               if (opp.status === 'open') {
@@ -454,10 +435,9 @@ export function OpportunitiesPage() {
             setSelectedOpportunity(opportunity);
             setIsDetailOpen(true);
           }}
-          onEditOpportunity={canEdit ? (opportunity) => {
-            setEditingOpportunity(opportunity);
-            setIsFormOpen(true);
-          } : undefined}
+          onEditOpportunity={canEdit
+            ? (opportunity) => navigate(`/crm/opportunities/${opportunity.id}/edit`)
+            : undefined}
           onMoveStage={canEdit ? handleMoveStage : undefined}
         />
       )}
@@ -498,11 +478,8 @@ export function OpportunitiesPage() {
                 <Button
                   variant="primary"
                   onClick={() => {
-                    const opp = selectedOpportunity;
                     setIsDetailOpen(false);
-                    setSelectedOpportunity(null);
-                    setEditingOpportunity(opp);
-                    setIsFormOpen(true);
+                    navigate(`/crm/opportunities/${selectedOpportunity.id}/edit`);
                   }}
                 >
                   Edit Opportunity
@@ -514,17 +491,6 @@ export function OpportunitiesPage() {
       >
         {selectedOpportunity && <OpportunityDetailView opportunity={selectedOpportunity} />}
       </Modal>
-
-      {/* Form Modal (Create / Edit) */}
-      <OpportunityFormModal
-        opportunity={editingOpportunity}
-        isOpen={isFormOpen}
-        onClose={() => {
-          setIsFormOpen(false);
-          setEditingOpportunity(null);
-        }}
-        onSubmit={handleCreateOrUpdate}
-      />
 
       {/* Delete Confirmation Dialog */}
       <ConfirmDialog

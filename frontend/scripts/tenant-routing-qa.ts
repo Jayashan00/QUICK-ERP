@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { mockUsers } from '@/core/auth/mocks/users';
 import { userService } from '@/core/auth/userService';
 import { mockRoles } from '@/core/permissions/mocks/roles';
+import { ERP_NAVIGATION_SECTIONS } from '@/app/config/navigationConfig';
+import { filterNavigationSections } from '@/core/permissions/navigationPermissions';
 import {
   buildTenantPath,
   buildUserTenantPath,
@@ -45,6 +47,14 @@ assert.equal(resolvePostLoginPath(superAdmin), '/super-admin/dashboard');
 assert.equal(getTenantRouteIdentity(auditViewer)?.roleSlug, getTenantRouteIdentity(inactiveViewer)?.roleSlug);
 assert.notEqual(getTenantRouteIdentity(auditViewer)?.userSlug, getTenantRouteIdentity(inactiveViewer)?.userSlug);
 assert.notEqual(buildUserTenantPath(auditViewer), buildUserTenantPath(inactiveViewer));
+
+const hasAuditNavigation = (sections: typeof ERP_NAVIGATION_SECTIONS) => sections
+  .flatMap((section) => section.items)
+  .some((item) => item.path === '/audit');
+const tenantAdminNavigation = filterNavigationSections(ERP_NAVIGATION_SECTIONS, () => false, () => true, true);
+const nonAdminNavigation = filterNavigationSections(ERP_NAVIGATION_SECTIONS, () => true, () => true, false);
+assert.equal(hasAuditNavigation(tenantAdminNavigation), true, 'tenant administrator navigation exposes Audit Logs without an assignable audit permission');
+assert.equal(hasAuditNavigation(nonAdminNavigation), false, 'non-admin and super-admin identities do not receive tenant Audit Logs navigation');
 
 const kasun = await userService.createUser('tenant-001', {
   name: 'Kasun Perera', email: 'kasun.routing@quickerp.test', roleId: 'role-005', roleName: 'Viewer / Auditor',

@@ -58,7 +58,12 @@ public final class AiAccessService {
             if (allowedBranches.isEmpty()) allowedBranches.addAll(strings(userProfile.path("branchIds")));
             String branchId = requestedBranchId == null || requestedBranchId.isBlank() ? text(userProfile, "defaultBranchId") : requestedBranchId.trim();
             enforce(intent, permissions, enabledModules, allowedBranches, branchId);
-            if (resource != null) enforce(resource, permissions, enabledModules);
+            if (resource != null) {
+                if ("core.auditEvents".equals(resource.collection()) && !"role-001".equals(principal.roleId())) {
+                    throw ApiException.forbidden("Only the company tenant administrator can access audit logs.");
+                }
+                enforce(resource, permissions, enabledModules);
+            }
             return new AccessContext(principal.tenantId(), principal.userId(), principal.roleId(), permissions.granted(),
                     enabledModules, List.copyOf(allowedBranches), branchId);
         });

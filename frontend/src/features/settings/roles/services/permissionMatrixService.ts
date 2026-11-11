@@ -53,11 +53,14 @@ export const permissionMatrixService = {
       return tenantCatalog.flatMap((group) => group.permissions).filter((permission) => isPermissionEnabled(permission, enabled));
     }
     const enabled = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
-    return resolveScopedPermissions(role.permissions, 'tenant').filter((permission) => isPermissionEnabled(permission, enabled));
+    return resolveScopedPermissions(role.permissions, 'tenant').filter((permission) => !permission.startsWith('audit.') && isPermissionEnabled(permission, enabled));
   },
   async saveRolePermissions(tenantId: string, roleId: string, permissions: string[]) {
     if (tenantId === 'platform') throw new Error('The tenant Permission Matrix cannot manage platform roles.');
     const role = await roleService.getRoleById(tenantId, roleId); if (!role || role.scope !== 'tenant') throw new Error('Tenant role not found.');
+    if (roleId !== 'role-001' && permissions.some((permission) => permission.startsWith('audit.'))) {
+      throw new Error('Audit log access is reserved for the company tenant administrator.');
+    }
     assertPermissionsInScope(permissions, 'tenant');
     const enabled = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
     if (permissions.some((permission) => !isPermissionEnabled(permission, enabled))) {
@@ -66,7 +69,7 @@ export const permissionMatrixService = {
     const preserved = role.permissions.filter((permission) => {
       const parts = permission.split('.');
       const managedByMatrix = permission.startsWith('pos.') || MATRIX_ACTIONS.includes(parts[parts.length - 1] as MatrixAction);
-      return isPermissionInScope(permission, 'tenant') && (permission === '*' || !isPermissionEnabled(permission, enabled) || !managedByMatrix);
+      return isPermissionInScope(permission, 'tenant') && !permission.startsWith('audit.') && (permission === '*' || !isPermissionEnabled(permission, enabled) || !managedByMatrix);
     });
     return roleService.savePermissions(tenantId, roleId, [...preserved, ...permissions]);
   },

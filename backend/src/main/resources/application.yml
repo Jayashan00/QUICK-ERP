@@ -192,6 +192,7 @@ app:
         read: [users.manage, users.edit, "settings.users.*", "settings.login_activity.*"]
         write: [users.manage, users.edit, settings.users.edit, settings.users.configure, settings.login_activity.configure]
       - collection: core.auditEvents
+        read: [audit.view]
         append-only: true
       - collection: platform.foundation
         platform-only: true

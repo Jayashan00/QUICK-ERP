@@ -7,7 +7,6 @@ export * from './hooks/useOpportunities';
 export * from './hooks/useOpportunity';
 
 export * from './components/OpportunityFilters';
-export * from './components/OpportunityFormModal';
 export * from './components/OpportunityDetailView';
 export * from './components/OpportunityCard';
 export * from './components/PipelineColumn';

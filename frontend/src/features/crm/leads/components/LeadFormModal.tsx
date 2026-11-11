@@ -16,6 +16,8 @@ import { getErrorMessage } from '@/shared/utils/errors';
 import { appToast } from '@/shared/utils/toast';
 import type { Lead } from '@/features/crm/leads/types/lead';
 import { useUserOptions } from '@/features/settings/users/hooks/useUserOptions';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
 
 import { leadSchema, type LeadFormValues } from '../schemas/leadSchema';
 
@@ -58,14 +60,9 @@ const lostReasonOptions = [
   { value: 'other', label: 'Other' },
 ];
 
-function generateLeadCode() {
-  return `LEAD-${Math.floor(1000 + Math.random() * 9000)}`;
-}
-
 function getDefaultValues(lead?: Lead | null): LeadFormValues {
   if (lead) {
     return {
-      code: lead.code,
       firstName: lead.firstName,
       lastName: lead.lastName,
       company: lead.company ?? '',
@@ -74,6 +71,7 @@ function getDefaultValues(lead?: Lead | null): LeadFormValues {
       source: lead.source,
       status: lead.status,
       assignedTo: lead.assignedTo ?? '',
+      estimatedCurrency: resolveCrmValueCurrency(lead.estimatedCurrency),
       estimatedValue: lead.estimatedValue,
       nextFollowUpAt: lead.nextFollowUpAt ?? '',
       notes: lead.notes ?? '',
@@ -83,7 +81,6 @@ function getDefaultValues(lead?: Lead | null): LeadFormValues {
   }
 
   return {
-    code: generateLeadCode(),
     firstName: '',
     lastName: '',
     company: '',
@@ -92,6 +89,7 @@ function getDefaultValues(lead?: Lead | null): LeadFormValues {
     source: 'website',
     status: 'new',
     assignedTo: '',
+    estimatedCurrency: '',
     estimatedValue: undefined,
     nextFollowUpAt: '',
     notes: '',
@@ -102,6 +100,8 @@ function getDefaultValues(lead?: Lead | null): LeadFormValues {
 
 export function LeadFormModal({ isOpen, onClose, onSubmit, lead }: LeadFormModalProps) {
   const { users } = useUserOptions();
+  const { currencyCode, supportedCurrencies, isLoading: isCurrencyLoading } = useTenantCurrency();
+  const currencyOptions = supportedCurrencies.map((code) => ({ value: code, label: code }));
   const assignedUserOptions = users.map(user => ({ value: user.id, label: user.name }));
   const isEditing = Boolean(lead);
   const {
@@ -109,6 +109,8 @@ export function LeadFormModal({ isOpen, onClose, onSubmit, lead }: LeadFormModal
     handleSubmit,
     register,
     reset,
+    getValues,
+    setValue,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<LeadFormValues>({
@@ -116,10 +118,17 @@ export function LeadFormModal({ isOpen, onClose, onSubmit, lead }: LeadFormModal
     defaultValues: getDefaultValues(lead),
   });
   const selectedStatus = watch('status');
+  const selectedCurrency = watch('estimatedCurrency');
 
   useEffect(() => {
     if (isOpen) reset(getDefaultValues(lead));
   }, [isOpen, lead, reset]);
+
+  useEffect(() => {
+    if (isOpen && currencyCode && !getValues('estimatedCurrency')) {
+      setValue('estimatedCurrency', currencyCode);
+    }
+  }, [currencyCode, getValues, isOpen, setValue]);
 
   const submitForm = async (data: LeadFormValues) => {
     try {
@@ -149,9 +158,6 @@ export function LeadFormModal({ isOpen, onClose, onSubmit, lead }: LeadFormModal
       <form id={FORM_ID} className="space-y-6" noValidate onSubmit={handleSubmit(submitForm)}>
         <FormSection title="Lead Details">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <FormField label="Lead Code" htmlFor="lead-code" required error={errors.code?.message}>
-              <TextInput id="lead-code" required error={Boolean(errors.code)} aria-describedby={errors.code ? 'lead-code-error' : undefined} placeholder="LEAD-0001" {...register('code')} />
-            </FormField>
             <FormField label="Company" htmlFor="lead-company" error={errors.company?.message}>
               <TextInput id="lead-company" error={Boolean(errors.company)} aria-describedby={errors.company ? 'lead-company-error' : undefined} placeholder="Company name" {...register('company')} />
             </FormField>
@@ -191,9 +197,20 @@ export function LeadFormModal({ isOpen, onClose, onSubmit, lead }: LeadFormModal
             <FormField label="Next Follow-up" htmlFor="lead-next-follow-up" error={errors.nextFollowUpAt?.message}>
               <DatePicker id="lead-next-follow-up" min={getLocalDateInputValue()} error={Boolean(errors.nextFollowUpAt)} aria-describedby={errors.nextFollowUpAt ? 'lead-next-follow-up-error' : undefined} {...register('nextFollowUpAt')} />
             </FormField>
+            <FormField label="Estimated Currency" htmlFor="lead-estimated-currency" error={errors.estimatedCurrency?.message}>
+              <Select
+                id="lead-estimated-currency"
+                placeholder={isCurrencyLoading ? "Loading currencies..." : "Select currency"}
+                disabled={isCurrencyLoading || currencyOptions.length === 0}
+                error={Boolean(errors.estimatedCurrency)}
+                aria-describedby={errors.estimatedCurrency ? 'lead-estimated-currency-error' : undefined}
+                options={currencyOptions}
+                {...register('estimatedCurrency')}
+              />
+            </FormField>
             <FormField label="Estimated Value" htmlFor="lead-estimated-value" error={errors.estimatedValue?.message}>
               <Controller name="estimatedValue" control={control} render={({ field: { value, onChange, ...field } }) => (
-                <CurrencyInput {...field} id="lead-estimated-value" min={0} value={value ?? ''} error={Boolean(errors.estimatedValue)} aria-describedby={errors.estimatedValue ? 'lead-estimated-value-error' : undefined} placeholder="0.00" onChange={(nextValue) => onChange(nextValue === '' ? undefined : nextValue)} />
+                <CurrencyInput {...field} id="lead-estimated-value" min={0} step={1} currency={selectedCurrency || currencyCode || ''} value={value ?? ''} error={Boolean(errors.estimatedValue)} aria-describedby={errors.estimatedValue ? 'lead-estimated-value-error' : undefined} placeholder="0" onChange={(nextValue) => onChange(nextValue === '' ? undefined : Math.round(nextValue))} />
               )} />
             </FormField>
             {selectedStatus === 'lost' && (

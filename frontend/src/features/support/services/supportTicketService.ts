@@ -2,8 +2,8 @@ import { auditEventService } from '@/core/audit';
 import { documentService, type DocumentScope } from '@/features/documents/documentService';
 import { notificationService } from '@/features/notifications/services/notificationService';
 import { mockSupportTickets } from '../mocks/supportTickets';
-import { supportPrioritySchema, supportStatusSchema, supportTicketSchema, supportReplySchema } from '../schemas/supportSchemas';
-import type { AddSupportReplyRequest, CreateSupportTicketRequest, SupportActor, SupportDashboardResponse, SupportPriority, SupportScope, SupportStatus, SupportTicket, SupportTicketDetail, SupportTicketFilters, SupportTicketListResponse } from '../types/support';
+import { supportStatusSchema, supportTicketSchema, supportReplySchema } from '../schemas/supportSchemas';
+import type { AddSupportReplyRequest, CreateSupportTicketRequest, SupportActor, SupportDashboardResponse, SupportScope, SupportStatus, SupportTicket, SupportTicketDetail, SupportTicketFilters, SupportTicketListResponse } from '../types/support';
 import { registerList, replaceArray } from '@/core/persistence/stateRegistry';
 
 const tickets = structuredClone(mockSupportTickets);
@@ -21,8 +21,8 @@ function validateTenantScope(scope: SupportScope) {
 
 function visible(scope: SupportScope, ticket: SupportTicket) {
   if (ticket.tenantId !== scope.tenantId) return false;
-  if (ticket.branchId && !scope.permittedBranchIds.includes(ticket.branchId)) return false;
-  return has(scope, 'support.manage') || ticket.createdBy.id === scope.user.id;
+  if (scope.isTenantAdministrator) return true;
+  return ticket.createdBy.id === scope.user.id;
 }
 
 function findVisible(scope: SupportScope, ticketId: string) {
@@ -33,11 +33,10 @@ function findVisible(scope: SupportScope, ticketId: string) {
 }
 
 const transitions: Record<SupportStatus, SupportStatus[]> = {
-  open: ['in_progress', 'closed'],
-  in_progress: ['waiting_for_user', 'resolved', 'closed'],
-  waiting_for_user: ['in_progress', 'resolved', 'closed'],
-  resolved: ['closed', 'open'],
-  closed: ['open'],
+  new: ['in_progress'],
+  in_progress: ['resolved'],
+  resolved: ['closed'],
+  closed: [],
 };
 
 function recordAudit(scope: SupportScope, ticket: SupportTicket, action: string, description: string, previousValues?: Record<string, string>, newValues?: Record<string, string>) {
@@ -57,13 +56,16 @@ export const supportTicketService = {
   async listForPlatform(permissions: string[]): Promise<SupportTicket[]> {
     if (!permissions.includes('*') && !permissions.includes('platform.support.view')) throw new Error('Platform support view permission is required.');
     await wait();
-    return tickets.map(clone);
+    return tickets.filter((ticket) => Boolean(ticket.sentToSuperAdminAt)).map(clone);
   },
 
   async updateFromPlatform(permissions: string[], actorName: string, ticketId: string, status: SupportStatus, assignee?: string, reply?: string): Promise<SupportTicket> {
     if (!permissions.includes('*') && !permissions.includes('platform.support.configure')) throw new Error('Platform support management permission is required.');
     const ticket = tickets.find((row) => row.id === ticketId);
     if (!ticket) throw new Error('Support ticket not found.');
+    if (!ticket.sentToSuperAdminAt) throw new Error('The tenant administrator must send this ticket to super admin first.');
+    if (status !== ticket.status && !transitions[ticket.status].includes(status)) throw new Error(`Status cannot move from ${ticket.status.replace(/_/g, ' ')} to ${status.replace(/_/g, ' ')}.`);
+    if (ticket.status === 'closed' && reply?.trim()) throw new Error('Closed tickets cannot receive replies.');
     const timestamp = now();
     ticket.status = status;
     ticket.updatedAt = timestamp;
@@ -96,9 +98,8 @@ export const supportTicketService = {
     const result = await this.list(scope, { page: 1, pageSize: Number.MAX_SAFE_INTEGER });
     const rows = result.data;
     return {
-      open: rows.filter((row) => row.status === 'open').length,
+      new: rows.filter((row) => row.status === 'new').length,
       inProgress: rows.filter((row) => row.status === 'in_progress').length,
-      waitingForUser: rows.filter((row) => row.status === 'waiting_for_user').length,
       resolved: rows.filter((row) => row.status === 'resolved').length,
       closed: rows.filter((row) => row.status === 'closed').length,
       highPriority: rows.filter((row) => row.priority === 'high' || row.priority === 'urgent').length,
@@ -116,22 +117,41 @@ export const supportTicketService = {
     validateTenantScope(scope); requirePermission(scope, 'support.create'); const parsed = supportTicketSchema.parse(input);
     if (parsed.branchId && !scope.permittedBranchIds.includes(parsed.branchId)) throw new Error('Selected branch is outside your permitted scope.');
     const timestamp = now(); const ticketNumber = nextTicketNumber(scope.tenantId);
-    const ticket: SupportTicket = { ...parsed, branchId: parsed.branchId || undefined, relatedModule: parsed.relatedModule || undefined, relatedRecordId: parsed.relatedRecordId || undefined, relatedRecordReference: parsed.relatedRecordReference || undefined, id: uid('support-ticket'), ticketNumber, tenantId: scope.tenantId, createdBy: { ...scope.user }, status: 'open', attachmentIds: [], conversation: [], timeline: [{ id: uid('support-timeline'), status: 'open', label: 'Ticket created', actorName: scope.user.name, createdAt: timestamp }], createdAt: timestamp, updatedAt: timestamp };
+    const ticket: SupportTicket = { ...parsed, branchId: parsed.branchId || undefined, relatedModule: parsed.relatedModule || undefined, relatedRecordId: parsed.relatedRecordId || undefined, relatedRecordReference: parsed.relatedRecordReference || undefined, id: uid('support-ticket'), ticketNumber, tenantId: scope.tenantId, companyName: scope.companyName, createdBy: { ...scope.user }, status: 'new', attachmentIds: [], conversation: [], timeline: [{ id: uid('support-timeline'), status: 'new', label: 'Ticket created', actorName: scope.user.name, createdAt: timestamp }], createdAt: timestamp, updatedAt: timestamp };
     tickets.unshift(ticket); recordAudit(scope, ticket, 'Ticket created', `${scope.user.name} created ${ticket.ticketNumber}.`, undefined, { status: ticket.status, priority: ticket.priority });
-    await notifyTicketOwner(ticket, `Support ticket ${ticket.ticketNumber} created`, 'Your request has been submitted to Quick ERP support.');
+    await notifyTicketOwner(ticket, `Support ticket ${ticket.ticketNumber} created`, 'Your request is available to your company tenant administrator.');
+    return clone(ticket);
+  },
+
+  async sendToSuperAdmin(scope: SupportScope, ticketId: string): Promise<SupportTicket> {
+    validateTenantScope(scope);
+    if (!scope.isTenantAdministrator) throw new Error('Only the company tenant administrator can send tickets to super admin.');
+    const ticket = findVisible(scope, ticketId);
+    if (ticket.sentToSuperAdminAt) return clone(ticket);
+    if (ticket.status === 'closed') throw new Error('Closed tickets cannot be sent to super admin.');
+    const timestamp = now();
+    ticket.sentToSuperAdminBy = { ...scope.user };
+    ticket.sentToSuperAdminAt = timestamp;
+    ticket.updatedAt = timestamp;
+    ticket.timeline.push({ id: uid('support-timeline'), status: ticket.status, label: 'Sent to super admin', actorName: scope.user.name, createdAt: timestamp });
+    recordAudit(scope, ticket, 'Sent to super admin', `${scope.user.name} sent ${ticket.ticketNumber} to super admin.`);
+    await notifyTicketOwner(ticket, `${ticket.ticketNumber} sent to super admin`, 'Your company tenant administrator escalated this ticket to platform support.', 'success');
     return clone(ticket);
   },
 
   async addReply(scope: SupportScope, request: Omit<AddSupportReplyRequest, 'attachments'>): Promise<SupportTicket> {
-    validateTenantScope(scope); requirePermission(scope, 'support.reply'); const parsed = supportReplySchema.parse({ message: request.message }); const ticket = findVisible(scope, request.ticketId);
+    validateTenantScope(scope);
+    if (!scope.isTenantAdministrator) throw new Error('Only the company tenant administrator can converse with platform support.');
+    const parsed = supportReplySchema.parse({ message: request.message }); const ticket = findVisible(scope, request.ticketId);
+    if (!ticket.sentToSuperAdminAt) throw new Error('Send the ticket to super admin before starting the conversation.');
     if (ticket.status === 'closed') throw new Error('Reopen the ticket before adding a reply.');
-    const timestamp = now(); ticket.conversation.push({ id: uid('support-message'), author: { ...scope.user }, authorType: 'tenant_user', message: parsed.message, attachmentIds: [], createdAt: timestamp });
-    if (ticket.status === 'waiting_for_user') { ticket.status = 'in_progress'; ticket.timeline.push({ id: uid('support-timeline'), status: 'in_progress', label: 'User replied; support review resumed', actorName: scope.user.name, createdAt: timestamp }); }
+    const timestamp = now(); ticket.conversation.push({ id: uid('support-message'), author: { ...scope.user }, authorType: 'tenant_admin', message: parsed.message, attachmentIds: [], createdAt: timestamp });
     ticket.updatedAt = timestamp; recordAudit(scope, ticket, 'Response added', `${scope.user.name} replied to ${ticket.ticketNumber}.`); return clone(ticket);
   },
 
   async addMockSupportResponse(scope: SupportScope, ticketId: string, message: string): Promise<SupportTicket> {
-    validateTenantScope(scope); requirePermission(scope, 'support.manage'); const parsed = supportReplySchema.parse({ message }); const ticket = findVisible(scope, ticketId);
+    validateTenantScope(scope); if (!scope.isTenantAdministrator) throw new Error('Only the company tenant administrator can manage support conversations.'); const parsed = supportReplySchema.parse({ message }); const ticket = findVisible(scope, ticketId);
+    if (!ticket.sentToSuperAdminAt) throw new Error('Send the ticket to super admin before adding a platform support response.');
     if (ticket.status === 'closed') throw new Error('Closed tickets cannot receive responses.');
     const timestamp = now(); const supportActor: SupportActor = ticket.assignedSupportUser ?? { id: 'support-mock', name: 'Quick ERP Support' };
     ticket.conversation.push({ id: uid('support-message'), author: supportActor, authorType: 'quick_erp_support', message: parsed.message, attachmentIds: [], createdAt: timestamp }); ticket.updatedAt = timestamp;
@@ -141,21 +161,33 @@ export const supportTicketService = {
 
   async changeStatus(scope: SupportScope, ticketId: string, status: SupportStatus): Promise<SupportTicket> {
     validateTenantScope(scope); const nextStatus = supportStatusSchema.parse(status); const ticket = findVisible(scope, ticketId);
-    const canManage = has(scope, 'support.manage'); const canClose = has(scope, 'support.close') && (nextStatus === 'closed' || (ticket.status === 'closed' && nextStatus === 'open'));
-    if (!canManage && !canClose) throw new Error('Permission support.manage or support.close is required.');
+    if (!scope.isTenantAdministrator) throw new Error('Only the company tenant administrator can change ticket status.');
     if (ticket.status === nextStatus) return clone(ticket);
     if (!transitions[ticket.status].includes(nextStatus)) throw new Error(`Status cannot move from ${ticket.status.replace(/_/g, ' ')} to ${nextStatus.replace(/_/g, ' ')}.`);
     const previous = ticket.status; const timestamp = now(); ticket.status = nextStatus; ticket.updatedAt = timestamp;
-    const label = nextStatus === 'open' && ['resolved', 'closed'].includes(previous) ? 'Ticket reopened' : nextStatus === 'resolved' ? 'Ticket resolved' : nextStatus === 'closed' ? 'Ticket closed' : `Status changed to ${nextStatus.replace(/_/g, ' ')}`;
+    const label = nextStatus === 'resolved' ? 'Ticket resolved' : nextStatus === 'closed' ? 'Ticket closed' : `Status changed to ${nextStatus.replace(/_/g, ' ')}`;
     ticket.timeline.push({ id: uid('support-timeline'), status: nextStatus, label, actorName: scope.user.name, createdAt: timestamp });
     recordAudit(scope, ticket, nextStatus === 'closed' ? 'Ticket closed' : 'Status changed', `${ticket.ticketNumber}: ${previous} to ${nextStatus}.`, { status: previous }, { status: nextStatus });
     await notifyTicketOwner(ticket, `${ticket.ticketNumber} ${label.toLowerCase()}`, `Support ticket status changed to ${nextStatus.replace(/_/g, ' ')}.`, nextStatus === 'resolved' || nextStatus === 'closed' ? 'success' : 'info', nextStatus === 'closed' ? 'low' : 'normal');
     return clone(ticket);
   },
 
-  async changePriority(scope: SupportScope, ticketId: string, priority: SupportPriority): Promise<SupportTicket> {
-    validateTenantScope(scope); requirePermission(scope, 'support.manage'); const nextPriority = supportPrioritySchema.parse(priority); const ticket = findVisible(scope, ticketId); const previous = ticket.priority;
-    if (previous === nextPriority) return clone(ticket); ticket.priority = nextPriority; ticket.updatedAt = now(); recordAudit(scope, ticket, 'Priority changed', `${ticket.ticketNumber}: ${previous} to ${nextPriority}.`, { priority: previous }, { priority: nextPriority }); return clone(ticket);
+  async delete(scope: SupportScope, ticketId: string): Promise<void> {
+    validateTenantScope(scope);
+    if (!scope.isTenantAdministrator) throw new Error('Only the company tenant administrator can delete tickets.');
+    const ticket = findVisible(scope, ticketId);
+    if (ticket.status !== 'closed') throw new Error('Only closed tickets can be deleted.');
+    const index = tickets.findIndex((row) => row.id === ticket.id);
+    tickets.splice(index, 1);
+    recordAudit(scope, ticket, 'Ticket deleted', `${scope.user.name} deleted closed ticket ${ticket.ticketNumber}.`);
+  },
+
+  async deleteFromPlatform(permissions: string[], ticketId: string): Promise<void> {
+    if (!permissions.includes('*') && !permissions.includes('platform.support.configure')) throw new Error('Platform support management permission is required.');
+    const index = tickets.findIndex((row) => row.id === ticketId && Boolean(row.sentToSuperAdminAt));
+    if (index < 0) throw new Error('Support ticket not found.');
+    if (tickets[index].status !== 'closed') throw new Error('Only closed tickets can be deleted.');
+    tickets.splice(index, 1);
   },
 
   async addAttachment(scope: SupportScope, ticketId: string, file: File, replyId?: string) {

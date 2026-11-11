@@ -192,8 +192,13 @@ read and change. Every rule below is covered by the automated tests (`src/test`)
   example); those collections are still listed as existing, so the browser does not fill them with demo data.
 - Salary and personal fields of `hr.employees` are hidden from users without `hr.employees.view` or
   `hr.payroll.view`; when such a user saves an employee, the hidden values are kept.
-- Audit trails (`core.auditEvents`, `accounting.audit`, `hr.audit`, `documents.audit`, `projects.audit`,
-  `hr.advanced.logs`) are append-only: records cannot be changed and deletions are ignored.
+- Every accepted tenant record create, update or delete produces a server-authored `core.auditEvents` entry using
+  the authenticated user identity. Only the authenticated `role-001` company tenant administrator can read the
+  tenant's audit records; permission strings cannot grant another role access, and tenant/branch isolation is enforced.
+  Supplemental workflow events are append-only: records cannot be changed and manual deletions are ignored.
+- Audit event payloads, record history and AI audit rows use a rolling three-calendar-month retention period. A daily,
+  idempotent maintenance job enforces the cutoff and creates one high-priority export reminder per calendar month for
+  every active tenant administrator. Reminder IDs are deterministic, so restarts cannot create duplicates.
 - Some settings screens create a default record the first time they are read for a tenant or branch (POS reads
   printer, cash drawer and receipt settings, for example). For `app.access.default-creatable-collections`, any user
   who can read the collection may add that first record; existing records still need the write permissions.

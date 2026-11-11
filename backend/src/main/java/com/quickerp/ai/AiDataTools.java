@@ -94,9 +94,15 @@ public final class AiDataTools {
     }
 
     static boolean genericRowAllowed(JsonNode row, AccessContext scope, Resource resource) {
-        if (!genericBranchAllowed(row, scope)) return false;
         Permissions permissions = Permissions.of(scope.permissions());
         String collection = resource.collection();
+        if ("core.auditEvents".equals(collection)) {
+            if (!scope.tenantId().equals(text(row, "tenantId")) || !"role-001".equals(scope.roleId())) return false;
+            String sensitivity = text(row, "sensitivity");
+            if ("security".equals(sensitivity) && !permissions.matches("audit.security.view")) return false;
+            return !"sensitive".equals(sensitivity) || permissions.matches("audit.sensitive.view");
+        }
+        if (!genericBranchAllowed(row, scope)) return false;
         if ("support.tickets".equals(collection) && !permissions.matches("support.manage")) {
             return scope.userId().equals(text(row.path("createdBy"), "id"));
         }
@@ -109,11 +115,6 @@ public final class AiDataTools {
             String audience = text(row, "audience");
             if ("users".equals(audience) && !contains(row.path("userIds"), scope.userId())) return false;
             if ("branch".equals(audience) && !scope.allowedBranchIds().contains(text(row, "branchId"))) return false;
-        }
-        if ("core.auditEvents".equals(collection)) {
-            String sensitivity = text(row, "sensitivity");
-            if ("security".equals(sensitivity) && !permissions.matches("audit.security.view")) return false;
-            if ("sensitive".equals(sensitivity) && !permissions.matches("audit.sensitive.view")) return false;
         }
         if ("documents.records".equals(collection) && row.path("sensitive").asBoolean(false)
                 && !permissions.matches("documents.view_sensitive")) return false;

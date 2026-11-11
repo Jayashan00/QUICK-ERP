@@ -118,12 +118,6 @@ export const TENANT_PERMISSIONS = {
     NOTICES_VIEW: 'notices.view',
     PREFERENCES_MANAGE: 'notificationPreferences.manage',
   },
-  AUDIT: {
-    VIEW: 'audit.view',
-    EXPORT: 'audit.export',
-    SECURITY_VIEW: 'audit.security.view',
-    SENSITIVE_VIEW: 'audit.sensitive.view',
-  },
   SUPPORT: {
     VIEW: 'support.view',
     CREATE: 'support.create',
