@@ -16,4 +16,3 @@ export const supportTicketSchema = z.object({
 
 export const supportReplySchema = z.object({ message: z.string().trim().min(1, 'Reply message is required.').max(3000) });
 export const supportStatusSchema = z.enum(supportStatuses);
-export const supportPrioritySchema = z.enum(supportPriorities);
