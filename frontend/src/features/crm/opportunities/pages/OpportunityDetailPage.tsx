@@ -18,8 +18,6 @@ import { getErrorMessage } from '@/shared/validation';
 import { useOpportunity } from '../hooks/useOpportunity';
 import { useOpportunities } from '../hooks/useOpportunities';
 import { OpportunityDetailView } from '../components/OpportunityDetailView';
-import { OpportunityFormModal } from '../components/OpportunityFormModal';
-import type { OpportunityFormValues } from '../schemas/opportunitySchema';
 import { OpportunityLostModal, type LostOpportunityValues } from '../components/OpportunityLostModal';
 
 export function OpportunityDetailPage() {
@@ -33,7 +31,6 @@ export function OpportunityDetailPage() {
   const { opportunity, isLoading, error, refetch } = useOpportunity(id);
   const { updateOpportunity, deleteOpportunity, isDeleting } = useOpportunities();
 
-  const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isLostOpen, setIsLostOpen] = useState(false);
@@ -75,12 +72,6 @@ export function OpportunityDetailPage() {
       </PageContainer>
     );
   }
-
-  const handleUpdate = async (data: OpportunityFormValues) => {
-    if (!opportunity) return;
-    await updateOpportunity(opportunity.id, data);
-    await refetch();
-  };
 
   const handleDelete = async () => {
     if (!opportunity) return;
@@ -164,7 +155,7 @@ export function OpportunityDetailPage() {
               <Button
                 variant="primary"
                 leftIcon={<Edit size={16} />}
-                onClick={() => setIsEditOpen(true)}
+                onClick={() => navigate(`/crm/opportunities/${opportunity.id}/edit`)}
               >
                 Edit Opportunity
               </Button>
@@ -185,14 +176,6 @@ export function OpportunityDetailPage() {
       <FormSubmitError message={actionError} className="mb-4" />
 
       <OpportunityDetailView opportunity={opportunity} />
-
-      {/* Edit Modal */}
-      <OpportunityFormModal
-        opportunity={opportunity}
-        isOpen={isEditOpen}
-        onClose={() => setIsEditOpen(false)}
-        onSubmit={handleUpdate}
-      />
 
       {/* Delete Confirmation */}
       <ConfirmDialog

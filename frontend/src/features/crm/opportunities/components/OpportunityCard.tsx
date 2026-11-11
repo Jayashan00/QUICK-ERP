@@ -1,7 +1,9 @@
 import { useState, type DragEvent } from 'react';
-import { Building, Calendar, DollarSign, MoreVertical, ArrowRight, User } from 'lucide-react';
+import { Building, Calendar, Banknote, MoreVertical, ArrowRight, User } from 'lucide-react';
 import { StatusBadge } from '@/shared/components/common/StatusBadge';
 import { OPPORTUNITY_STAGES, type Opportunity, type OpportunityStage } from '@/features/crm/opportunities/types/opportunity';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
 
 interface OpportunityCardProps {
   opportunity: Opportunity;
@@ -16,6 +18,7 @@ export function OpportunityCard({
   onEdit,
   onMoveStage,
 }: OpportunityCardProps) {
+  const { formatWholeMoneyInCurrency } = useTenantCurrency();
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -127,8 +130,8 @@ export function OpportunityCard({
       <div className="mt-3 border-t border-slate-100 pt-2.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-0.5 text-sm font-bold text-slate-900">
-            <DollarSign size={14} className="text-emerald-600" />
-            <span>{opportunity.expectedValue.toLocaleString()}</span>
+            <Banknote size={14} className="text-emerald-600" />
+            <span>{formatWholeMoneyInCurrency(opportunity.expectedValue, resolveCrmValueCurrency(opportunity.expectedCurrency))}</span>
           </div>
           <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
             {opportunity.probability}%

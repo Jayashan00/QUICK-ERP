@@ -41,7 +41,9 @@ export interface Opportunity extends BaseEntity {
   status: OpportunityStatus;
 
   expectedCloseDate?: string;
+  expectedCurrency?: string;
   expectedValue: number;
+  valueCurrencyVersion?: 1;
   probability: number;
 
   description?: string;
