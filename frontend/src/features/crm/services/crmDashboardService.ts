@@ -4,6 +4,7 @@ import { salesService } from '@/features/sales/services/salesService';
 import { customerService } from '@/features/customers/services/customerService';
 import type { ModuleDashboardContext } from '@/features/dashboard/types/moduleDashboard';
 import { addList, group, sum, timeSeries } from '@/features/dashboard/utils/moduleAnalytics';
+import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
 
 export async function aggregateCrmDashboard(context: ModuleDashboardContext) {
   const { scope, params, can, output, inPeriod, today } = context;
@@ -28,10 +29,10 @@ export async function aggregateCrmDashboard(context: ModuleDashboardContext) {
   }
   if (opportunityPage) {
     const open = opportunityPage.data.filter(row => row.status === 'open');
-    output.metrics.push({ label: 'Open opportunities', value: open.length, description: 'Current pipeline', to: '/crm/opportunities' }, { label: 'Pipeline value', value: sum(open, row => row.expectedValue), format: 'currency', description: 'Current expected deal value', to: '/crm/opportunities' });
+    output.metrics.push({ label: 'Open opportunities', value: open.length, description: 'Current pipeline', to: '/crm/opportunities' }, { label: 'Pipeline value', value: sum(open, row => row.expectedValue), format: 'currency', currencyAmounts: open.map(row => ({ amount: row.expectedValue, currency: resolveCrmValueCurrency(row.expectedCurrency) })), description: 'Current expected deal value in company base currency', to: '/crm/opportunities' });
     stages.push({ label: 'Open opportunities', value: open.length });
     output.charts.push({ id: 'opportunity-stage', title: 'Opportunity Stages', subtitle: 'Current open deals by stage', data: group(open, row => row.stage), to: '/crm/opportunities' });
-    addList(context, 'Top Opportunities', [...open].sort((a, b) => b.expectedValue - a.expectedValue).map(row => ({ id: row.id, title: row.name, description: row.customerName, amount: row.expectedValue, status: row.stage, to: `/crm/opportunities/${row.id}` })), { to: '/crm/opportunities' });
+    addList(context, 'Top Opportunities', [...open].sort((a, b) => b.expectedValue - a.expectedValue).map(row => ({ id: row.id, title: row.name, description: row.customerName, amount: row.expectedValue, currency: resolveCrmValueCurrency(row.expectedCurrency), status: row.stage, to: `/crm/opportunities/${row.id}` })), { to: '/crm/opportunities' });
   }
   if (quotations) stages.push({ label: 'Quotations in period', value: quotations.data.filter(row => inPeriod(row.quotationDate)).length });
   if (customers) stages.push({ label: 'Active customers', value: customers.total });
