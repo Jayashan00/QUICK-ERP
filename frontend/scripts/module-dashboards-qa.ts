@@ -11,14 +11,13 @@ import { hrService } from '@/features/hr/hrService';
 import { projectService } from '@/features/projects/projectService';
 import { documentService } from '@/features/documents/documentService';
 import { posService, type PosSale } from '@/features/pos/posService';
-import { supportTicketService } from '@/features/support/services/supportTicketService';
 import type { DashboardModule, ModuleDashboardOverview, ModuleDashboardRequest } from '@/features/dashboard/types/moduleDashboard';
 import { dashboardContext, sum, timeSeries } from '@/features/dashboard/utils/moduleAnalytics';
 import { tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
 
 Object.defineProperty(globalThis, 'window', { value: { setTimeout: globalThis.setTimeout, addEventListener: () => undefined }, configurable: true });
 const modules: DashboardModule[] = ['crm', 'sales', 'purchases', 'inventory', 'finance', 'hr', 'projects', 'pos', 'documents', 'support', 'reports'];
-const request: ModuleDashboardRequest = { tenantId: 'tenant-001', branchId: 'branch-001', permittedBranchIds: ['branch-001', 'branch-002'], permissions: getPermissionsForScope('tenant'), user: { id: 'user-001', name: 'QA User', email: 'qa@example.com' }, dateFrom: '2026-01-01', dateTo: '2026-12-31' };
+const request: ModuleDashboardRequest = { tenantId: 'tenant-001', companyName: 'Acme Corporation', branchId: 'branch-001', permittedBranchIds: ['branch-001', 'branch-002'], permissions: getPermissionsForScope('tenant'), user: { id: 'usr-001', name: 'Admin User', email: 'admin@quickerp.test' }, roleId: 'role-001', isTenantAdministrator: true, dateFrom: '2026-01-01', dateTo: '2026-12-31' };
 const load = (module: DashboardModule, changes: Partial<ModuleDashboardRequest> = {}) => moduleDashboardService.getOverview(module, { ...request, ...changes });
 const overview = new Map<DashboardModule, ModuleDashboardOverview>();
 const ids = (data: ModuleDashboardOverview) => data.lists.flatMap(list => list.records.map(row => row.id));
@@ -31,9 +30,7 @@ for (const module of modules) {
   assert.ok(first.lists.every(list => list.records.length <= 5), `${module}: compact record lists`);
   const second = await load(module, { branchId: 'branch-002' });
   if (module === 'support') {
-    const source = await supportTicketService.list({ tenantId: request.tenantId, activeBranchId: request.branchId, permittedBranchIds: request.permittedBranchIds, user: request.user, permissions: request.permissions }, { pageSize: Number.MAX_SAFE_INTEGER });
-    const companyIds = source.data.filter(row => !row.branchId).map(row => row.id);
-    assert.ok(ids(second).filter(id => ids(first).includes(id)).every(id => companyIds.includes(id)), 'support: only branchless company requests may appear in both branches');
+    assert.deepEqual(ids(second), ids(first), 'support: tenant administrators must retain the full company queue when switching branches');
   } else if (module === 'inventory') {
     const source = await stockWorkflowService.listTransfers({ tenantId: request.tenantId, branchId: request.branchId }, { branchId: request.branchId, permittedBranchIds: request.permittedBranchIds, pageSize: Number.MAX_SAFE_INTEGER });
     const sharedTransfers = source.data.filter(row => [row.sourceBranchId, row.destinationBranchId].includes('branch-002')).map(row => row.id);
@@ -43,7 +40,7 @@ for (const module of modules) {
   if (module !== 'support' && !tenantEntitlementService.isModuleEnabled('tenant-002', tenantModule as Parameters<typeof tenantEntitlementService.isModuleEnabled>[1])) {
     await assert.rejects(load(module, { tenantId: 'tenant-002', branchId: 'branch-003', permittedBranchIds: ['branch-003'] }), /not enabled/);
   } else {
-    const tenant = await load(module, { tenantId: 'tenant-002', branchId: 'branch-003', permittedBranchIds: ['branch-003'] });
+    const tenant = await load(module, { tenantId: 'tenant-002', companyName: 'Northwind Retail', branchId: 'branch-003', permittedBranchIds: ['branch-003'] });
     assert.ok(ids(tenant).every(id => !ids(first).includes(id)), `${module}: tenant records must not mix`);
   }
   const denied = await load(module, { permissions: [] });

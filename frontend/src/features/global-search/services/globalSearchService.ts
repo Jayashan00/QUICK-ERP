@@ -109,7 +109,7 @@ export const globalSearchService = {
     }});
     if (can('support.view')) jobs.push({ module: 'Support', load: async () => {
       const { supportTicketService } = await import('@/features/support/services/supportTicketService');
-      const rows = (await supportTicketService.list({ tenantId: scope.tenantId, activeBranchId: scope.branchId, permittedBranchIds: [scope.branchId], permissions: scope.permissions, user: scope.user }, { pageSize: Number.MAX_SAFE_INTEGER })).data;
+      const rows = (await supportTicketService.list({ tenantId: scope.tenantId, companyName: scope.companyName, activeBranchId: scope.branchId, permittedBranchIds: scope.permittedBranchIds, permissions: scope.permissions, user: scope.user, roleId: scope.roleId, isTenantAdministrator: scope.isTenantAdministrator }, { pageSize: Number.MAX_SAFE_INTEGER })).data;
       return collect('Support', 'Ticket', ['support.view'], rows, row => ({ title: row.ticketNumber, subtitle: row.subject, reference: row.ticketNumber, fields: [row.subject], route: `/support/tickets/${encodeURIComponent(row.id)}` }));
     }});
     const settled = await Promise.allSettled(jobs.map(job => job.load()));

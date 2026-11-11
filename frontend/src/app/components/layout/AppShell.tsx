@@ -13,6 +13,7 @@ import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { OfflineBanner } from '@/features/sync';
 import { useTenantRoute } from '@/core/routing';
+import { useAuth } from '@/core/auth/auth-context';
 
 interface AppShellProps {
   children: ReactNode;
@@ -31,6 +32,7 @@ function getInitialCollapsedState() {
 export function AppShell({ children, navigationSections, area = 'tenant' }: AppShellProps) {
   const location = useLocation();
   const { hasPermission } = usePermissions();
+  const { user } = useAuth();
   const { currentTenant } = useTenant();
   const { toTenantPath } = useTenantRoute();
   const [collapsed, setCollapsed] = useState(getInitialCollapsedState);
@@ -42,8 +44,9 @@ export function AppShell({ children, navigationSections, area = 'tenant' }: AppS
       area === 'tenant' && currentTenant
         ? (module: TenantModule) => currentTenant.entitlements.enabledModules.includes(module)
         : undefined,
+      area === 'tenant' && user?.roleId === 'role-001' && !user.isSuperAdmin,
     ),
-    [area, currentTenant, navigationSections, hasPermission],
+    [area, currentTenant, navigationSections, hasPermission, user],
   );
   const routedSections = useMemo(() => {
     if (area !== 'tenant') return permittedSections;

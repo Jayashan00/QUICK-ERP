@@ -1,5 +1,5 @@
 export type DashboardPeriod = 'today' | 'week' | 'month' | 'quarter' | 'year' | 'custom';
-export interface DashboardFilters { tenantId: string; branchId: string; permittedBranchIds: string[]; permissions: string[]; userId: string; period: DashboardPeriod; dateFrom: string; dateTo: string }
+export interface DashboardFilters { tenantId: string; branchId: string; permittedBranchIds: string[]; permissions: string[]; userId: string; roleId: string; period: DashboardPeriod; dateFrom: string; dateTo: string }
 export interface DashboardTrend { value: string; trend: 'up' | 'down' | 'neutral'; label: string }
 export interface DashboardMetric { key: string; label: string; value: number; currency?: boolean; description?: string; change?: DashboardTrend }
 export interface DashboardChartData { label: string; value: number; secondary?: number }
