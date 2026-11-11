@@ -5,6 +5,26 @@ import type { Lead, LeadSource, LeadStatus } from '@/features/crm/leads/types/le
 import type { LeadFormValues } from "../schemas/leadSchema";
 import { belongsToScope, type TenantBranchScope } from "@/core/tenant/dataScope";
 import { registerList } from '@/core/persistence/stateRegistry';
+import { leadActivityService } from './leadActivityService';
+import { tenantSettingsService } from '@/features/settings/finance/services/tenantSettingsService';
+import { CRM_VALUE_CURRENCY_VERSION, LEGACY_CRM_VALUE_CURRENCY, resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
+
+const ORIGINAL_LEAD_CODES = new Set(['LEAD-0001', 'LEAD-0002', 'LEAD-0003', 'LEAD-0004']);
+
+function migrateLeadValueCurrency(lead: Lead): Lead {
+  if (lead.valueCurrencyVersion === CRM_VALUE_CURRENCY_VERSION) return lead;
+  return {
+    ...lead,
+    ...(lead.estimatedValue === undefined
+      ? {}
+      : {
+          estimatedCurrency: ORIGINAL_LEAD_CODES.has(lead.code)
+            ? LEGACY_CRM_VALUE_CURRENCY
+            : resolveCrmValueCurrency(lead.estimatedCurrency),
+        }),
+    valueCurrencyVersion: CRM_VALUE_CURRENCY_VERSION,
+  };
+}
 
 export interface LeadListParams {
   search?: string;
@@ -24,12 +44,25 @@ export interface LeadSummary {
   byStatus: Record<LeadStatus, number>;
 }
 
-let leads: Lead[] = [...mockLeads];
+let leads: Lead[] = mockLeads.map(migrateLeadValueCurrency);
 
 const delay = (ms = 250) =>
   new Promise<void>((resolve) => {
     globalThis.setTimeout(resolve, ms);
   });
+
+const nextLeadCode = (tenantId: string) => {
+  const highestSequence = leads.reduce((highest, lead) => {
+    if (lead.tenantId !== tenantId) return highest;
+
+    const match = /^LEAD-(\d+)$/.exec(lead.code);
+    if (!match) return highest;
+
+    return Math.max(highest, Number(match[1]));
+  }, 0);
+
+  return `LEAD-${String(highestSequence + 1).padStart(4, '0')}`;
+};
 
 const personNameParts = (customer: Customer) => {
   const preferredName = customer.primaryContact?.name?.trim() || customer.name.trim();
@@ -40,6 +73,43 @@ const personNameParts = (customer: Customer) => {
   return {
     firstName: parts[0] ?? 'Customer',
     lastName: parts.length > 1 ? parts[parts.length - 1] : 'Lead',
+  };
+};
+
+const formatStatus = (status: LeadStatus) => status.charAt(0).toUpperCase() + status.slice(1);
+
+const recordLeadCreated = async (scope: TenantBranchScope, lead: Lead) => {
+  await Promise.all([
+    leadActivityService.recordSystemActivity(scope, lead.id, {
+      subject: "Lead created",
+      description: `${lead.code} was created with status ${formatStatus(lead.status)}.`,
+      systemEventKey: "lead-created",
+    }),
+    lead.nextFollowUpAt
+      ? leadActivityService.syncNextFollowUp(scope, lead.id, lead.nextFollowUpAt, lead.assignedTo)
+      : Promise.resolve(null),
+  ]);
+};
+
+const normalizeEstimatedValue = async (
+  scope: TenantBranchScope,
+  data: LeadFormValues,
+  current?: Lead,
+): Promise<LeadFormValues> => {
+  if (data.estimatedValue === undefined) {
+    return { ...data, estimatedCurrency: undefined };
+  }
+
+  const settings = await tenantSettingsService.getLocalization(scope.tenantId);
+  const currency = (data.estimatedCurrency || (current ? resolveCrmValueCurrency(current.estimatedCurrency) : settings.baseCurrency)).trim().toUpperCase();
+  if (!settings.supportedCurrencies.includes(currency)) {
+    throw new Error(`${currency || 'Selected currency'} is not supported by this company`);
+  }
+
+  return {
+    ...data,
+    estimatedCurrency: currency,
+    estimatedValue: Math.round(data.estimatedValue),
   };
 };
 
@@ -74,7 +144,7 @@ export const leadService = {
       id: `customer-lead-${customer.id}`,
       tenantId: customer.tenantId,
       branchId: customer.branchId,
-      code: `LEAD-${customer.code}`,
+      code: nextLeadCode(customer.tenantId),
       ...names,
       company: customer.type === 'company' ? customer.name : undefined,
       email: customer.email,
@@ -89,6 +159,10 @@ export const leadService = {
       updatedAt: now,
     };
     leads = [lead, ...leads];
+    await recordLeadCreated(
+      { tenantId: customer.tenantId, branchId: customer.branchId },
+      lead,
+    );
     return lead;
   },
 
@@ -198,18 +272,24 @@ export const leadService = {
       throw new Error("Use the lead conversion workflow to mark a lead as converted");
     }
 
+    const normalizedData = await normalizeEstimatedValue(scope, data);
+
     const now = new Date().toISOString();
 
     const lead: Lead = {
-      ...data,
+      ...normalizedData,
       id: crypto.randomUUID(),
       tenantId: scope.tenantId,
       branchId: scope.branchId,
+      code: nextLeadCode(scope.tenantId),
+      valueCurrencyVersion: CRM_VALUE_CURRENCY_VERSION,
       createdAt: now,
       updatedAt: now,
     };
 
     leads = [lead, ...leads];
+
+    await recordLeadCreated(scope, lead);
 
     return lead;
   },
@@ -229,17 +309,20 @@ export const leadService = {
       throw new Error("Lead not found");
     }
 
-    if (data.status === "converted" && leads[index].status !== "converted") {
+    const normalizedData = await normalizeEstimatedValue(scope, data, leads[index]);
+
+    if (normalizedData.status === "converted" && leads[index].status !== "converted") {
       throw new Error("Use the lead conversion workflow to mark a lead as converted");
     }
 
-    if (leads[index].status === "converted" && data.status !== "converted") {
+    if (leads[index].status === "converted" && normalizedData.status !== "converted") {
       throw new Error("A converted lead cannot be moved back through manual editing");
     }
 
+    const previousLead = leads[index];
     const updatedLead: Lead = {
-      ...leads[index],
-      ...data,
+      ...previousLead,
+      ...normalizedData,
       id: leads[index].id,
       tenantId: leads[index].tenantId,
       branchId: leads[index].branchId,
@@ -250,6 +333,39 @@ export const leadService = {
     leads = leads.map((lead) =>
       lead.id === id ? updatedLead : lead,
     );
+
+    const activityUpdates: Array<Promise<unknown>> = [];
+    if (previousLead.status !== updatedLead.status) {
+      activityUpdates.push(leadActivityService.recordSystemActivity(scope, id, {
+        subject: "Lead status changed",
+        description: `Status changed from ${formatStatus(previousLead.status)} to ${formatStatus(updatedLead.status)}.`,
+      }));
+    }
+    if (previousLead.assignedTo !== updatedLead.assignedTo) {
+      activityUpdates.push(leadActivityService.recordSystemActivity(scope, id, {
+        subject: "Lead assignment changed",
+        description: updatedLead.assignedTo
+          ? previousLead.assignedTo
+            ? "Lead reassigned to a different user."
+            : "Lead assigned to a user."
+          : "Lead assignment was cleared.",
+        assignedTo: updatedLead.assignedTo,
+      }));
+    }
+    if (
+      previousLead.nextFollowUpAt !== updatedLead.nextFollowUpAt ||
+      previousLead.assignedTo !== updatedLead.assignedTo
+    ) {
+      activityUpdates.push(
+        leadActivityService.syncNextFollowUp(
+          scope,
+          id,
+          updatedLead.nextFollowUpAt,
+          updatedLead.assignedTo,
+        ),
+      );
+    }
+    await Promise.all(activityUpdates);
 
     return updatedLead;
   },
@@ -291,6 +407,11 @@ export const leadService = {
         : lead,
     );
 
+    await leadActivityService.recordSystemActivity(scope, id, {
+      subject: "Lead converted",
+      description: "Lead status changed to Converted and a customer record was created.",
+    });
+
     return updatedLead;
   },
 
@@ -308,8 +429,9 @@ export const leadService = {
     leads = leads.filter(
       (lead) => lead.id !== id,
     );
+    await leadActivityService.deleteByLeadId(scope, id);
   },
 };
 
 // Backend persistence registration (see src/core/persistence).
-registerList('crm.leads', () => leads, (rows) => { leads = rows; });
+registerList('crm.leads', () => leads, (rows) => { leads = rows.map(migrateLeadValueCurrency); });

@@ -42,6 +42,7 @@ import { PERMISSIONS } from "@/core/permissions";
 import { usePermissions } from "@/core/permissions/permission-context";
 import type { DropdownItem } from "@/shared/components/common/Dropdown";
 import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
 
 function formatSource(source: Lead["source"]) {
   return source
@@ -51,12 +52,16 @@ function formatSource(source: Lead["source"]) {
     );
 }
 
-function formatValue(value: number | undefined, formatMoney: (amount: number) => string) {
+function formatValue(
+  value: number | undefined,
+  currency: string | undefined,
+  formatMoney: (amount: number, currencyCode?: string) => string,
+) {
   if (value === undefined) {
     return "—";
   }
 
-  return formatMoney(value);
+  return formatMoney(value, currency);
 }
 
 const leadExportColumns: ExportColumn<Lead>[] = [
@@ -69,6 +74,7 @@ const leadExportColumns: ExportColumn<Lead>[] = [
   { header: "Source", value: (lead) => formatSource(lead.source) },
   { header: "Status", value: (lead) => lead.status.replace(/_/g, " ") },
   { header: "Estimated Value", value: (lead) => lead.estimatedValue },
+  { header: "Estimated Currency", value: (lead) => resolveCrmValueCurrency(lead.estimatedCurrency) },
   { header: "Next Follow-up", value: (lead) => lead.nextFollowUpAt },
   { header: "Lost Reason", value: (lead) => lead.lostReason?.replace(/_/g, " ") },
   { header: "Lost Note", value: (lead) => lead.lostNote },
@@ -82,7 +88,7 @@ export function LeadsPage() {
   const searchRecord = useSearchRecord('leads', 'leads.view', leadService.getById);
   const navigate = useNavigate();
   const { hasPermission } = usePermissions();
-  const { formatMoney } = useTenantCurrency();
+  const { formatWholeMoneyInCurrency } = useTenantCurrency();
   const canCreate = hasPermission(PERMISSIONS.LEADS.CREATE);
   const canEdit = hasPermission(PERMISSIONS.LEADS.EDIT);
   const canDelete = hasPermission(PERMISSIONS.LEADS.DELETE);
@@ -200,7 +206,8 @@ export function LeadsPage() {
       render: (lead) =>
         formatValue(
           lead.estimatedValue,
-          formatMoney,
+          resolveCrmValueCurrency(lead.estimatedCurrency),
+          formatWholeMoneyInCurrency,
         ),
     },
     {

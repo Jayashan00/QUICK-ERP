@@ -51,6 +51,8 @@ export interface Lead
   assignedTo?: EntityId;
 
   estimatedValue?: number;
+  estimatedCurrency?: string;
+  valueCurrencyVersion?: 1;
 
   nextFollowUpAt?: string;
 

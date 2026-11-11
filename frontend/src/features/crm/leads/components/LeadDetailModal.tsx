@@ -11,6 +11,7 @@ import { useTenant } from "@/core/tenant/tenant-context";
 import { customerService } from "@/features/customers/services/customerService";
 import { useUserOptions } from '@/features/settings/users/hooks/useUserOptions';
 import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
 
 import type { Lead } from '@/features/crm/leads/types/lead';
 import type { LeadActivity } from '@/features/crm/leads/types/lead-activity';
@@ -47,12 +48,16 @@ function formatSource(
     );
 }
 
-function formatValue(value: number | undefined, formatMoney: (amount: number) => string) {
+function formatValue(
+  value: number | undefined,
+  currency: string | undefined,
+  formatMoney: (amount: number, currencyCode?: string) => string,
+) {
   if (value === undefined) {
     return "—";
   }
 
-  return formatMoney(value);
+  return formatMoney(value, currency);
 }
 
 function formatDate(value?: string) {
@@ -109,7 +114,7 @@ export function LeadDetailModal({
   onCreateOpportunity,
 }: LeadDetailModalProps) {
   const { tenantId } = useTenant();
-  const { formatMoney } = useTenantCurrency();
+  const { formatWholeMoneyInCurrency } = useTenantCurrency();
   const { branchId } = useBranch();
   const { users } = useUserOptions({ includeInactive: true });
   const getAssignedUserName = (assignedTo?: string) => users.find(user => user.id === assignedTo)?.name || assignedTo || "Unassigned";
@@ -288,7 +293,8 @@ export function LeadDetailModal({
               label="Estimated Value"
               value={formatValue(
                 lead.estimatedValue,
-                formatMoney,
+                resolveCrmValueCurrency(lead.estimatedCurrency),
+                formatWholeMoneyInCurrency,
               )}
             />
 
@@ -359,6 +365,7 @@ export function LeadDetailModal({
               onRetry={() => void refetch()}
               isUpdating={isUpdating}
               canManage={canManageActivities}
+              getAssignedUserName={getAssignedUserName}
               onAdd={() =>
                 setIsActivityFormOpen(
                   true,
