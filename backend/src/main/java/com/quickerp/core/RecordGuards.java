@@ -231,6 +231,9 @@ public final class RecordGuards {
         for (String permission : permissions) {
             if (permission.isBlank() || permission.length() > 120) throw ApiException.badRequest("A role permission is not valid.");
             if (permission.startsWith("platform.")) throw ApiException.forbidden("Platform permissions cannot be given to tenant roles.");
+            if (!"role-001".equals(roleId) && permission.startsWith("audit.")) {
+                throw ApiException.forbidden("Audit log access is reserved for the company tenant administrator.");
+            }
         }
         if (!actor.covers(permissions)) {
             throw ApiException.forbidden("You cannot give a role permissions that you do not have yourself.");

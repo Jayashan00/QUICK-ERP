@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Locale;
+import java.util.UUID;
 
 /** Sign-in, token validation and password management. */
 public final class AuthService {
@@ -95,6 +96,7 @@ public final class AuthService {
                 } else {
                     Sql.update(connection, "UPDATE app_users SET failed_logins = ? WHERE id = ?", failures, user.id());
                 }
+                recordSecurityAudit(connection, user, "Login failed", "A sign-in attempt failed for this user account.");
                 // Commit the failure counter, then report the failure.
                 connection.commit();
                 throw ApiException.unauthorized("Invalid email or password.");
@@ -111,6 +113,7 @@ public final class AuthService {
                 TokenService.Issued challenge = tokens.issueChallenge(user.id(), user.tenantId(), user.superAdmin(), user.tokenVersion());
                 return new LoginResult(null, null, userView(user), tenantView(user), true, challenge.token());
             }
+            recordSecurityAudit(connection, user, "Logged in", "The user signed in successfully.");
             TokenService.Issued issued = tokens.issue(user.id(), user.tenantId(), user.superAdmin(), user.tokenVersion());
             return new LoginResult(issued.token(), issued.expiresAt(), userView(user), tenantView(user), false, null);
         });
@@ -131,6 +134,7 @@ public final class AuthService {
                 throw ApiException.validation("code", "The verification code is invalid or has already been used.");
             }
             Sql.update(connection, "UPDATE app_users SET last_login_at = now() WHERE id = ?", user.id());
+            recordSecurityAudit(connection, user, "Logged in", "The user completed multi-factor authentication and signed in.");
             TokenService.Issued issued = tokens.issue(user.id(), user.tenantId(), user.superAdmin(), user.tokenVersion());
             return new LoginResult(issued.token(), issued.expiresAt(), userView(user), tenantView(user), false, null);
         });
@@ -180,6 +184,7 @@ public final class AuthService {
             }
             Sql.update(connection, "UPDATE app_users SET password_hash = ?, password_changed_at = now(), "
                     + "token_version = token_version + 1, updated_at = now() WHERE id = ?", hasher.hash(newPassword), user.id());
+            recordSecurityAudit(connection, user, "Password changed", "The user changed their account password.");
             return tokens.issue(user.id(), user.tenantId(), user.superAdmin(), user.tokenVersion() + 1);
         });
     }
@@ -191,14 +196,19 @@ public final class AuthService {
             Sql.update(connection, "DELETE FROM revoked_tokens WHERE expires_at < now()");
             Sql.update(connection, "INSERT INTO revoked_tokens (token_id, user_id, expires_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
                     principal.tokenId(), principal.userId(), OffsetDateTime.ofInstant(principal.tokenExpiresAt(), ZoneOffset.UTC));
+            recordSecurityAudit(connection, principal, "Logged out", "The user ended the current session.");
             return null;
         });
     }
 
     /** Signs the caller out on every device. */
     public void logoutEverywhere(Principal principal) {
-        db.tx(connection -> Sql.update(connection, "UPDATE app_users SET token_version = token_version + 1, updated_at = now() WHERE id = ?",
-                principal.userId()));
+        db.tx(connection -> {
+            int changed = Sql.update(connection, "UPDATE app_users SET token_version = token_version + 1, updated_at = now() WHERE id = ?",
+                    principal.userId());
+            recordSecurityAudit(connection, principal, "Sessions revoked", "The user signed out all active sessions.");
+            return changed;
+        });
     }
 
     /** Lets an administrator set another user's password. */
@@ -216,8 +226,44 @@ public final class AuthService {
             }
             Sql.update(connection, "UPDATE app_users SET password_hash = ?, password_changed_at = now(), failed_logins = 0, locked_until = NULL, "
                     + "token_version = token_version + 1, updated_at = now() WHERE id = ?", hasher.hash(newPassword), user.id());
+            recordSecurityAudit(connection, principal, "User password reset", "An administrator reset the password for " + user.email() + ".");
             return null;
         });
+    }
+
+    private void recordSecurityAudit(Connection connection, UserRow user, String action, String description) throws SQLException {
+        recordSecurityAudit(connection, new Principal(user.id(), user.tenantId(), user.superAdmin(), user.roleId(), user.email()), action, description);
+    }
+
+    private void recordSecurityAudit(Connection connection, Principal principal, String action, String description) throws SQLException {
+        if (principal.superAdmin() || Principal.PLATFORM_TENANT.equals(principal.tenantId())) return;
+        String actorName = Sql.queryString(connection,
+                "SELECT COALESCE(NULLIF(profile->>'name', ''), NULLIF(email, ''), id) FROM app_users WHERE id = ? AND tenant_id = ?",
+                principal.userId(), principal.tenantId());
+        ObjectNode event = mapper.createObjectNode();
+        String id = "security-audit-" + UUID.randomUUID();
+        event.put("id", id);
+        event.put("tenantId", principal.tenantId());
+        String branchId = Sql.queryString(connection, "SELECT profile->>'defaultBranchId' FROM app_users WHERE id = ? AND tenant_id = ?",
+                principal.userId(), principal.tenantId());
+        if (branchId != null && !branchId.isBlank()) event.put("branchId", branchId);
+        event.put("actorId", principal.userId());
+        event.put("actorName", actorName == null ? principal.email() : actorName);
+        event.put("module", "security");
+        event.put("entityType", "User Session");
+        event.put("entityId", principal.userId());
+        event.put("reference", principal.email() == null ? principal.userId() : principal.email());
+        event.put("action", action);
+        event.put("description", description);
+        event.put("createdAt", Instant.now().toString());
+        event.put("relatedRoute", "/settings/login-activity");
+        event.put("sensitivity", "security");
+        Sql.update(connection,
+                "INSERT INTO erp_records(tenant_id,collection,record_id,data,deleted,version,change_seq,updated_by,client_id) "
+                        + "VALUES(?,?,?,CAST(? AS jsonb),FALSE,1,nextval('erp_change_seq'),?,'server:auth')",
+                principal.tenantId(), StateStore.AUDIT_COLLECTION, id, Sql.writeJson(mapper, event), principal.userId());
+        Sql.update(connection, "INSERT INTO erp_collections(tenant_id,collection) VALUES(?,?) ON CONFLICT DO NOTHING",
+                principal.tenantId(), StateStore.AUDIT_COLLECTION);
     }
 
     public static void validatePassword(String password) {

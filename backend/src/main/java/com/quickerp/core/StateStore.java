@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
@@ -47,6 +48,8 @@ public final class StateStore {
     public static final String ORDER_RECORD = "__order__";
     public static final String VALUE_RECORD = "__value__";
     public static final String USERS_COLLECTION = "core.users";
+    public static final String AUDIT_COLLECTION = "core.auditEvents";
+    public static final String SUPPORT_COLLECTION = "support.tickets";
     public static final String PLATFORM_FOUNDATION = "platform.foundation";
     public static final String WEB_ORDERS = "storefront.orders";
     public static final String WEB_REVIEWS = "storefront.reviews";
@@ -161,6 +164,7 @@ public final class StateStore {
                     String collection = rows.getString(1);
                     // The name is always reported, so the client never fills a hidden collection with starter data.
                     collections.add(collection);
+                    if (AUDIT_COLLECTION.equals(collection) && !isTenantAdministrator(principal)) continue;
                     if (!platform && !policy.canRead(permissions, collection)) continue;
                     JsonNode data = visible(connection, principal, permissions, platform, allowedBranches, collection,
                             rows.getString(2), Sql.readJson(mapper, rows.getString(3)));
@@ -193,6 +197,7 @@ public final class StateStore {
                     cursor = rows.getLong("change_seq");
                     if (client != null && client.equals(rows.getString("client_id"))) continue;
                     String collection = rows.getString("collection");
+                    if (AUDIT_COLLECTION.equals(collection) && !isTenantAdministrator(principal)) continue;
                     if (!platform && !policy.canRead(permissions, collection)) continue;
                     boolean deleted = rows.getBoolean("deleted");
                     JsonNode stored = Sql.readJson(mapper, rows.getString("data"));
@@ -209,7 +214,7 @@ public final class StateStore {
 
     private JsonNode visible(Connection connection, Principal principal, Permissions permissions, boolean platform,
                              Set<String> allowedBranches, String collection, String recordId, JsonNode data) throws SQLException {
-        if (platform) return data;
+        if (platform) return SUPPORT_COLLECTION.equals(collection) ? escalatedSupportData(data) : data;
         JsonNode redacted = AccessPolicy.redact(data, policy.redactedFields(permissions, collection));
         if (!rowScopedCollection(collection)) return redacted;
         if (ORDER_RECORD.equals(recordId)) return mapper.createArrayNode();
@@ -237,8 +242,9 @@ public final class StateStore {
     }
 
     private static boolean rowScopedCollection(String collection) {
-        return "notifications.records".equals(collection) || "notifications.state".equals(collection)
-                || "notifications.notices".equals(collection) || "settings.notificationPreferences".equals(collection);
+        return AUDIT_COLLECTION.equals(collection) || "notifications.records".equals(collection) || "notifications.state".equals(collection)
+                || "notifications.notices".equals(collection) || "settings.notificationPreferences".equals(collection)
+                || SUPPORT_COLLECTION.equals(collection);
     }
 
     private static boolean rowVisible(Principal principal, Permissions permissions, Set<String> allowedBranches,
@@ -250,14 +256,34 @@ public final class StateStore {
         if ("notifications.notices".equals(collection)) {
             return noticeVisible(principal, permissions, allowedBranches, row);
         }
+        if (SUPPORT_COLLECTION.equals(collection)) {
+            return isTenantAdministrator(principal) || principal.userId().equals(row.path("createdBy").path("id").asText());
+        }
         String branchId = Sql.text(row, "branchId");
-        if (branchId != null && !branchId.isBlank() && !allowedBranches.contains(branchId)) return false;
+        if (branchId != null && !branchId.isBlank() && !allowedBranches.contains(branchId)
+                && !(AUDIT_COLLECTION.equals(collection) && isTenantAdministrator(principal))) return false;
+        if (AUDIT_COLLECTION.equals(collection)) {
+            String sensitivity = Sql.text(row, "sensitivity");
+            if ("security".equals(sensitivity) && !permissions.matches("audit.security.view")) return false;
+            return !"sensitive".equals(sensitivity) || permissions.matches("audit.sensitive.view");
+        }
         if ("notifications.records".equals(collection)) {
             String required = Sql.text(row, "requiredPermission");
             if (required != null && !required.isBlank() && !permissions.matches(required)) return false;
             return !"user".equals(Sql.text(row, "audience")) || principal.userId().equals(Sql.text(row, "userId"));
         }
         return true;
+    }
+
+    private JsonNode escalatedSupportData(JsonNode data) {
+        if (data == null || data.isNull()) return null;
+        if (data.isObject()) return Sql.text(data, "sentToSuperAdminAt") != null ? data.deepCopy() : null;
+        if (data.isArray()) {
+            ArrayNode escalated = mapper.createArrayNode();
+            for (JsonNode row : data) if (row.isObject() && Sql.text(row, "sentToSuperAdminAt") != null) escalated.add(row.deepCopy());
+            return escalated;
+        }
+        return data.deepCopy();
     }
 
     private static boolean noticeVisible(Principal principal, Permissions permissions, Set<String> allowedBranches, JsonNode row) {
@@ -297,6 +323,10 @@ public final class StateStore {
             if (defaultBranch != null && !defaultBranch.isBlank()) result.add(defaultBranch);
         }
         return result;
+    }
+
+    private static boolean isTenantAdministrator(Principal principal) {
+        return !principal.superAdmin() && "role-001".equals(principal.roleId());
     }
 
     // ----------------------------------------------------------------- writes
@@ -358,8 +388,9 @@ public final class StateStore {
                 try {
                     String stockProblem = stockProblems.get(change.collection() + "\u0000" + change.recordId());
                     if (stockProblem != null) throw ApiException.forbidden(stockProblem);
-                    StoredState current = change.baseVersion() == null || ORDER_RECORD.equals(change.recordId()) ? null
+                    StoredState before = ORDER_RECORD.equals(change.recordId()) ? null
                             : storedState(connection, tenant, change.collection(), change.recordId());
+                    StoredState current = change.baseVersion() == null ? null : before;
                     if (change.baseVersion() != null && !ORDER_RECORD.equals(change.recordId())
                             && (current == null ? change.baseVersion() > 0 : current.version() != change.baseVersion())) {
                         boolean gone = current == null || current.deleted();
@@ -384,7 +415,10 @@ public final class StateStore {
                     boolean changed = effective.isDelete()
                             ? markDeleted(connection, tenant, effective.collection(), effective.recordId(), principal.userId(), client)
                             : upsert(connection, tenant, effective.collection(), effective.recordId(), dataOf(effective), principal.userId(), client);
-                    if (changed) applied++;
+                    if (changed) {
+                        applied++;
+                        recordAuditEvent(connection, principal, tenant, effective, before);
+                    }
                     connection.releaseSavepoint(savepoint);
                     recordVersion(connection, tenant, effective, versions);
                 } catch (ApiException error) {
@@ -428,6 +462,35 @@ public final class StateStore {
         String collection = change.collection();
         String recordId = change.recordId();
         if (principal.superAdmin()) return new Decision(false, change.data());
+
+        // Feature services may add richer workflow context even when the actor cannot view the audit screen.
+        // Accept only new append-only events and overwrite all identity/time fields from the authenticated session.
+        if (AUDIT_COLLECTION.equals(collection)) {
+            if (change.isDelete()) return Decision.ignored();
+            JsonNode storedAudit = storedData(connection, tenant, collection, recordId);
+            if (storedAudit != null && !storedAudit.isNull()) {
+                if (storedAudit.equals(change.data())) return Decision.ignored();
+                throw ApiException.forbidden("Audit records cannot be changed.");
+            }
+            if (change.data() == null || !change.data().isObject()) throw ApiException.badRequest("An audit event must be an object.");
+            ObjectNode safe = ((ObjectNode) change.data()).deepCopy();
+            safe.put("id", recordId);
+            safe.put("tenantId", tenant);
+            safe.put("actorId", principal.userId());
+            String actorName = Sql.queryString(connection,
+                    "SELECT COALESCE(NULLIF(profile->>'name', ''), NULLIF(email, ''), id) FROM app_users WHERE id = ? AND tenant_id = ?",
+                    principal.userId(), principal.tenantId());
+            safe.put("actorName", actorName == null ? principal.userId() : actorName);
+            safe.put("createdAt", Instant.now().toString());
+            if (!safe.hasNonNull("action") || safe.path("action").asText().isBlank()) safe.put("action", "Activity recorded");
+            if (!safe.hasNonNull("reference") || safe.path("reference").asText().isBlank()) safe.put("reference", recordId);
+            if (!safe.hasNonNull("entityType") || safe.path("entityType").asText().isBlank()) safe.put("entityType", "Record");
+            if (!safe.hasNonNull("entityId") || safe.path("entityId").asText().isBlank()) safe.put("entityId", recordId);
+            if (!safe.hasNonNull("module") || safe.path("module").asText().isBlank()) safe.put("module", "settings");
+            if (!safe.hasNonNull("sensitivity") || safe.path("sensitivity").asText().isBlank()) safe.put("sensitivity", "normal");
+            if (safe.hasNonNull("branchId") && !allowedBranches(connection, principal).contains(safe.path("branchId").asText())) safe.remove("branchId");
+            return new Decision(false, safe);
+        }
 
         if (!policy.canRead(permissions, collection)) {
             throw ApiException.forbidden("You do not have access to " + collection + ".");
@@ -730,7 +793,8 @@ public final class StateStore {
 
     private boolean markDeleted(Connection connection, String tenant, String collection, String recordId,
                                 String userId, String client) throws SQLException {
-        String sql = "UPDATE erp_records SET deleted = TRUE, data = NULL, version = version + 1, change_seq = nextval('erp_change_seq'), "
+        String deletedData = SUPPORT_COLLECTION.equals(collection) ? "data" : "NULL";
+        String sql = "UPDATE erp_records SET deleted = TRUE, data = " + deletedData + ", version = version + 1, change_seq = nextval('erp_change_seq'), "
                 + "updated_at = now(), updated_by = ?, client_id = ? WHERE tenant_id = ? AND collection = ? AND record_id = ? AND NOT deleted";
         boolean changed = Sql.update(connection, sql, userId, client, tenant, collection, recordId) == 1;
         if (changed) history(connection, tenant, collection, recordId, "delete", null, userId, client);
@@ -744,6 +808,89 @@ public final class StateStore {
                 "INSERT INTO erp_record_history (tenant_id, collection, record_id, operation, data, changed_by, client_id) "
                         + "VALUES (?, ?, ?, ?, CAST(? AS jsonb), ?, ?)",
                 tenant, collection, recordId, operation, json, userId, client);
+    }
+
+    /**
+     * Records every accepted user data change at the server boundary. Detailed workflow audit events supplied by
+     * feature services remain useful, but this record guarantees that no persisted create, update or delete is
+     * missed when a screen forgets to add one. Audit records themselves and list-order metadata are excluded to
+     * avoid recursion and meaningless noise.
+     */
+    private void recordAuditEvent(Connection connection, Principal principal, String tenant, Change change,
+                                  StoredState before) throws SQLException {
+        if (AUDIT_COLLECTION.equals(change.collection()) || ORDER_RECORD.equals(change.recordId())) return;
+
+        JsonNode current = change.isDelete() ? null : dataOf(change);
+        String action = change.isDelete() ? "Deleted" : before == null || before.deleted() ? "Created" : "Updated";
+        String actorName = Sql.queryString(connection,
+                "SELECT COALESCE(NULLIF(profile->>'name', ''), NULLIF(email, ''), id) FROM app_users WHERE id = ? AND tenant_id = ?",
+                principal.userId(), principal.tenantId());
+        if (actorName == null || actorName.isBlank()) actorName = principal.email() == null ? principal.userId() : principal.email();
+
+        String reference = firstText(current, before == null ? null : before.data(),
+                "referenceNumber", "reference", "number", "code", "sku", "name", "email", "id");
+        if (reference == null || reference.isBlank()) reference = change.recordId();
+        reference = truncate(reference, 200);
+        String entityType = entityType(change.collection());
+        String branchId = firstText(current, before == null ? null : before.data(), "branchId");
+        String module = auditModule(change.collection());
+
+        ObjectNode event = mapper.createObjectNode();
+        String eventId = "server-audit-" + UUID.randomUUID();
+        event.put("id", eventId);
+        event.put("tenantId", tenant);
+        if (branchId != null && !branchId.isBlank()) event.put("branchId", branchId);
+        event.put("actorId", principal.userId());
+        event.put("actorName", actorName);
+        event.put("module", module);
+        event.put("entityType", entityType);
+        event.put("entityId", change.recordId());
+        event.put("reference", reference);
+        event.put("action", action);
+        event.put("description", truncate(actorName + " " + action.toLowerCase() + " " + entityType + " " + reference + ".", 500));
+        event.put("createdAt", Instant.now().toString());
+        event.put("sensitivity", auditSensitivity(change.collection()));
+
+        // A distinct client id lets the originating browser receive the server-created event on its next sync poll.
+        upsert(connection, tenant, AUDIT_COLLECTION, eventId, event, "system:audit", "server:audit");
+        markSeeded(connection, tenant, AUDIT_COLLECTION);
+    }
+
+    private static String firstText(JsonNode primary, JsonNode fallback, String... fields) {
+        for (String field : fields) {
+            String value = Sql.text(primary, field);
+            if (value == null || value.isBlank()) value = Sql.text(fallback, field);
+            if (value != null && !value.isBlank()) return value;
+        }
+        return null;
+    }
+
+    private static String auditModule(String collection) {
+        String prefix = collection.contains(".") ? collection.substring(0, collection.indexOf('.')) : collection;
+        return switch (prefix) {
+            case "finance" -> "accounting";
+            case "core" -> collection.equals(USERS_COLLECTION) || collection.equals("core.roles") ? "security" : "settings";
+            case "storefront" -> "sales";
+            default -> prefix;
+        };
+    }
+
+    private static String auditSensitivity(String collection) {
+        if (collection.equals(USERS_COLLECTION) || collection.equals("core.roles") || collection.startsWith("security.")) return "security";
+        if (collection.startsWith("accounting.") || collection.startsWith("finance.") || collection.startsWith("hr.")) return "sensitive";
+        return "normal";
+    }
+
+    private static String entityType(String collection) {
+        String[] parts = collection.split("\\.");
+        int index = parts.length - 1;
+        if (index > 0 && (parts[index].equals("records") || parts[index].equals("items"))) index--;
+        String value = parts[index].replace('-', ' ').replace('_', ' ');
+        return value.isBlank() ? "Record" : Character.toUpperCase(value.charAt(0)) + value.substring(1);
+    }
+
+    private static String truncate(String value, int max) {
+        return value.length() <= max ? value : value.substring(0, max);
     }
 
     private void markSeeded(Connection connection, String tenant, String collection) throws SQLException {
@@ -798,6 +945,9 @@ public final class StateStore {
         if (tenantScope && change.collection().startsWith("notifications.")) {
             guardNotificationChange(connection, principal, permissions, tenant, change);
         }
+        if (SUPPORT_COLLECTION.equals(change.collection())) {
+            guardSupportTicket(connection, principal, tenant, change);
+        }
         if (tenantScope && "settings.notificationPreferences".equals(change.collection())) {
             guardOwnedNotificationRow(principal, tenant, change, "notification preference");
         }
@@ -808,6 +958,127 @@ public final class StateStore {
                 && VALUE_RECORD.equals(change.recordId()) && !change.isDelete()) {
             syncTenantConfigurations(connection, change.data());
         }
+    }
+
+    private void guardSupportTicket(Connection connection, Principal principal, String tenant, Change change) throws SQLException {
+        if (ORDER_RECORD.equals(change.recordId())) return;
+        if (isReserved(change.recordId())) throw ApiException.badRequest("Support tickets must be saved one record at a time.");
+        JsonNode stored = storedData(connection, tenant, SUPPORT_COLLECTION, change.recordId());
+        if (change.isDelete()) {
+            if (stored == null || !"closed".equals(Sql.text(stored, "status"))) {
+                throw ApiException.forbidden("Only closed support tickets can be deleted.");
+            }
+            if (principal.superAdmin()) {
+                if (Sql.text(stored, "sentToSuperAdminAt") == null) throw ApiException.forbidden("This ticket was not sent to super admin.");
+            } else if (!isTenantAdministrator(principal)) {
+                throw ApiException.forbidden("Only the company tenant administrator can delete closed support tickets.");
+            }
+            return;
+        }
+        if (change.data() == null || !change.data().isObject()) throw ApiException.badRequest("A support ticket must be an object.");
+        JsonNode row = change.data();
+        if (!tenant.equals(Sql.text(row, "tenantId"))) throw ApiException.forbidden("The support ticket company cannot be changed.");
+
+        if (principal.superAdmin()) {
+            if (stored == null || Sql.text(stored, "sentToSuperAdminAt") == null) {
+                throw ApiException.forbidden("The company tenant administrator must send this ticket to super admin first.");
+            }
+            requireSupportIdentityUnchanged(stored, row);
+            requireSupportEscalationUnchanged(stored, row);
+            requireSupportStatusTransition(stored, row);
+            requireConversationAppend(stored, row, "quick_erp_support");
+            return;
+        }
+
+        String companyName = Sql.queryString(connection, "SELECT name FROM tenants WHERE id = ?", tenant);
+        if (companyName == null || !companyName.equals(Sql.text(row, "companyName"))) {
+            throw ApiException.forbidden("The support ticket company name must match the authenticated company.");
+        }
+        String creatorId = row.path("createdBy").path("id").asText();
+        if (stored == null) {
+            if (!principal.userId().equals(creatorId)) throw ApiException.forbidden("You can create support tickets only for yourself.");
+            if (!"new".equals(Sql.text(row, "status")) || row.hasNonNull("sentToSuperAdminAt") || row.hasNonNull("sentToSuperAdminBy")) {
+                throw ApiException.forbidden("New support tickets must start in New status and remain inside the company.");
+            }
+            if (row.path("conversation").size() != 0) throw ApiException.forbidden("A support conversation starts only after the ticket is sent to super admin.");
+            return;
+        }
+
+        requireSupportIdentityUnchanged(stored, row);
+        if (isTenantAdministrator(principal)) {
+            requireSupportStatusTransition(stored, row);
+            String previousSentAt = Sql.text(stored, "sentToSuperAdminAt");
+            String nextSentAt = Sql.text(row, "sentToSuperAdminAt");
+            if (previousSentAt == null && nextSentAt != null) {
+                if ("closed".equals(Sql.text(stored, "status"))) throw ApiException.forbidden("Closed tickets cannot be sent to super admin.");
+                if (!principal.userId().equals(row.path("sentToSuperAdminBy").path("id").asText())) {
+                    throw ApiException.forbidden("Escalation must identify the authenticated tenant administrator.");
+                }
+            } else {
+                requireSupportEscalationUnchanged(stored, row);
+            }
+            requireConversationAppend(stored, row, "tenant_admin");
+            if (nextSentAt == null && row.path("conversation").size() > stored.path("conversation").size()) {
+                throw ApiException.forbidden("Send the ticket to super admin before starting a conversation.");
+            }
+            return;
+        }
+
+        if (!principal.userId().equals(stored.path("createdBy").path("id").asText())) {
+            throw ApiException.forbidden("You can change only your own support tickets.");
+        }
+        requireSupportEscalationUnchanged(stored, row);
+        if (!equalExcept(stored, row, "attachmentIds", "updatedAt")) {
+            throw ApiException.forbidden("Only the company tenant administrator can update, escalate or converse on support tickets.");
+        }
+        requireArrayPrefix(stored.path("attachmentIds"), row.path("attachmentIds"), "Existing support attachments cannot be removed or changed.");
+    }
+
+    private static void requireSupportIdentityUnchanged(JsonNode stored, JsonNode row) {
+        for (String field : List.of("id", "ticketNumber", "tenantId", "companyName", "createdBy", "createdAt", "priority")) {
+            if (!Objects.equals(stored.get(field), row.get(field))) throw ApiException.forbidden("Support ticket identity fields cannot be changed.");
+        }
+    }
+
+    private static void requireSupportEscalationUnchanged(JsonNode stored, JsonNode row) {
+        for (String field : List.of("sentToSuperAdminBy", "sentToSuperAdminAt")) {
+            if (!Objects.equals(stored.get(field), row.get(field))) throw ApiException.forbidden("Support ticket escalation can be changed only once by the company tenant administrator.");
+        }
+    }
+
+    private static void requireSupportStatusTransition(JsonNode stored, JsonNode row) {
+        String previous = Sql.text(stored, "status");
+        String next = Sql.text(row, "status");
+        if (Objects.equals(previous, next)) return;
+        boolean allowed = "new".equals(previous) && "in_progress".equals(next)
+                || "in_progress".equals(previous) && "resolved".equals(next)
+                || "resolved".equals(previous) && "closed".equals(next);
+        if (!allowed) throw ApiException.forbidden("Support ticket status must follow New, In Progress, Resolved, then Closed.");
+    }
+
+    private static void requireConversationAppend(JsonNode stored, JsonNode row, String authorType) {
+        JsonNode previous = stored.path("conversation");
+        JsonNode current = row.path("conversation");
+        requireArrayPrefix(previous, current, "Existing support conversation messages cannot be changed.");
+        for (int index = previous.size(); index < current.size(); index++) {
+            if (!authorType.equals(Sql.text(current.get(index), "authorType"))) {
+                throw ApiException.forbidden("The support conversation author type is invalid for this account.");
+            }
+        }
+    }
+
+    private static void requireArrayPrefix(JsonNode previous, JsonNode current, String message) {
+        if (!previous.isArray() || !current.isArray() || current.size() < previous.size()) throw ApiException.forbidden(message);
+        for (int index = 0; index < previous.size(); index++) if (!previous.get(index).equals(current.get(index))) throw ApiException.forbidden(message);
+    }
+
+    private static boolean equalExcept(JsonNode left, JsonNode right, String... fields) {
+        if (!left.isObject() || !right.isObject()) return left.equals(right);
+        ObjectNode leftCopy = ((ObjectNode) left).deepCopy();
+        ObjectNode rightCopy = ((ObjectNode) right).deepCopy();
+        leftCopy.remove(List.of(fields));
+        rightCopy.remove(List.of(fields));
+        return leftCopy.equals(rightCopy);
     }
 
     private void guardNotificationChange(Connection connection, Principal principal, Permissions permissions,
