@@ -33,6 +33,7 @@ export interface NavigationItemConfig {
   permission?: string;
   anyPermissions?: string[];
   allPermissions?: string[];
+  tenantAdminOnly?: boolean;
   badge?: string | number;
   children?: NavigationItemConfig[];
 }
@@ -556,7 +557,7 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
         label: "Audit Logs",
         path: "/audit",
         icon: ScrollText,
-        permission: "audit.view",
+        tenantAdminOnly: true,
       },
       {
         label: "Notifications",

@@ -9,7 +9,9 @@ import { moduleForPath, moduleForPermission } from '@/core/tenant/tenantEntitlem
 function canViewItem(
   item: NavigationItemConfig,
   hasPermission: (check: PermissionCheck) => boolean,
+  isTenantAdministrator: boolean,
 ) {
+  if (item.tenantAdminOnly && !isTenantAdministrator) return false;
   if (item.permission && !hasPermission(item.permission)) return false;
   if (item.anyPermissions && !hasPermission({ any: item.anyPermissions })) return false;
   if (item.allPermissions && !hasPermission({ all: item.allPermissions })) return false;
@@ -20,11 +22,12 @@ function filterItem(
   item: NavigationItemConfig,
   hasPermission: (check: PermissionCheck) => boolean,
   isModuleEnabled?: (module: TenantModule) => boolean,
+  isTenantAdministrator = false,
 ): NavigationItemConfig | null {
   const module = item.path ? moduleForPath(item.path) : item.permission ? moduleForPermission(item.permission) : null;
   if (module && isModuleEnabled && !isModuleEnabled(module)) return null;
   const children = item.children
-    ?.map((child) => filterItem(child, hasPermission, isModuleEnabled))
+    ?.map((child) => filterItem(child, hasPermission, isModuleEnabled, isTenantAdministrator))
     .filter((child): child is NavigationItemConfig => child !== null);
 
   if (item.children?.length) {
@@ -32,19 +35,20 @@ function filterItem(
     return { ...item, children };
   }
 
-  return canViewItem(item, hasPermission) ? item : null;
+  return canViewItem(item, hasPermission, isTenantAdministrator) ? item : null;
 }
 
 export function filterNavigationSections(
   sections: NavigationSectionConfig[],
   hasPermission: (check: PermissionCheck) => boolean,
   isModuleEnabled?: (module: TenantModule) => boolean,
+  isTenantAdministrator = false,
 ) {
   return sections
     .map((section) => ({
       ...section,
       items: section.items
-        .map((item) => filterItem(item, hasPermission, isModuleEnabled))
+        .map((item) => filterItem(item, hasPermission, isModuleEnabled, isTenantAdministrator))
         .filter((item): item is NavigationItemConfig => item !== null),
     }))
     .filter((section) => section.items.length > 0);

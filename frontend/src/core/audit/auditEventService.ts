@@ -4,6 +4,21 @@ import type { AuditAccessScope, AuditFilters, AuditPage, AuditValues, CreateAudi
 import { registerList, replaceArray } from '@/core/persistence/stateRegistry';
 
 const events = structuredClone(mockTenantAuditEvents);
+const RETENTION_MONTHS = 3;
+
+function retentionCutoff(now = new Date()) {
+  const cutoff = new Date(now);
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - RETENTION_MONTHS);
+  return cutoff;
+}
+
+function enforceRetention(now = new Date()) {
+  const cutoff = retentionCutoff(now).getTime();
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const timestamp = Date.parse(events[index]!.createdAt);
+    if (Number.isFinite(timestamp) && timestamp < cutoff) events.splice(index, 1);
+  }
+}
 
 function clone(entry: TenantAuditEntry): TenantAuditEntry {
   return { ...entry, previousValues: entry.previousValues ? { ...entry.previousValues } : undefined, newValues: entry.newValues ? { ...entry.newValues } : undefined };
@@ -11,7 +26,7 @@ function clone(entry: TenantAuditEntry): TenantAuditEntry {
 
 function visible(entry: TenantAuditEntry, scope: AuditAccessScope) {
   if (entry.tenantId !== scope.tenantId) return false;
-  if (entry.branchId && !scope.permittedBranchIds.includes(entry.branchId)) return false;
+  if (!scope.isTenantAdministrator && entry.branchId && !scope.permittedBranchIds.includes(entry.branchId)) return false;
   if (entry.sensitivity === 'security' && !scope.canViewSecurity) return false;
   if (entry.sensitivity === 'sensitive' && !scope.canViewSensitive) return false;
   return true;
@@ -32,6 +47,7 @@ function parseLegacyChanges(entry: LegacyAuditEntry) {
 
 export const auditEventService = {
   record(input: CreateAuditEventInput): TenantAuditEntry {
+    enforceRetention();
     if (!input.tenantId || !input.actorId || !input.action || !input.reference) throw new Error('Audit context is incomplete.');
     const event: TenantAuditEntry = {
       ...input,
@@ -62,7 +78,8 @@ export const auditEventService = {
 
   async list(scope: AuditAccessScope, filters: AuditFilters = {}): Promise<AuditPage> {
     await new Promise((resolve) => setTimeout(resolve, 180));
-    if (!scope.canView) throw new Error('You do not have permission to view tenant audit logs.');
+    enforceRetention();
+    if (!scope.isTenantAdministrator || !scope.canView) throw new Error('Only the company tenant administrator can view audit logs.');
     let rows = events.filter((entry) => visible(entry, scope));
     const search = filters.search?.trim().toLowerCase();
     if (search) rows = rows.filter((entry) => [entry.reference, entry.entityType, entry.description, entry.actorName, entry.action].some((value) => value.toLowerCase().includes(search)));
@@ -82,7 +99,7 @@ export const auditEventService = {
   },
 
   async listForExport(scope: AuditAccessScope, filters: AuditFilters = {}) {
-    if (!scope.canExport) throw new Error('You do not have permission to export tenant audit logs.');
+    if (!scope.isTenantAdministrator || !scope.canExport) throw new Error('Only the company tenant administrator can export audit logs.');
     const result = await this.list(scope, { ...filters, page: 1, pageSize: Number.MAX_SAFE_INTEGER });
     return result.data;
   },

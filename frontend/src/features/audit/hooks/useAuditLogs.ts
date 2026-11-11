@@ -1,22 +1,24 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useBranch } from '@/core/branch/branch-context';
-import { usePermissions } from '@/core/permissions/permission-context';
 import { useTenant } from '@/core/tenant/tenant-context';
+import { useAuth } from '@/core/auth/auth-context';
 import { auditEventService, type AuditAccessScope, type AuditFilters } from '@/core/audit';
 import { auditKeys } from '../queries/auditKeys';
 
 export function useAuditScope(): AuditAccessScope | null {
   const { tenantId } = useTenant();
+  const { user } = useAuth();
   const { branches } = useBranch();
-  const { hasPermission } = usePermissions();
   if (!tenantId) return null;
+  const isTenantAdministrator = user?.roleId === 'role-001' && !user.isSuperAdmin;
   return {
     tenantId,
     permittedBranchIds: branches.map((branch) => branch.id),
-    canView: hasPermission('audit.view'),
-    canExport: hasPermission('audit.export'),
-    canViewSensitive: hasPermission('audit.sensitive.view'),
-    canViewSecurity: hasPermission('audit.security.view'),
+    isTenantAdministrator,
+    canView: isTenantAdministrator,
+    canExport: isTenantAdministrator,
+    canViewSensitive: isTenantAdministrator,
+    canViewSecurity: isTenantAdministrator,
   };
 }
 

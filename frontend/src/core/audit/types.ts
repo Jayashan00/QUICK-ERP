@@ -1,11 +1,17 @@
 export type AuditModule =
+  | 'crm'
+  | 'customers'
+  | 'products'
   | 'sales'
   | 'purchases'
   | 'inventory'
   | 'accounting'
   | 'hr'
   | 'projects'
+  | 'pos'
   | 'documents'
+  | 'notifications'
+  | 'sync'
   | 'support'
   | 'security'
   | 'settings';
@@ -43,6 +49,7 @@ export type CreateAuditEventInput = Omit<TenantAuditEntry, 'id' | 'createdAt' | 
 export interface AuditAccessScope {
   tenantId: string;
   permittedBranchIds: string[];
+  isTenantAdministrator: boolean;
   canView: boolean;
   canExport: boolean;
   canViewSensitive: boolean;
