@@ -1,4 +1,5 @@
 import type { TenantBranchScope } from '@/core/tenant/dataScope';
+import { userService } from '@/core/auth/userService';
 import { hrService, type HrScope } from '@/features/hr/hrService';
 import { inventoryService } from '@/features/inventory/services/inventoryService';
 import { inventoryTrackingService } from '@/features/inventory/services/inventoryTrackingService';
@@ -6,25 +7,68 @@ import { accountingService } from '@/features/accounting/accountingService';
 import { purchasingService } from '@/features/purchases/services/purchasingService';
 import { salesService } from '@/features/sales/services/salesService';
 import { syncService } from '@/features/sync/services/syncService';
-import { integrationSettingsService } from '@/features/settings/integrations/services/integrationSettingsService';
-import { mockNotifications, mockNotices, mockNotificationTemplates } from '../mocks/notifications';
-import type { Notice, NoticeInput, NotificationFilters, NotificationListResult, NotificationRecord, NotificationScope, NotificationTemplate, NotificationTemplateInput } from '../types/notifications';
-import { registerList, registerMap } from '@/core/persistence/stateRegistry';
+import { projectService } from '@/features/projects/projectService';
+import { documentService } from '@/features/documents/documentService';
+import { tenantSettingsService } from '@/features/settings/finance/services/tenantSettingsService';
+import type { NotificationEventGroup } from '@/features/settings/finance/types/tenant-settings';
+import { mockNotifications, mockNotices } from '../mocks/notifications';
+import type { Notice, NoticeInput, NotificationFilters, NotificationListResult, NotificationRecord, NotificationScope, NotificationUserState } from '../types/notifications';
+import { registerList } from '@/core/persistence/stateRegistry';
 
 let notifications = mockNotifications.map((item) => ({ ...item }));
-let notices = mockNotices.map((item) => ({ ...item, userIds: [...item.userIds], acknowledgedBy: [...item.acknowledgedBy] }));
-let templates = mockNotificationTemplates.map((item) => ({ ...item }));
-const state = new Map<string, Pick<NotificationRecord, 'isRead' | 'readAt' | 'archivedAt'>>();
+let notices: Notice[] = mockNotices.map((item) => ({ ...item, userIds: [...item.userIds], recipientUserIds: item.recipientUserIds ? [...item.recipientUserIds] : undefined, acknowledgedBy: [...item.acknowledgedBy] }));
+let state: NotificationUserState[] = [];
 const wait = (duration = 100) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, duration));
 const id = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 const now = () => new Date().toISOString();
 const hasPermission = (scope: NotificationScope, permission?: string) => !permission || scope.permissions.includes('*') || scope.permissions.includes(permission);
 const requirePermission = (scope: NotificationScope, permission: string) => { if (!hasPermission(scope, permission)) throw new Error('You do not have permission to perform this notification action.'); };
+const isTenantAdministrator = (scope: NotificationScope) => scope.roleId === 'role-001';
+const requireTenantAdministrator = (scope: NotificationScope) => { if (!isTenantAdministrator(scope)) throw new Error('Only the tenant administrator can manage notices.'); };
 const branchScope = (scope: NotificationScope): TenantBranchScope => ({ tenantId: scope.tenantId, branchId: scope.activeBranchId });
 
+function isCurrentNotice(notice: Notice, today: string) {
+  return notice.isActive && notice.publishDate <= today && (!notice.expiryDate || notice.expiryDate >= today);
+}
+
+function isNoticeTargetedToUser(scope: NotificationScope, notice: Notice) {
+  return notice.audience === 'company'
+    || (notice.audience === 'branch' && Boolean(notice.branchId && scope.permittedBranchIds.includes(notice.branchId)))
+    || (notice.audience === 'users' && notice.userIds.includes(scope.userId));
+}
+
+async function resolveNoticeRecipients(tenantId: string, creatorId: string, input: NoticeInput) {
+  const users = (await userService.getUserOptions(tenantId)).filter((user) => user.isActive && user.id !== creatorId);
+  if (input.audience === 'company') return users.map((user) => user.id);
+  if (input.audience === 'branch') return users.filter((user) => Boolean(input.branchId && user.branchIds.includes(input.branchId))).map((user) => user.id);
+  return users.filter((user) => input.userIds.includes(user.id)).map((user) => user.id);
+}
+
 function operational(input: Omit<NotificationRecord, 'tenantId' | 'audience' | 'isRead'> & { branchId?: string }): NotificationRecord {
-  const overlay = state.get(input.id);
-  return { ...input, tenantId: 'tenant-001', audience: input.branchId ? 'branch' : 'company', isRead: overlay?.isRead ?? false, readAt: overlay?.readAt, archivedAt: overlay?.archivedAt };
+  return { ...input, tenantId: 'tenant-001', audience: input.branchId ? 'branch' : 'company', isRead: false };
+}
+
+const stateId = (scope: NotificationScope, notificationId: string) => `${scope.userId}:${notificationId}`;
+function withUserState(scope: NotificationScope, record: NotificationRecord): NotificationRecord {
+  const overlay = state.find((item) => item.tenantId === scope.tenantId && item.userId === scope.userId && item.notificationId === record.id);
+  return { ...record, isRead: overlay?.isRead ?? false, readAt: overlay?.readAt, archivedAt: overlay?.archivedAt };
+}
+function saveUserState(scope: NotificationScope, record: NotificationRecord, update: Pick<NotificationUserState, 'isRead' | 'readAt' | 'archivedAt'>) {
+  const next: NotificationUserState = { id: stateId(scope, record.id), tenantId: scope.tenantId, userId: scope.userId, notificationId: record.id, ...update };
+  state = [next, ...state.filter((item) => !(item.tenantId === scope.tenantId && item.userId === scope.userId && item.notificationId === record.id))];
+  return next;
+}
+function preferenceGroup(record: NotificationRecord): NotificationEventGroup {
+  if (record.type === 'approval') return 'approvals';
+  if (record.module === 'inventory') return 'stock';
+  if (record.module === 'purchasing') return 'purchases';
+  if (record.module === 'sales') return 'sales';
+  if (record.module === 'finance') return 'finance';
+  if (record.module === 'hr') return 'hr';
+  if (record.module === 'projects') return 'projects';
+  if (record.module === 'documents') return 'documents';
+  if (record.module === 'sync') return 'sync';
+  return 'system';
 }
 
 async function deriveOperational(scope: NotificationScope): Promise<NotificationRecord[]> {
@@ -54,6 +98,16 @@ async function deriveOperational(scope: NotificationScope): Promise<Notification
   const hrScope: HrScope = { tenantId: scope.tenantId, branchId: scope.activeBranchId, permittedBranchIds: allowed };
   hrService.leaves(hrScope).filter((item) => item.status === 'pending').forEach((item) => records.push(operational({ id: `hr-leave-${item.id}`, branchId: item.branchId, title: 'Leave request requires approval', message: `${item.days} day leave request is waiting for a decision.`, type: 'approval', priority: 'normal', module: 'hr', relatedEntity: 'leave', relatedRecordId: item.id, actionLabel: 'Approve leave', actionUrl: '/hr/leave', requiredPermission: 'hr.leave.approve', createdAt, sourceKey: `hr:leave:${item.id}:${item.status}` })));
   hrService.corrections(hrScope).filter((item) => item.status === 'pending').forEach((item) => records.push(operational({ id: `hr-correction-${item.id}`, branchId: item.branchId, title: 'Attendance correction pending', message: 'An attendance correction requires review.', type: 'approval', priority: 'normal', module: 'hr', relatedEntity: 'attendance_correction', relatedRecordId: item.id, actionLabel: 'Review correction', actionUrl: '/hr/attendance', requiredPermission: 'hr.attendance.approve', createdAt, sourceKey: `hr:correction:${item.id}:${item.status}` })));
+  hrService.payrolls(hrScope).filter((item) => item.status === 'draft').forEach((item) => records.push(operational({ id: `hr-payroll-${item.id}-${item.status}`, branchId: item.branchId, title: 'Payroll requires approval', message: `Payroll for ${item.period} is prepared and waiting for approval.`, type: 'approval', priority: 'high', module: 'hr', relatedEntity: 'payroll', relatedRecordId: item.id, reference: item.period, actionLabel: 'Review payroll', actionUrl: '/hr/payroll', requiredPermission: 'hr.payroll.approve', createdAt: item.createdAt, sourceKey: `hr:payroll:${item.id}:${item.status}` })));
+
+  const projectScope = { tenantId: scope.tenantId, branchId: scope.activeBranchId, permittedBranchIds: allowed };
+  const today = new Date().toISOString().slice(0, 10);
+  const inTwoDays = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+  const inSevenDays = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  if (hasPermission(scope, 'projects.tasks.view')) projectService.tasks(projectScope).filter((item) => !['done', 'cancelled'].includes(item.status) && item.dueDate <= inTwoDays).forEach((item) => records.push(operational({ id: `project-task-${item.id}-${item.status}`, branchId: item.branchId, title: item.dueDate < today ? 'Project task overdue' : 'Project task due soon', message: `${item.title} is due ${item.dueDate}.`, type: 'reminder', priority: item.dueDate < today ? 'urgent' : item.priority === 'high' ? 'high' : 'normal', module: 'projects', relatedEntity: 'project_task', relatedRecordId: item.id, actionLabel: 'View task', actionUrl: '/projects/tasks', requiredPermission: 'projects.tasks.view', createdAt, sourceKey: `projects:task:${item.id}:${item.status}:${item.dueDate}` })));
+  if (hasPermission(scope, 'projects.milestones.view')) projectService.milestones(projectScope).filter((item) => item.status === 'open' && item.dueDate <= inSevenDays).forEach((item) => records.push(operational({ id: `project-milestone-${item.id}-${item.status}`, branchId: item.branchId, title: item.dueDate < today ? 'Project milestone overdue' : 'Project milestone due soon', message: `${item.name} is due ${item.dueDate}.`, type: 'reminder', priority: item.dueDate < today ? 'urgent' : 'high', module: 'projects', relatedEntity: 'project_milestone', relatedRecordId: item.id, actionLabel: 'View milestones', actionUrl: '/projects/milestones', requiredPermission: 'projects.milestones.view', createdAt, sourceKey: `projects:milestone:${item.id}:${item.status}:${item.dueDate}` })));
+  if (hasPermission(scope, 'projects.timesheets.approve')) projectService.timesheets(projectScope).filter((item) => item.status === 'submitted').forEach((item) => records.push(operational({ id: `project-timesheet-${item.id}-${item.status}`, branchId: item.branchId, title: 'Project timesheet requires approval', message: `${item.hours} hour(s) submitted for ${item.date}.`, type: 'approval', priority: 'normal', module: 'projects', relatedEntity: 'project_timesheet', relatedRecordId: item.id, actionLabel: 'Review timesheets', actionUrl: '/projects/timesheets', requiredPermission: 'projects.timesheets.approve', createdAt, sourceKey: `projects:timesheet:${item.id}:${item.status}` })));
+  if (hasPermission(scope, 'documents.view')) documentService.reminderHandoffs(projectScope, scope.permissions).forEach((item) => records.push(operational({ id: `document-reminder-${item.id}-${item.reminderDate}`, branchId: item.branchId, title: 'Document reminder is due', message: `${item.title}${item.expiryDate ? ` expires ${item.expiryDate}` : ' requires attention'}.`, type: 'reminder', priority: item.expiryDate && item.expiryDate < today ? 'urgent' : 'high', module: 'documents', relatedEntity: 'document', relatedRecordId: item.id, actionLabel: 'View documents', actionUrl: '/documents', requiredPermission: 'documents.view', createdAt, sourceKey: `documents:reminder:${item.id}:${item.reminderDate}` })));
   const accountingScope = { tenantId: scope.tenantId, branchId: scope.activeBranchId, permittedBranchIds: allowed };
   accountingService.expenses(accountingScope).filter((item) => item.status === 'submitted').forEach((item) => records.push(operational({ id: `finance-expense-${item.id}`, branchId: item.branchId, title: 'Expense requires approval', message: `${item.reference} for ${item.amount.toLocaleString()} is waiting for review.`, type: 'approval', priority: 'high', module: 'finance', relatedEntity: 'expense', relatedRecordId: item.id, reference: item.reference, actionLabel: 'Review expense', actionUrl: '/finance/expenses', requiredPermission: 'finance.expenses.approve', createdAt: `${item.date}T08:00:00.000Z`, sourceKey: `finance:expense:${item.id}:${item.status}` })));
   accountingService.journals(accountingScope).filter((item) => item.status === 'pending_approval').forEach((item) => records.push(operational({ id: `finance-journal-${item.id}`, branchId: item.branchId, title: 'Journal requires approval', message: `${item.reference} is waiting for finance approval.`, type: 'approval', priority: 'high', module: 'finance', relatedEntity: 'journal', relatedRecordId: item.id, reference: item.reference, actionLabel: 'Review journal', actionUrl: '/finance/journals', requiredPermission: 'finance.journals.approve', createdAt: `${item.date}T08:00:00.000Z`, sourceKey: `finance:journal:${item.id}:${item.status}` })));
@@ -75,8 +129,10 @@ export const notificationService = {
   async list(scope: NotificationScope, filters: NotificationFilters = {}): Promise<NotificationListResult> {
     requirePermission(scope, 'notifications.view');
     await wait();
-    const derived = await deriveOperational(scope);
-    let rows = [...notifications, ...derived].filter((item) => accessible(scope, item));
+    const [derived, preferences] = await Promise.all([deriveOperational(scope), tenantSettingsService.getNotifications(scope.tenantId, scope.userId)]);
+    let rows = [...notifications, ...derived]
+      .filter((item) => accessible(scope, item) && preferences.groups[preferenceGroup(item)].inApp)
+      .map((item) => withUserState(scope, item));
     rows = rows.filter((item) => filters.archiveState === 'archived' ? Boolean(item.archivedAt) : isActive(item));
     const requestedBranch = filters.branchId ?? scope.activeBranchId;
     if (requestedBranch !== 'all') rows = rows.filter((item) => !item.branchId || item.branchId === requestedBranch);
@@ -96,57 +152,54 @@ export const notificationService = {
   async markRead(scope: NotificationScope, notificationId: string, isRead = true) {
     requirePermission(scope, 'notifications.view');
     const all = [...notifications, ...(await deriveOperational(scope))];
-    const record = all.find((item) => item.id === notificationId && accessible(scope, item) && isActive(item));
+    const record = all.filter((item) => accessible(scope, item)).map((item) => withUserState(scope, item)).find((item) => item.id === notificationId && isActive(item));
     if (!record) throw new Error('Notification is outside your permitted scope.');
-    const next = { isRead, readAt: isRead ? now() : undefined, archivedAt: record.archivedAt };
-    state.set(notificationId, next);
-    notifications = notifications.map((item) => item.id === notificationId ? { ...item, ...next } : item);
+    saveUserState(scope, record, { isRead, readAt: isRead ? now() : undefined, archivedAt: record.archivedAt });
   },
   async markAllRead(scope: NotificationScope) {
     requirePermission(scope, 'notifications.view');
-    const rows = [...notifications, ...(await deriveOperational(scope))].filter((item) => accessible(scope, item) && isActive(item) && (!item.branchId || item.branchId === scope.activeBranchId) && !item.isRead);
-    const timestamp = now(); rows.forEach((item) => state.set(item.id, { isRead: true, readAt: timestamp, archivedAt: item.archivedAt }));
-    notifications = notifications.map((item) => rows.some((row) => row.id === item.id) ? { ...item, isRead: true, readAt: timestamp } : item);
+    const preferences = await tenantSettingsService.getNotifications(scope.tenantId, scope.userId);
+    const rows = [...notifications, ...(await deriveOperational(scope))]
+      .filter((item) => accessible(scope, item) && preferences.groups[preferenceGroup(item)].inApp)
+      .map((item) => withUserState(scope, item))
+      .filter((item) => isActive(item) && (!item.branchId || item.branchId === scope.activeBranchId) && !item.isRead);
+    const timestamp = now(); rows.forEach((item) => saveUserState(scope, item, { isRead: true, readAt: timestamp, archivedAt: item.archivedAt }));
     return rows.length;
   },
   async archive(scope: NotificationScope, notificationId: string) {
     requirePermission(scope, 'notifications.manage');
-    const rows = [...notifications, ...(await deriveOperational(scope))]; const record = rows.find((item) => item.id === notificationId && accessible(scope, item) && isActive(item));
+    const rows = [...notifications, ...(await deriveOperational(scope))]; const raw = rows.find((item) => item.id === notificationId && accessible(scope, item)); const record = raw ? withUserState(scope, raw) : undefined;
     if (!record) throw new Error('Notification is outside your permitted scope.');
-    const next = { isRead: true, readAt: record.readAt ?? now(), archivedAt: now() }; state.set(notificationId, next); notifications = notifications.map((item) => item.id === notificationId ? { ...item, ...next } : item);
+    saveUserState(scope, record, { isRead: true, readAt: record.readAt ?? now(), archivedAt: now() });
   },
   async restore(scope: NotificationScope, notificationId: string) {
     requirePermission(scope, 'notifications.manage');
     const rows = [...notifications, ...(await deriveOperational(scope))];
-    const record = rows.find((item) => item.id === notificationId && accessible(scope, item) && Boolean(item.archivedAt));
+    const record = rows.filter((item) => accessible(scope, item)).map((item) => withUserState(scope, item)).find((item) => item.id === notificationId && Boolean(item.archivedAt));
     if (!record) throw new Error('Archived notification is outside your permitted scope.');
-    const next = { isRead: record.isRead, readAt: record.readAt, archivedAt: undefined };
-    state.set(notificationId, next);
-    notifications = notifications.map((item) => item.id === notificationId ? { ...item, ...next } : item);
+    saveUserState(scope, record, { isRead: record.isRead, readAt: record.readAt, archivedAt: undefined });
   },
   async publish(input: Omit<NotificationRecord, 'id' | 'isRead' | 'createdAt'>) { const item: NotificationRecord = { ...input, id: id('notification'), isRead: false, createdAt: now() }; notifications = [item, ...notifications]; return { ...item }; },
   async listNotices(scope: NotificationScope, includeInactive = false) {
     requirePermission(scope, 'notices.view');
     await wait(); const today = new Date().toISOString().slice(0, 10);
-    return notices.filter((item) => item.tenantId === scope.tenantId && (includeInactive || (item.isActive && item.publishDate <= today && (!item.expiryDate || item.expiryDate >= today))) && (item.audience === 'company' || (item.audience === 'branch' && Boolean(item.branchId && scope.permittedBranchIds.includes(item.branchId))) || (item.audience === 'users' && item.userIds.includes(scope.userId)))).sort((a, b) => b.publishDate.localeCompare(a.publishDate)).map((item) => ({ ...item, userIds: [...item.userIds], acknowledgedBy: [...item.acknowledgedBy] }));
+    return notices.filter((item) => item.tenantId === scope.tenantId && ((includeInactive && isTenantAdministrator(scope) && item.createdBy === scope.userId) || (isCurrentNotice(item, today) && isNoticeTargetedToUser(scope, item)))).sort((a, b) => b.publishDate.localeCompare(a.publishDate)).map((item) => ({ ...item, userIds: [...item.userIds], recipientUserIds: item.recipientUserIds === undefined ? undefined : [...item.recipientUserIds], acknowledgedBy: isTenantAdministrator(scope) ? [...item.acknowledgedBy] : item.acknowledgedBy.filter((userId) => userId === scope.userId) }));
   },
-  async saveNotice(scope: NotificationScope, actorId: string, input: NoticeInput, noticeId?: string) {
-    requirePermission(scope, noticeId ? 'notices.edit' : 'notices.create');
+  async saveNotice(scope: NotificationScope, input: NoticeInput, noticeId?: string) {
+    requireTenantAdministrator(scope);
     if (input.branchId && !scope.permittedBranchIds.includes(input.branchId)) throw new Error('The selected branch is outside your permitted scope.');
-    const existing = noticeId ? notices.find((item) => item.id === noticeId && item.tenantId === scope.tenantId) : undefined; if (noticeId && !existing) throw new Error('Notice not found.'); const timestamp = now();
-    const item: Notice = { ...input, id: existing?.id ?? id('notice'), tenantId: scope.tenantId, createdBy: existing?.createdBy ?? actorId, acknowledgedBy: existing?.acknowledgedBy ?? [], createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
+    const existing = noticeId ? notices.find((item) => item.id === noticeId && item.tenantId === scope.tenantId && item.createdBy === scope.userId) : undefined; if (noticeId && !existing) throw new Error('Notice not found.'); const timestamp = now();
+    const audienceChanged = Boolean(existing && (existing.audience !== input.audience || existing.branchId !== input.branchId || existing.userIds.join('|') !== input.userIds.join('|')));
+    const recipientUserIds = (!existing || audienceChanged || !existing.recipientUserIds ? await resolveNoticeRecipients(scope.tenantId, scope.userId, input) : existing.recipientUserIds).filter((userId) => userId !== scope.userId);
+    const acknowledgedBy = (existing?.acknowledgedBy ?? []).filter((userId) => recipientUserIds.includes(userId));
+    const item: Notice = { ...input, id: existing?.id ?? id('notice'), tenantId: scope.tenantId, createdBy: scope.userId, recipientUserIds, acknowledgedBy, createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
     notices = [item, ...notices.filter((candidate) => candidate.id !== item.id)]; return { ...item };
   },
-  async removeNotice(scope: NotificationScope, noticeId: string) { requirePermission(scope, 'notices.delete'); if (!notices.some((item) => item.id === noticeId && item.tenantId === scope.tenantId)) throw new Error('Notice not found.'); notices = notices.filter((item) => !(item.id === noticeId && item.tenantId === scope.tenantId)); },
-  async acknowledgeNotice(scope: NotificationScope, noticeId: string) { requirePermission(scope, 'notices.view'); const item = notices.find((candidate) => candidate.id === noticeId && candidate.tenantId === scope.tenantId); if (!item) throw new Error('Notice not found.'); if (!item.acknowledgedBy.includes(scope.userId)) item.acknowledgedBy.push(scope.userId); item.updatedAt = now(); },
-  async listTemplates(scope: NotificationScope) { requirePermission(scope, 'notificationTemplates.manage'); await wait(); return templates.filter((item) => item.tenantId === scope.tenantId).map((item) => ({ ...item })); },
-  async saveTemplate(scope: NotificationScope, input: NotificationTemplateInput, templateId?: string) { requirePermission(scope, 'notificationTemplates.manage'); const existing = templateId ? templates.find((item) => item.id === templateId && item.tenantId === scope.tenantId) : undefined; if (templateId && !existing) throw new Error('Template not found.'); if (templates.some((item) => item.tenantId === scope.tenantId && item.eventType === input.eventType && item.channel === input.channel && item.id !== templateId)) throw new Error('A template already exists for this event and channel.'); const timestamp = now(); const item: NotificationTemplate = { ...input, id: existing?.id ?? id('template'), tenantId: scope.tenantId, createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp }; templates = [item, ...templates.filter((candidate) => candidate.id !== item.id)]; return { ...item }; },
-  async removeTemplate(scope: NotificationScope, templateId: string) { requirePermission(scope, 'notificationTemplates.manage'); if (!templates.some((item) => item.id === templateId && item.tenantId === scope.tenantId)) throw new Error('Template not found.'); templates = templates.filter((item) => !(item.id === templateId && item.tenantId === scope.tenantId)); },
-  async sendTemplateTest(scope: NotificationScope, templateId: string) { requirePermission(scope, 'notificationTemplates.manage'); const template = templates.find((item) => item.id === templateId && item.tenantId === scope.tenantId); if (!template) throw new Error('Template not found.'); if (template.channel === 'email') { const config = await integrationSettingsService.getEmail(scope.tenantId); if (!config.enabled) throw new Error('Enable the existing Email integration before testing this template.'); } if (template.channel === 'sms') { const config = await integrationSettingsService.getSms(scope.tenantId); if (!config.enabled || !config.useForNotifications) throw new Error('Enable the existing SMS notification integration before testing this template.'); } if (template.channel === 'whatsapp') { const config = await integrationSettingsService.getWhatsApp(scope.tenantId); if (!config.enabled || !config.useForNotifications) throw new Error('Enable the existing WhatsApp notification integration before testing this template.'); } await wait(300); return `Mock ${template.channel.replace('_', '-')} preview sent.`; },
+  async removeNotice(scope: NotificationScope, noticeId: string) { requireTenantAdministrator(scope); if (!notices.some((item) => item.id === noticeId && item.tenantId === scope.tenantId && item.createdBy === scope.userId)) throw new Error('Notice not found.'); notices = notices.filter((item) => !(item.id === noticeId && item.tenantId === scope.tenantId)); },
+  async acknowledgeNotice(scope: NotificationScope, noticeId: string) { requirePermission(scope, 'notices.view'); const today = new Date().toISOString().slice(0, 10); const candidate = notices.find((item) => item.id === noticeId && item.tenantId === scope.tenantId); if (candidate?.createdBy === scope.userId) throw new Error('Notice creators cannot acknowledge their own notice.'); const item = candidate && isCurrentNotice(candidate, today) && isNoticeTargetedToUser(scope, candidate) ? candidate : undefined; if (!item) throw new Error('Notice is not available to this user.'); if (!item.acknowledgementRequired) throw new Error('This notice does not require acknowledgement.'); if (!item.acknowledgedBy.includes(scope.userId)) item.acknowledgedBy.push(scope.userId); item.updatedAt = now(); },
 };
 
 // Backend persistence registration (see src/core/persistence).
 registerList('notifications.records', () => notifications, (rows) => { notifications = rows; });
 registerList('notifications.notices', () => notices, (rows) => { notices = rows; });
-registerList('notifications.templates', () => templates, (rows) => { templates = rows; });
-registerMap('notifications.state', state);
+registerList('notifications.state', () => state, (rows) => { state = rows.map((row) => ({ ...row, id: row.id || `${row.userId}:${row.notificationId}` })); });

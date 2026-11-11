@@ -116,10 +116,6 @@ export const TENANT_PERMISSIONS = {
     VIEW: 'notifications.view',
     MANAGE: 'notifications.manage',
     NOTICES_VIEW: 'notices.view',
-    NOTICES_CREATE: 'notices.create',
-    NOTICES_EDIT: 'notices.edit',
-    NOTICES_DELETE: 'notices.delete',
-    TEMPLATES_MANAGE: 'notificationTemplates.manage',
     PREFERENCES_MANAGE: 'notificationPreferences.manage',
   },
   AUDIT: {
@@ -306,7 +302,6 @@ export const TENANT_PERMISSIONS = {
       "financial_year",
       "taxes",
       "payment_terms",
-      "payment_methods",
       "document_settings",
       "notification_preferences",
       "login_activity",

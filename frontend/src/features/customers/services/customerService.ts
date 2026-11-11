@@ -5,6 +5,7 @@ import { mockCustomers } from '@/features/customers/mocks/customers';
 import { belongsToScope, type TenantBranchScope } from '@/core/tenant/dataScope';
 import { registerList } from '@/core/persistence/stateRegistry';
 import { leadService } from '@/features/crm/leads/services/leadService';
+import { tenantSettingsService } from '@/features/settings/finance/services/tenantSettingsService';
 
 let customersStore: Customer[] = [...mockCustomers];
 
@@ -90,9 +91,12 @@ export const customerService = {
   async createCustomer(scope: TenantBranchScope, data: CreateCustomerInput): Promise<Customer> {
     await new Promise((resolve) => setTimeout(resolve, 300));
     assertUniqueContact(scope.tenantId, data);
+    const paymentTerm = tenantSettingsService.requirePaymentTerm(scope.tenantId, data.paymentTermCode ?? data.paymentTermsDays);
     const now = new Date().toISOString();
     const newCustomer: Customer = {
       ...data,
+      paymentTermCode: paymentTerm.code,
+      paymentTermsDays: paymentTerm.dueDays,
       id: crypto.randomUUID(),
       tenantId: scope.tenantId,
       branchId: scope.branchId,
@@ -114,10 +118,13 @@ export const customerService = {
       (customer) => customer.id === id && belongsToScope(customer, scope),
     );
     if (index === -1) throw new Error('Customer not found');
+    const paymentTerm = tenantSettingsService.requirePaymentTerm(scope.tenantId, data.paymentTermCode ?? data.paymentTermsDays ?? customersStore[index].paymentTermCode ?? customersStore[index].paymentTermsDays);
 
     const updated: Customer = {
       ...customersStore[index],
       ...data,
+      paymentTermCode: paymentTerm.code,
+      paymentTermsDays: paymentTerm.dueDays,
       tenantId: customersStore[index].tenantId,
       branchId: customersStore[index].branchId,
       updatedAt: new Date().toISOString(),

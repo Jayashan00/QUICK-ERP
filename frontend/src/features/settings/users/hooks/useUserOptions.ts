@@ -7,9 +7,10 @@ import { userOptionService } from '@/features/settings/users/services/userOption
 
 interface UseUserOptionsParams {
   includeInactive?: boolean;
+  enabled?: boolean;
 }
 
-export function useUserOptions({ includeInactive = false }: UseUserOptionsParams = {}) {
+export function useUserOptions({ includeInactive = false, enabled = true }: UseUserOptionsParams = {}) {
   const { tenantId } = useTenant();
   const userOptionsQuery = useQuery({
     queryKey: userOptionKeys.forTenant(tenantId ?? ''),
@@ -17,7 +18,7 @@ export function useUserOptions({ includeInactive = false }: UseUserOptionsParams
       if (!tenantId) throw new Error('Tenant context is unavailable.');
       return userOptionService.getUserOptions(tenantId);
     },
-    enabled: Boolean(tenantId),
+    enabled: Boolean(enabled && tenantId),
   });
 
   const users = useMemo(

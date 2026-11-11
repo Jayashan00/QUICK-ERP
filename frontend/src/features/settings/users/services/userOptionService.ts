@@ -7,6 +7,7 @@ export interface UserOption {
   jobTitle?: string;
   departmentId?: string;
   departmentName?: string;
+  branchIds: string[];
   isActive: boolean;
 }
 

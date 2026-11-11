@@ -125,6 +125,7 @@ export function SupplierEditPage() {
     taxCategory: supplier.taxCategory ?? '',
     registrationNumber: supplier.registrationNumber ?? '',
     currency: supplier.currency,
+    paymentTermCode: supplier.paymentTermCode,
     paymentTermsDays: supplier.paymentTermsDays,
     paymentMethod: supplier.paymentMethod ?? 'bank_transfer',
     bankDetails: {

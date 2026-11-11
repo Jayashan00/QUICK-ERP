@@ -1,4 +1,4 @@
-import type { Notice, NotificationRecord, NotificationTemplate } from '../types/notifications';
+import type { Notice, NotificationRecord } from '../types/notifications';
 
 const now = new Date();
 const ago = (hours: number) => new Date(now.getTime() - hours * 3_600_000).toISOString();
@@ -17,9 +17,4 @@ export const mockNotices: Notice[] = [
   { id: 'notice-001', tenantId: 'tenant-001', title: 'Quarter-end stock count', message: 'Main Office stock locations will be counted after business hours. Complete open transfers before the count begins.', audience: 'branch', branchId: 'branch-001', userIds: [], priority: 'high', publishDate: today, expiryDate: later(7), isActive: true, acknowledgementRequired: true, acknowledgedBy: [], createdBy: 'usr-001', createdAt: ago(24), updatedAt: ago(24) },
   { id: 'notice-002', tenantId: 'tenant-001', title: 'ERP maintenance window', message: 'A mock maintenance window is scheduled this weekend. Offline POS and Stock queues remain available.', audience: 'company', userIds: [], priority: 'normal', publishDate: today, expiryDate: later(14), isActive: true, acknowledgementRequired: false, acknowledgedBy: [], createdBy: 'usr-001', createdAt: ago(36), updatedAt: ago(36) },
   { id: 'notice-other-tenant', tenantId: 'tenant-002', title: 'Private tenant notice', message: 'This record verifies tenant isolation.', audience: 'company', userIds: [], priority: 'normal', publishDate: today, isActive: true, acknowledgementRequired: false, acknowledgedBy: [], createdBy: 'usr-999', createdAt: ago(4), updatedAt: ago(4) },
-];
-
-export const mockNotificationTemplates: NotificationTemplate[] = [
-  { id: 'template-approval', tenantId: 'tenant-001', name: 'Approval requested', eventType: 'approval.submitted', subject: '{{documentType}} {{reference}} requires approval', body: '{{requesterName}} submitted {{reference}} for your review. Open the related record to approve or reject it.', channel: 'in_app', isActive: true, createdAt: ago(240), updatedAt: ago(240) },
-  { id: 'template-low-stock', tenantId: 'tenant-001', name: 'Low stock alert', eventType: 'inventory.low_stock', subject: '{{productName}} requires attention', body: '{{productName}} has {{availableQuantity}} available at {{locationName}}. Reorder level: {{reorderLevel}}.', channel: 'email', isActive: true, createdAt: ago(220), updatedAt: ago(220) },
 ];

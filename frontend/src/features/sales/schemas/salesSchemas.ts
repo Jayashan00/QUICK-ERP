@@ -13,6 +13,7 @@ const salesLine = z.object({
   quantity: z.number().positive("Quantity must be greater than zero."),
   unitPrice: z.number().nonnegative("Price cannot be negative."),
   discountPercent: z.number().min(0).max(100),
+  taxCode: z.string().optional(),
   taxPercent: z.number().min(0).max(100),
 });
 const uniqueLines = z

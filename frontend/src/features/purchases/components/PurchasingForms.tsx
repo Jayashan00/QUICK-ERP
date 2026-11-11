@@ -13,6 +13,10 @@ import { Textarea } from "@/shared/components/forms/Textarea";
 import { TextInput } from "@/shared/components/forms/TextInput";
 import { getErrorMessage } from "@/shared/utils/errors";
 import { appToast } from "@/shared/utils/toast";
+import { usePaymentTerms, useTaxRates } from '@/features/settings/finance/hooks/useTenantSettings';
+import { PaymentTermSelect } from '@/features/settings/finance/components/PaymentTermSelect';
+import { addPaymentTermDays, matchPaymentTerm } from '@/features/settings/finance/paymentTerms';
+import { isPurchaseTaxApplicable } from '@/features/settings/finance/tax';
 import { useStockLocationOptions } from "@/features/inventory/hooks/useStockLocationManagement";
 import { useWarehouseOptions } from "@/features/inventory/hooks/useWarehouseManagement";
 import {
@@ -58,6 +62,7 @@ interface EditableLine {
   quantity: number;
   unitPrice: number;
   discountPercent: number;
+  taxCode?: string;
   taxPercent: number;
 }
 const today = () => new Date().toISOString().slice(0, 10);
@@ -69,6 +74,7 @@ const blankLine = (): EditableLine => ({
   quantity: 1,
   unitPrice: 0,
   discountPercent: 0,
+  taxCode: "",
   taxPercent: 0,
 });
 const option = (
@@ -111,12 +117,16 @@ function PurchaseLineEditor({
   value,
   onChange,
   pricing = true,
+  taxDate,
 }: {
   value: EditableLine[];
   onChange: (value: EditableLine[]) => void;
   pricing?: boolean;
+  taxDate: string;
 }) {
   const products = usePurchasingProductOptions();
+  const taxQuery = useTaxRates();
+  const taxes = taxQuery.taxes.filter((tax) => isPurchaseTaxApplicable(tax, taxDate));
   const update = (index: number, patch: Partial<EditableLine>) =>
     onChange(
       value.map((line, lineIndex) =>
@@ -151,9 +161,13 @@ function PurchaseLineEditor({
                 const product = products.data?.find(
                   (item) => item.id === event.target.value,
                 );
+                const productTax = taxes.find((item) => item.code === product?.taxCode);
+                const tax = productTax ?? taxes.find((item) => item.isDefault);
                 update(index, {
                   productId: event.target.value,
                   unitPrice: product?.costPrice ?? line.unitPrice,
+                  taxCode: tax?.code ?? "",
+                  taxPercent: tax?.percentage ?? 0,
                 });
               }}
               placeholder="Select product"
@@ -200,15 +214,14 @@ function PurchaseLineEditor({
                   }
                 />
               </FormField>
-              <FormField label="Tax %">
-                <TextInput
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={line.taxPercent}
-                  onChange={(event) =>
-                    update(index, { taxPercent: Number(event.target.value) })
-                  }
+              <FormField label="Purchase tax">
+                <Select
+                  value={line.taxCode ?? ""}
+                  onChange={(event) => {
+                    const tax = taxes.find((item) => item.code === event.target.value);
+                    update(index, { taxCode: tax?.code ?? "", taxPercent: tax?.percentage ?? 0 });
+                  }}
+                  options={[{ value: "", label: "No tax / Exempt" }, ...taxes.map((tax) => ({ value: tax.code, label: `${tax.name} (${tax.percentage}%)` }))]}
                 />
               </FormField>
             </>
@@ -345,6 +358,7 @@ export function PurchaseRequestFormModal({
               value={field.value}
               onChange={field.onChange}
               pricing={false}
+              taxDate={form.watch("requiredDate")}
             />
           )}
         />
@@ -461,7 +475,7 @@ export function SupplierQuotationFormModal({ isOpen, onClose }: Props) {
       quotationDate: today(),
       validityDate: future(30),
       deliveryDays: 7,
-      paymentTerms: "Net 30",
+      paymentTerms: "",
       currency: "USD",
       notes: "",
       items: [blankLine()],
@@ -527,7 +541,7 @@ export function SupplierQuotationFormModal({ isOpen, onClose }: Props) {
           </FormField>
           <FormField label="Supplier">
             <Select
-              {...form.register("supplierId")}
+              {...form.register("supplierId", { onChange: (event) => { const supplier = suppliers.data?.find((item) => item.id === event.target.value); if (supplier) { form.setValue("paymentTerms", supplier.paymentTerms); form.setValue("currency", supplier.currency); } } })}
               placeholder="Select supplier"
               options={(suppliers.data ?? [])
                 .filter(
@@ -556,7 +570,7 @@ export function SupplierQuotationFormModal({ isOpen, onClose }: Props) {
             />
           </FormField>
           <FormField label="Payment terms">
-            <TextInput {...form.register("paymentTerms")} />
+            <Controller control={form.control} name="paymentTerms" render={({ field }) => <PaymentTermSelect value={field.value} onChange={(code) => field.onChange(code)} />} />
           </FormField>
           <FormField label="Currency">
             <TextInput {...form.register("currency")} />
@@ -566,7 +580,7 @@ export function SupplierQuotationFormModal({ isOpen, onClose }: Props) {
           control={form.control}
           name="items"
           render={({ field }) => (
-            <PurchaseLineEditor value={field.value} onChange={field.onChange} />
+            <PurchaseLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("quotationDate")} />
           )}
         />
         <FormField label="Notes">
@@ -593,7 +607,7 @@ export function PurchaseOrderFormModal({
       warehouseId: "",
       orderDate: today(),
       expectedDeliveryDate: future(14),
-      paymentTerms: "Net 30",
+      paymentTerms: "",
       currency: "USD",
       notes: "",
       items: [blankLine()],
@@ -620,6 +634,7 @@ export function PurchaseOrderFormModal({
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               discountPercent: item.discountPercent,
+              taxCode: item.taxCode,
               taxPercent: item.taxPercent,
             })),
           }
@@ -629,7 +644,7 @@ export function PurchaseOrderFormModal({
             warehouseId: "",
             orderDate: today(),
             expectedDeliveryDate: future(14),
-            paymentTerms: "Net 30",
+            paymentTerms: "",
             currency: "USD",
             notes: "",
             items: [blankLine()],
@@ -688,7 +703,7 @@ export function PurchaseOrderFormModal({
             error={form.formState.errors.supplierId?.message}
           >
             <Select
-              {...form.register("supplierId")}
+              {...form.register("supplierId", { onChange: (event) => { const supplier = suppliers.data?.find((item) => item.id === event.target.value); if (supplier) { form.setValue("paymentTerms", supplier.paymentTerms); form.setValue("currency", supplier.currency); } } })}
               placeholder="Select supplier"
               options={(suppliers.data ?? []).map((item) => ({
                 value: item.id,
@@ -732,7 +747,7 @@ export function PurchaseOrderFormModal({
             <DatePicker {...form.register("expectedDeliveryDate")} />
           </FormField>
           <FormField label="Payment terms">
-            <TextInput {...form.register("paymentTerms")} />
+            <Controller control={form.control} name="paymentTerms" render={({ field }) => <PaymentTermSelect value={field.value} onChange={(code) => field.onChange(code)} />} />
           </FormField>
           <FormField label="Currency">
             <TextInput {...form.register("currency")} />
@@ -742,7 +757,7 @@ export function PurchaseOrderFormModal({
           control={form.control}
           name="items"
           render={({ field }) => (
-            <PurchaseLineEditor value={field.value} onChange={field.onChange} />
+            <PurchaseLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("orderDate")} />
           )}
         />
         <FormField label="Notes">
@@ -948,6 +963,7 @@ export function PurchaseInvoiceFormModal({ isOpen, onClose }: Props) {
   const orders = usePurchaseOrders({ branchId: "all", pageSize: 100 });
   const receipts = useGoodsReceipts({ branchId: "all", pageSize: 100 });
   const mutations = usePurchasingMutations();
+  const { terms } = usePaymentTerms();
   const form = useForm<PurchaseInvoiceFormValues>({
     resolver: zodResolver(purchaseInvoiceSchema),
     defaultValues: {
@@ -956,12 +972,17 @@ export function PurchaseInvoiceFormModal({ isOpen, onClose }: Props) {
       supplierInvoiceNumber: "",
       invoiceDate: today(),
       dueDate: future(30),
-      paymentTerms: "Net 30",
+      paymentTerms: "",
       notes: "",
       items: [blankLine()],
     },
   });
   const poId = form.watch("purchaseOrderId");
+  const invoiceDate = form.watch("invoiceDate"), paymentTerms = form.watch("paymentTerms");
+  useEffect(() => {
+    const term = matchPaymentTerm(terms, paymentTerms);
+    if (term && invoiceDate) form.setValue("dueDate", addPaymentTermDays(invoiceDate, term.dueDays));
+  }, [form, invoiceDate, paymentTerms, terms]);
   useEffect(() => {
     const po = orders.data?.data.find((item) => item.id === poId);
     if (po) {
@@ -974,6 +995,7 @@ export function PurchaseInvoiceFormModal({ isOpen, onClose }: Props) {
           quantity: item.quantity,
           unitPrice: item.unitPrice,
           discountPercent: item.discountPercent,
+          taxCode: item.taxCode,
           taxPercent: item.taxPercent,
         })),
       );
@@ -1037,17 +1059,17 @@ export function PurchaseInvoiceFormModal({ isOpen, onClose }: Props) {
             <DatePicker {...form.register("invoiceDate")} />
           </FormField>
           <FormField label="Due date">
-            <DatePicker {...form.register("dueDate")} />
+            <DatePicker {...form.register("dueDate")} readOnly aria-readonly="true" />
           </FormField>
           <FormField label="Payment terms">
-            <TextInput {...form.register("paymentTerms")} />
+            <Controller control={form.control} name="paymentTerms" render={({ field }) => <PaymentTermSelect value={field.value} onChange={(code) => field.onChange(code)} />} />
           </FormField>
         </div>
         <Controller
           control={form.control}
           name="items"
           render={({ field }) => (
-            <PurchaseLineEditor value={field.value} onChange={field.onChange} />
+            <PurchaseLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("invoiceDate")} />
           )}
         />
         <FormField label="Notes">

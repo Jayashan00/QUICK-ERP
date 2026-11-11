@@ -21,6 +21,8 @@ const baseCustomer = {
 };
 
 const created = await customerService.createCustomer(scope, baseCustomer);
+assert.equal(created.paymentTermCode, 'NET30');
+assert.equal(created.paymentTermsDays, 30);
 
 await assert.rejects(
   () => customerService.createCustomer(scope, {

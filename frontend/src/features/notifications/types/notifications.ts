@@ -2,7 +2,6 @@ export type NotificationType = 'approval' | 'alert' | 'reminder' | 'success' | '
 export type NotificationPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type NotificationModule = 'sales' | 'purchasing' | 'inventory' | 'finance' | 'hr' | 'projects' | 'documents' | 'support' | 'sync' | 'system';
 export type NotificationAudience = 'company' | 'branch' | 'user';
-export type NotificationChannel = 'in_app' | 'email' | 'sms' | 'whatsapp';
 
 export interface NotificationRecord {
   id: string;
@@ -31,6 +30,7 @@ export interface NotificationRecord {
 export interface NotificationScope {
   tenantId: string;
   userId: string;
+  roleId: string;
   activeBranchId: string;
   permittedBranchIds: string[];
   permissions: string[];
@@ -58,6 +58,16 @@ export interface NotificationListResult {
   pageSize: number;
 }
 
+export interface NotificationUserState {
+  id: string;
+  tenantId: string;
+  userId: string;
+  notificationId: string;
+  isRead: boolean;
+  readAt?: string;
+  archivedAt?: string;
+}
+
 export type NoticeAudience = 'company' | 'branch' | 'users';
 export interface Notice {
   id: string;
@@ -67,6 +77,7 @@ export interface Notice {
   audience: NoticeAudience;
   branchId?: string;
   userIds: string[];
+  recipientUserIds?: string[];
   priority: NotificationPriority;
   publishDate: string;
   expiryDate?: string;
@@ -90,18 +101,3 @@ export interface NoticeInput {
   isActive: boolean;
   acknowledgementRequired: boolean;
 }
-
-export interface NotificationTemplate {
-  id: string;
-  tenantId: string;
-  name: string;
-  eventType: string;
-  subject: string;
-  body: string;
-  channel: NotificationChannel;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type NotificationTemplateInput = Omit<NotificationTemplate, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>;

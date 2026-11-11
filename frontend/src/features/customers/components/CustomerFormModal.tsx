@@ -7,7 +7,6 @@ import { Modal } from '@/shared/components/common/Modal';
 import { CurrencyInput } from '@/shared/components/forms/CurrencyInput';
 import { FormField } from '@/shared/components/forms/FormField';
 import { FormSection } from '@/shared/components/forms/FormSection';
-import { NumberInput } from '@/shared/components/forms/NumberInput';
 import { Select } from '@/shared/components/forms/Select';
 import { Textarea } from '@/shared/components/forms/Textarea';
 import { TextInput } from '@/shared/components/forms/TextInput';
@@ -15,6 +14,7 @@ import { Checkbox } from '@/shared/components/forms/Checkbox';
 import { getErrorMessage } from '@/shared/utils/errors';
 import { appToast } from '@/shared/utils/toast';
 import type { Customer } from '@/features/customers/types/customer';
+import { PaymentTermSelect } from '@/features/settings/finance/components/PaymentTermSelect';
 
 import { customerSchema, type CustomerFormValues } from '../schemas/customerSchema';
 
@@ -43,6 +43,7 @@ function getDefaultValues(customer?: Customer | null): CustomerFormValues {
       taxNumber: customer.taxNumber ?? '',
       currency: customer.currency,
       creditLimit: customer.creditLimit,
+      paymentTermCode: customer.paymentTermCode ?? (customer.paymentTermsDays === undefined ? '' : String(customer.paymentTermsDays)),
       paymentTermsDays: customer.paymentTermsDays,
       status: customer.status,
       billingAddress: {
@@ -80,6 +81,7 @@ function getDefaultValues(customer?: Customer | null): CustomerFormValues {
     taxNumber: '',
     currency: 'USD',
     creditLimit: undefined,
+    paymentTermCode: '',
     paymentTermsDays: undefined,
     status: 'active',
     billingAddress: {
@@ -103,6 +105,7 @@ export function CustomerFormModal({ isOpen, onClose, onSubmit, customer }: Custo
     handleSubmit,
     register,
     reset,
+    setValue,
     setError,
     watch,
     formState: { errors, isSubmitting },
@@ -198,9 +201,9 @@ export function CustomerFormModal({ isOpen, onClose, onSubmit, customer }: Custo
               )} />
             </FormField>
 
-            <FormField label="Payment Terms" htmlFor="customer-payment-terms" error={errors.paymentTermsDays?.message} hint="Number of days before payment is due.">
-              <Controller name="paymentTermsDays" control={control} render={({ field: { value, onChange, ...field } }) => (
-                <NumberInput {...field} id="customer-payment-terms" min={0} step={1} value={value ?? ''} error={Boolean(errors.paymentTermsDays)} aria-describedby={errors.paymentTermsDays ? 'customer-payment-terms-error' : 'customer-payment-terms-hint'} placeholder="30" onChange={(nextValue) => onChange(nextValue === '' ? undefined : nextValue)} />
+            <FormField label="Payment Terms" htmlFor="customer-payment-terms" required error={errors.paymentTermCode?.message} hint="Controls the automatically calculated invoice due date.">
+              <Controller name="paymentTermCode" control={control} render={({ field }) => (
+                <PaymentTermSelect id="customer-payment-terms" required value={field.value} error={Boolean(errors.paymentTermCode)} aria-describedby={errors.paymentTermCode ? 'customer-payment-terms-error' : 'customer-payment-terms-hint'} onChange={(code, term) => { field.onChange(code); setValue('paymentTermsDays', term.dueDays); }} />
               )} />
             </FormField>
           </div>

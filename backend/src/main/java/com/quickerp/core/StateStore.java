@@ -3,6 +3,7 @@ package com.quickerp.core;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -146,6 +147,7 @@ public final class StateStore {
             String tenant = principal.scopeTenant();
             boolean platform = principal.superAdmin();
             Permissions permissions = access.permissions(connection, principal);
+            Set<String> allowedBranches = allowedBranches(connection, principal);
             List<StoredRecord> records = new ArrayList<>();
             Set<String> collections = new TreeSet<>(seededCollections(connection, tenant));
             String sql = platform
@@ -160,7 +162,9 @@ public final class StateStore {
                     // The name is always reported, so the client never fills a hidden collection with starter data.
                     collections.add(collection);
                     if (!platform && !policy.canRead(permissions, collection)) continue;
-                    JsonNode data = visible(permissions, platform, collection, Sql.readJson(mapper, rows.getString(3)));
+                    JsonNode data = visible(connection, principal, permissions, platform, allowedBranches, collection,
+                            rows.getString(2), Sql.readJson(mapper, rows.getString(3)));
+                    if (data == null) continue;
                     records.add(new StoredRecord(collection, rows.getString(2), data, rows.getLong(4)));
                 }
             }
@@ -175,6 +179,7 @@ public final class StateStore {
         return db.snapshot(connection -> {
             boolean platform = principal.superAdmin();
             Permissions permissions = access.permissions(connection, principal);
+            Set<String> allowedBranches = allowedBranches(connection, principal);
             String sql = platform
                     ? "SELECT collection, record_id, data, deleted, change_seq, client_id, version FROM erp_records WHERE change_seq > ? AND (tenant_id = ? OR collection = ANY (?)) ORDER BY change_seq LIMIT " + CHANGES_PAGE
                     : "SELECT collection, record_id, data, deleted, change_seq, client_id, version FROM erp_records WHERE change_seq > ? AND tenant_id = ? ORDER BY change_seq LIMIT " + CHANGES_PAGE;
@@ -190,8 +195,11 @@ public final class StateStore {
                     String collection = rows.getString("collection");
                     if (!platform && !policy.canRead(permissions, collection)) continue;
                     boolean deleted = rows.getBoolean("deleted");
-                    JsonNode data = deleted ? NullNode.getInstance()
-                            : visible(permissions, platform, collection, Sql.readJson(mapper, rows.getString("data")));
+                    JsonNode stored = Sql.readJson(mapper, rows.getString("data"));
+                    JsonNode shown = visible(connection, principal, permissions, platform, allowedBranches, collection,
+                            rows.getString("record_id"), stored);
+                    if (shown == null) continue;
+                    JsonNode data = deleted ? NullNode.getInstance() : shown;
                     records.add(new ChangeRecord(collection, rows.getString("record_id"), data, deleted, rows.getLong("version")));
                 }
             }
@@ -199,9 +207,96 @@ public final class StateStore {
         });
     }
 
-    private JsonNode visible(Permissions permissions, boolean platform, String collection, JsonNode data) {
+    private JsonNode visible(Connection connection, Principal principal, Permissions permissions, boolean platform,
+                             Set<String> allowedBranches, String collection, String recordId, JsonNode data) throws SQLException {
         if (platform) return data;
-        return AccessPolicy.redact(data, policy.redactedFields(permissions, collection));
+        JsonNode redacted = AccessPolicy.redact(data, policy.redactedFields(permissions, collection));
+        if (!rowScopedCollection(collection)) return redacted;
+        if (ORDER_RECORD.equals(recordId)) return mapper.createArrayNode();
+        if (redacted != null && redacted.isArray()) {
+            ArrayNode shown = mapper.createArrayNode();
+            for (JsonNode item : redacted) if (rowVisible(principal, permissions, allowedBranches, collection, item)) shown.add(restrictNoticeReport(principal, permissions, collection, item));
+            return shown;
+        }
+        if (redacted == null || !redacted.isObject()) return null;
+        return rowVisible(principal, permissions, allowedBranches, collection, redacted) ? restrictNoticeReport(principal, permissions, collection, redacted) : null;
+    }
+
+    private static JsonNode restrictNoticeReport(Principal principal, Permissions permissions, String collection, JsonNode row) {
+        if (!"notifications.notices".equals(collection) || permissions.isAll() || !row.isObject()) return row.deepCopy();
+        ObjectNode safe = ((ObjectNode) row).deepCopy();
+        ArrayNode ownAcknowledgement = safe.putArray("acknowledgedBy");
+        for (JsonNode userId : row.path("acknowledgedBy")) {
+            if (principal.userId().equals(userId.asText())) ownAcknowledgement.add(principal.userId());
+        }
+        safe.remove("recipientUserIds");
+        if ("users".equals(Sql.text(row, "audience"))) {
+            safe.putArray("userIds").add(principal.userId());
+        }
+        return safe;
+    }
+
+    private static boolean rowScopedCollection(String collection) {
+        return "notifications.records".equals(collection) || "notifications.state".equals(collection)
+                || "notifications.notices".equals(collection) || "settings.notificationPreferences".equals(collection);
+    }
+
+    private static boolean rowVisible(Principal principal, Permissions permissions, Set<String> allowedBranches,
+                                      String collection, JsonNode row) {
+        if (!principal.tenantId().equals(Sql.text(row, "tenantId"))) return false;
+        if ("notifications.state".equals(collection) || "settings.notificationPreferences".equals(collection)) {
+            return principal.userId().equals(Sql.text(row, "userId"));
+        }
+        if ("notifications.notices".equals(collection)) {
+            return noticeVisible(principal, permissions, allowedBranches, row);
+        }
+        String branchId = Sql.text(row, "branchId");
+        if (branchId != null && !branchId.isBlank() && !allowedBranches.contains(branchId)) return false;
+        if ("notifications.records".equals(collection)) {
+            String required = Sql.text(row, "requiredPermission");
+            if (required != null && !required.isBlank() && !permissions.matches(required)) return false;
+            return !"user".equals(Sql.text(row, "audience")) || principal.userId().equals(Sql.text(row, "userId"));
+        }
+        return true;
+    }
+
+    private static boolean noticeVisible(Principal principal, Permissions permissions, Set<String> allowedBranches, JsonNode row) {
+        if (permissions.isAll() && principal.userId().equals(Sql.text(row, "createdBy"))) return true;
+        String today = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString();
+        if (!row.path("isActive").asBoolean(false)) return false;
+        String publishDate = Sql.text(row, "publishDate");
+        String expiryDate = Sql.text(row, "expiryDate");
+        if (publishDate == null || publishDate.compareTo(today) > 0 || expiryDate != null && !expiryDate.isBlank() && expiryDate.compareTo(today) < 0) return false;
+        String audience = Sql.text(row, "audience");
+        if ("company".equals(audience)) return true;
+        if ("branch".equals(audience)) {
+            String branchId = Sql.text(row, "branchId");
+            return branchId != null && allowedBranches.contains(branchId);
+        }
+        if ("users".equals(audience)) {
+            JsonNode users = row.path("userIds");
+            if (!users.isArray()) return false;
+            for (JsonNode user : users) if (principal.userId().equals(user.asText())) return true;
+        }
+        return false;
+    }
+
+    private Set<String> allowedBranches(Connection connection, Principal principal) throws SQLException {
+        if (principal.superAdmin()) return Set.of();
+        Set<String> result = new LinkedHashSet<>();
+        try (PreparedStatement statement = Sql.prepare(connection,
+                "SELECT profile FROM app_users WHERE id = ? AND tenant_id = ?", principal.userId(), principal.tenantId());
+             ResultSet rows = statement.executeQuery()) {
+            if (!rows.next()) return result;
+            JsonNode profile = Sql.readJson(mapper, rows.getString(1));
+            for (String field : List.of("allowedBranchIds", "branchIds")) {
+                JsonNode values = profile.path(field);
+                if (values.isArray()) values.forEach(value -> { if (!value.asText().isBlank()) result.add(value.asText()); });
+            }
+            String defaultBranch = Sql.text(profile, "defaultBranchId");
+            if (defaultBranch != null && !defaultBranch.isBlank()) result.add(defaultBranch);
+        }
+        return result;
     }
 
     // ----------------------------------------------------------------- writes
@@ -269,8 +364,11 @@ public final class StateStore {
                             && (current == null ? change.baseVersion() > 0 : current.version() != change.baseVersion())) {
                         boolean gone = current == null || current.deleted();
                         boolean hidden = !principal.superAdmin() && !policy.canRead(permissions, change.collection());
+                        JsonNode conflictData = gone || hidden ? NullNode.getInstance()
+                                : visible(connection, principal, permissions, principal.superAdmin(), allowedBranches(connection, principal),
+                                        change.collection(), change.recordId(), current.data());
                         conflicts.add(new Conflict(change.collection(), change.recordId(),
-                                gone || hidden ? NullNode.getInstance() : visible(permissions, principal.superAdmin(), change.collection(), current.data()),
+                                conflictData == null ? NullNode.getInstance() : conflictData,
                                 gone, current == null ? 0 : current.version()));
                         connection.releaseSavepoint(savepoint);
                         continue;
@@ -697,6 +795,12 @@ public final class StateStore {
         if (tenantScope && RecordGuards.QUOTATIONS.equals(change.collection())) {
             guardQuotation(connection, tenant, change);
         }
+        if (tenantScope && change.collection().startsWith("notifications.")) {
+            guardNotificationChange(connection, principal, permissions, tenant, change);
+        }
+        if (tenantScope && "settings.notificationPreferences".equals(change.collection())) {
+            guardOwnedNotificationRow(principal, tenant, change, "notification preference");
+        }
         if (USERS_COLLECTION.equals(change.collection()) && tenantScope) {
             syncUsers(connection, principal, permissions, tenant, change);
         }
@@ -704,6 +808,127 @@ public final class StateStore {
                 && VALUE_RECORD.equals(change.recordId()) && !change.isDelete()) {
             syncTenantConfigurations(connection, change.data());
         }
+    }
+
+    private void guardNotificationChange(Connection connection, Principal principal, Permissions permissions,
+                                         String tenant, Change change) throws SQLException {
+        String collection = change.collection();
+        if (ORDER_RECORD.equals(change.recordId())) return;
+        if (isReserved(change.recordId())) {
+            throw ApiException.badRequest("Notification data must be saved one record at a time.");
+        }
+        if ("notifications.state".equals(collection)) {
+            guardOwnedNotificationRow(principal, tenant, change, "notification state");
+            return;
+        }
+        if ("notifications.records".equals(collection)) {
+            boolean manager = permissions.matches("notifications.manage");
+            JsonNode stored = storedData(connection, tenant, collection, change.recordId());
+            if (change.isDelete()) {
+                if (!manager) throw ApiException.forbidden("Only notification managers may delete notifications.");
+                return;
+            }
+            JsonNode row = change.data();
+            requireNotificationIdentity(principal, tenant, change, row, "notification");
+            if (stored != null && !manager) throw ApiException.forbidden("Published notifications cannot be changed.");
+            String audience = Sql.text(row, "audience");
+            if (!"user".equals(audience) && !manager) {
+                throw ApiException.forbidden("Only notification managers may publish company or branch notifications.");
+            }
+            String target = Sql.text(row, "userId");
+            boolean mayNotifyOthers = manager || permissions.matches("support.reply")
+                    || permissions.matches("users.manage") || permissions.matches("settings.login_activity.configure");
+            if ("user".equals(audience) && !principal.userId().equals(target) && !mayNotifyOthers) {
+                throw ApiException.forbidden("You cannot publish a notification for another user.");
+            }
+            String required = Sql.text(row, "requiredPermission");
+            if (required == null || required.isBlank()) {
+                throw ApiException.validation("requiredPermission", "A notification must declare its required permission.");
+            }
+            if (!permissions.matches(required)) {
+                throw ApiException.forbidden("You cannot publish a notification for a permission you do not have.");
+            }
+            String branch = Sql.text(row, "branchId");
+            if (branch != null && !branch.isBlank() && !allowedBranches(connection, principal).contains(branch)) {
+                throw ApiException.forbidden("The notification branch is outside your permitted scope.");
+            }
+            return;
+        }
+        if ("notifications.notices".equals(collection)) {
+            JsonNode stored = storedData(connection, tenant, collection, change.recordId());
+            boolean administrator = permissions.isAll();
+            if (change.isDelete()) {
+                if (!administrator || stored == null || !principal.userId().equals(Sql.text(stored, "createdBy"))) {
+                    throw ApiException.forbidden("Only the tenant administrator may delete notices they created.");
+                }
+                return;
+            }
+            JsonNode row = change.data();
+            requireNotificationIdentity(principal, tenant, change, row, "notice");
+            if (stored == null) {
+                if (!administrator || !principal.userId().equals(Sql.text(row, "createdBy"))) {
+                    throw ApiException.forbidden("Only the tenant administrator may create notices.");
+                }
+                if (row.path("acknowledgedBy").size() > 0) {
+                    throw ApiException.forbidden("A new notice cannot contain acknowledgement records.");
+                }
+                for (JsonNode recipient : row.path("recipientUserIds")) {
+                    if (principal.userId().equals(recipient.asText())) {
+                        throw ApiException.forbidden("The notice creator cannot be an acknowledgement recipient.");
+                    }
+                }
+                return;
+            }
+            if (administrator) {
+                if (!principal.userId().equals(Sql.text(stored, "createdBy")) || !principal.userId().equals(Sql.text(row, "createdBy"))) {
+                    throw ApiException.forbidden("Tenant administrators may only edit notices they created.");
+                }
+                if (!stored.path("acknowledgedBy").equals(row.path("acknowledgedBy"))) {
+                    throw ApiException.forbidden("Notice creators cannot change acknowledgement records.");
+                }
+                return;
+            }
+            if (principal.userId().equals(Sql.text(stored, "createdBy"))) {
+                throw ApiException.forbidden("Notice creators cannot acknowledge their own notice.");
+            }
+            if (!noticeVisible(principal, permissions, allowedBranches(connection, principal), stored)) {
+                throw ApiException.forbidden("This notice is not available to you.");
+            }
+            if (!stored.path("acknowledgementRequired").asBoolean(false)) {
+                throw ApiException.forbidden("This notice does not require acknowledgement.");
+            }
+            ObjectNode before = ((ObjectNode) stored).deepCopy();
+            ObjectNode after = ((ObjectNode) row).deepCopy();
+            JsonNode acknowledgements = after.remove("acknowledgedBy");
+            before.remove("acknowledgedBy");
+            before.remove("updatedAt");
+            after.remove("updatedAt");
+            if (!before.equals(after) || acknowledgements == null || !acknowledgements.isArray()) {
+                throw ApiException.forbidden("You may only acknowledge this notice.");
+            }
+            Set<String> expected = new LinkedHashSet<>();
+            stored.path("acknowledgedBy").forEach(value -> expected.add(value.asText()));
+            expected.add(principal.userId());
+            Set<String> actual = new LinkedHashSet<>();
+            acknowledgements.forEach(value -> actual.add(value.asText()));
+            if (!expected.equals(actual)) throw ApiException.forbidden("You may only add your own notice acknowledgement.");
+        }
+    }
+
+    private static void guardOwnedNotificationRow(Principal principal, String tenant, Change change, String label) {
+        if (ORDER_RECORD.equals(change.recordId())) return;
+        if (change.isDelete()) throw ApiException.forbidden("A " + label + " cannot be deleted through tenant state sync.");
+        JsonNode row = change.data();
+        requireNotificationIdentity(principal, tenant, change, row, label);
+        if (!principal.userId().equals(Sql.text(row, "userId"))) {
+            throw ApiException.forbidden("You may only change your own " + label + ".");
+        }
+    }
+
+    private static void requireNotificationIdentity(Principal principal, String tenant, Change change, JsonNode row, String label) {
+        if (row == null || !row.isObject()) throw ApiException.badRequest("The " + label + " must be an object.");
+        if (!tenant.equals(Sql.text(row, "tenantId"))) throw ApiException.forbidden("The " + label + " belongs to another organization.");
+        if (!change.recordId().equals(Sql.text(row, "id"))) throw ApiException.badRequest("The " + label + " id does not match its content.");
     }
 
     private void guardJournal(Connection connection, Permissions permissions, String tenant, Change change) throws SQLException {

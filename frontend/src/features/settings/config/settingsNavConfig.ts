@@ -174,13 +174,6 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
         permission: PERMISSIONS.SETTINGS.PAYMENT_TERMS_VIEW,
       },
       {
-        label: 'Payment Methods',
-        path: '/settings/payment-methods',
-        icon: CreditCard,
-        description: 'Accepted methods and payment reference requirements',
-        permission: PERMISSIONS.SETTINGS.PAYMENT_METHODS_VIEW,
-      },
-      {
         label: 'Settlement Bank Account',
         path: '/settings/settlement-bank',
         icon: Landmark,

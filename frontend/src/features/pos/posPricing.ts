@@ -5,7 +5,7 @@ import { flashSaleService } from '@/features/sales/services/flashSaleService';
 import type { TenantBranchScope } from '@/core/tenant/dataScope';
 
 export const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
-export type PricingLine = { product: Product; quantity: number; unitPrice: number; lineTotal: number; tax: number; discount: number };
+export type PricingLine = { product: Product; quantity: number; unitPrice: number; lineTotal: number; taxCode?: string; taxPercent: number; tax: number; discount: number };
 export type PricingResult = { lines: PricingLine[]; subtotal: number; manualDiscount: number; couponDiscount: number; tax: number; giftUsed: number; loyaltyUsed: number; total: number; couponValid: boolean };
 export type PricingInput = { lines: { product: Product; quantity: number; bundlePrice?: number }[]; scope?: TenantBranchScope; at?: Date; discount: number; couponCode?: string; giftAmount?: number; loyaltyAmount?: number; giftBalance: number; loyaltyBalance: number; taxes: TaxRate[] };
 
@@ -15,7 +15,7 @@ export function priceCart(input: PricingInput): PricingResult {
     const flash = input.scope && !bundlePrice ? flashSaleService.active(input.scope, product.id, input.at) : undefined;
     const unitPrice = bundlePrice ?? flash?.salePrice ?? tier?.price ?? product.sellingPrice;
     if (!Number.isInteger(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Invalid item quantity or price.');
-    return { product, quantity, unitPrice, lineTotal: money(quantity * unitPrice), tax: 0, discount: 0 };
+    return { product, quantity, unitPrice, lineTotal: money(quantity * unitPrice), taxCode: undefined, taxPercent: 0, tax: 0, discount: 0 };
   });
   const subtotal = money(base.reduce((sum, line) => sum + line.lineTotal, 0));
   if (!Number.isFinite(input.discount) || input.discount < 0 || input.discount > subtotal) throw new Error('Invalid discount.');
@@ -28,9 +28,9 @@ export function priceCart(input: PricingInput): PricingResult {
   const lines = base.map(line => {
     const discount = subtotal ? money(totalDiscount * line.lineTotal / subtotal) : 0;
     const taxable = money(line.lineTotal - discount);
-    const rate = input.taxes.find(t => t.code.toLowerCase() === line.product.taxCode?.toLowerCase() && isSalesTaxApplicable(t));
+    const rate = input.taxes.find(t => t.code.toLowerCase() === line.product.taxCode?.toLowerCase() && isSalesTaxApplicable(t, input.at));
     const tax = rate ? money(line.product.pricesIncludeTax ? taxable - taxable / (1 + rate.percentage / 100) : taxable * rate.percentage / 100) : 0;
-    return { ...line, discount, tax };
+    return { ...line, discount, taxCode: rate?.code, taxPercent: rate?.percentage ?? 0, tax };
   });
   const tax = money(lines.reduce((sum, line) => sum + line.tax, 0));
   const beforeTender = money(subtotal - totalDiscount + lines.reduce((sum, line) => sum + (line.product.pricesIncludeTax ? 0 : line.tax), 0));

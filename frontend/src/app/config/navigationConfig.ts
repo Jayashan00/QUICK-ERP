@@ -566,7 +566,6 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
         children: [
           { label: "Notification Center", path: "/notifications", permission: "notifications.view" },
           { label: "Notices", path: "/notifications/notices", permission: "notices.view" },
-          { label: "Templates", path: "/notifications/templates", permission: "notificationTemplates.manage" },
         ],
       },
       {

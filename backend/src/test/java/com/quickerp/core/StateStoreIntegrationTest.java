@@ -122,6 +122,67 @@ class StateStoreIntegrationTest {
         assertNotNull(record(view, "accounting.journals", "jn-001"));
     }
 
+    @Test
+    void notificationRowsAreFilteredAndUserStateCannotCrossAccounts() throws Exception {
+        Principal admin = login("admin@quickerp.test");
+        Principal sales = login("sales@quickerp.test");
+        Principal inventory = login("inventory@quickerp.test");
+        ObjectNode stock = (ObjectNode) json("{\"id\":\"notification-it-stock\",\"tenantId\":\"tenant-001\",\"branchId\":\"branch-001\","
+                + "\"audience\":\"branch\",\"title\":\"Stock alert\",\"message\":\"Restricted\",\"type\":\"alert\","
+                + "\"priority\":\"high\",\"module\":\"inventory\",\"requiredPermission\":\"inventory.view\","
+                + "\"isRead\":false,\"createdAt\":\"2026-11-10T00:00:00Z\"}");
+        assertEquals(List.of(), store.applyBatch(admin, batch("notifications.records", "notification-it-stock", stock)).rejected());
+        assertTrue(store.load(inventory).records().stream().anyMatch(row -> row.collection().equals("notifications.records") && row.recordId().equals("notification-it-stock")));
+        assertTrue(store.load(sales).records().stream().noneMatch(row -> row.collection().equals("notifications.records") && row.recordId().equals("notification-it-stock")));
+
+        ObjectNode ownState = (ObjectNode) json("{\"id\":\"usr-009:notification-it-stock\",\"tenantId\":\"tenant-001\","
+                + "\"userId\":\"usr-009\",\"notificationId\":\"notification-it-stock\",\"isRead\":true}");
+        Principal cashier = login("cashier@quickerp.test");
+        assertEquals(List.of(), store.applyBatch(cashier, batch("notifications.state", ownState.path("id").asText(), ownState)).rejected());
+        ObjectNode otherState = ownState.deepCopy().put("id", "usr-002:notification-it-stock").put("userId", "usr-002");
+        assertRejected(store.applyBatch(cashier, batch("notifications.state", otherState.path("id").asText(), otherState)));
+        assertTrue(store.load(cashier).records().stream().anyMatch(row -> row.collection().equals("notifications.state") && row.recordId().equals(ownState.path("id").asText())));
+        assertTrue(store.load(sales).records().stream().noneMatch(row -> row.collection().equals("notifications.state") && row.recordId().equals(ownState.path("id").asText())));
+    }
+
+    @Test
+    void onlyTenantAdministratorManagesNoticesAndRecipientsSeeOnlyTargetedActiveRows() throws Exception {
+        Principal admin = login("admin@quickerp.test");
+        Principal sales = login("sales@quickerp.test");
+        Principal inventory = login("inventory@quickerp.test");
+        String today = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString();
+
+        ObjectNode targeted = mapper.createObjectNode();
+        targeted.put("id", "notice-it-targeted").put("tenantId", TENANT).put("title", "Inventory only")
+                .put("message", "Selected recipient only").put("audience", "users").put("priority", "normal")
+                .put("publishDate", today).put("isActive", true).put("acknowledgementRequired", true)
+                .put("createdBy", admin.userId()).put("createdAt", Instant.now().toString()).put("updatedAt", Instant.now().toString());
+        targeted.putArray("userIds").add(inventory.userId());
+        targeted.putArray("acknowledgedBy");
+        assertEquals(List.of(), store.applyBatch(admin, batch("notifications.notices", targeted.path("id").asText(), targeted)).rejected());
+        assertTrue(store.load(inventory).records().stream().anyMatch(row -> row.collection().equals("notifications.notices") && row.recordId().equals("notice-it-targeted")));
+        assertTrue(store.load(sales).records().stream().noneMatch(row -> row.collection().equals("notifications.notices") && row.recordId().equals("notice-it-targeted")));
+
+        ObjectNode unauthorized = targeted.deepCopy().put("id", "notice-it-unauthorized").put("createdBy", sales.userId());
+        assertRejected(store.applyBatch(sales, batch("notifications.notices", unauthorized.path("id").asText(), unauthorized)));
+        ObjectNode wrongAcknowledgement = targeted.deepCopy();
+        wrongAcknowledgement.withArray("acknowledgedBy").add(sales.userId());
+        assertRejected(store.applyBatch(sales, batch("notifications.notices", targeted.path("id").asText(), wrongAcknowledgement)));
+        ObjectNode creatorAcknowledgement = targeted.deepCopy();
+        creatorAcknowledgement.withArray("acknowledgedBy").add(admin.userId());
+        assertRejected(store.applyBatch(admin, batch("notifications.notices", targeted.path("id").asText(), creatorAcknowledgement)));
+        ObjectNode permittedAcknowledgement = targeted.deepCopy();
+        permittedAcknowledgement.withArray("acknowledgedBy").add(inventory.userId());
+        assertEquals(List.of(), store.applyBatch(inventory, batch("notifications.notices", targeted.path("id").asText(), permittedAcknowledgement)).rejected());
+
+        ObjectNode inactive = targeted.deepCopy().put("id", "notice-it-inactive").put("title", "Inactive administrator notice")
+                .put("audience", "company").put("isActive", false);
+        inactive.putArray("userIds");
+        assertEquals(List.of(), store.applyBatch(admin, batch("notifications.notices", inactive.path("id").asText(), inactive)).rejected());
+        assertTrue(store.load(admin).records().stream().anyMatch(row -> row.collection().equals("notifications.notices") && row.recordId().equals("notice-it-inactive")));
+        assertTrue(store.load(sales).records().stream().noneMatch(row -> row.collection().equals("notifications.notices") && row.recordId().equals("notice-it-inactive")));
+    }
+
     /**
      * The browser fills every collection the server does not report with its demo data and
      * uploads it. For every starter role, every collection must therefore be reported, even
