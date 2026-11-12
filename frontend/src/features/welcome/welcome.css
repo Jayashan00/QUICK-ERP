@@ -193,8 +193,23 @@
 .vyro-final-cta p:last-child { margin-top: .4rem; color: #d2cadf; font-size: .85rem; }
 .vyro-final-button { background: white; color: #30223f; }
 .vyro-final-button:hover { background: #eee8f8; }
-.vyro-footer { background: white; }
-.vyro-footer > div { color: #8a8790; font-size: .68rem; }
+.vyro-footer { border-top: 1px solid #eae6ef; background: #fff; }
+.vyro-footer > div { color: #716b7b; font-size: .78rem; }
+.vyro-footer-main { display: flex; align-items: center; justify-content: space-between; gap: 2rem; padding-top: 2rem; padding-bottom: 1.65rem; }
+.vyro-footer-brand p { margin-top: .65rem; color: #777180; font-size: .8rem; }
+.vyro-footer-logo { display: inline-flex; align-items: center; gap: .65rem; color: #282135; font-size: .9rem; font-weight: 750; letter-spacing: .12em; }
+.vyro-footer-logo img { border-radius: .4rem; }
+.vyro-footer-contact { display: grid; justify-items: end; gap: .4rem; color: #514663; font-style: normal; }
+.vyro-footer-label { margin-bottom: .1rem; color: #87818f; font-size: .66rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.vyro-footer-contact a { transition: color .18s ease; }
+.vyro-footer-contact a:hover { color: #7045c2; }
+.vyro-footer-contact a span { color: #87818f; }
+.vyro-footer-bottom { display: flex; justify-content: space-between; gap: 1rem; border-top: 1px solid #f0edf3; padding-top: .85rem; padding-bottom: .9rem; color: #8b8591; font-size: .68rem; }
+@media (max-width: 640px) {
+  .vyro-footer-main { align-items: flex-start; flex-direction: column; gap: 1.4rem; padding-top: 1.6rem; }
+  .vyro-footer-contact { justify-items: start; }
+  .vyro-footer-bottom { flex-wrap: wrap; }
+}
 .vyro-reveal { opacity: 0; transform: translateY(1.25rem); transition: opacity .65s cubic-bezier(.2,.7,.2,1), transform .65s cubic-bezier(.2,.7,.2,1); }
 .vyro-reveal.is-visible { opacity: 1; transform: translateY(0); }
 .vyro-platform-item.delay-1 { transition-delay: .08s; }

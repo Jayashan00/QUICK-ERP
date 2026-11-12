@@ -238,7 +238,22 @@ export function WelcomePage() {
         <section className="vyro-final-cta vyro-reveal"><div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-5 py-12 sm:flex-row sm:items-center sm:px-10"><div><p className="text-sm font-medium text-violet-200">VYRO ERP</p><h2>Ready to get to work?</h2><p>Sign in with the account provided by your company.</p></div><Link to="/login" className="vyro-final-button">Go to login <ChevronRight size={17} /></Link></div></section>
       </main>
 
-      <footer className="vyro-footer"><div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-6 sm:px-10"><Link to="/" className="flex items-center gap-2 font-bold tracking-[.12em] text-slate-800"><img src={vyroIcon} alt="" width={24} height={24} /> VYRO</Link><p>Sales, stock, accounts and people. Connected.</p><address className="flex flex-wrap gap-x-4 not-italic"><a href="tel:+94117275300">+94 11 727 5300 (Hotline)</a><a href="mailto:info@vyro.com">info@vyro.com</a></address><p>© {new Date().getFullYear()} VYRO</p></div></footer>
+      <footer className="vyro-footer">
+        <div className="mx-auto max-w-7xl px-5 sm:px-10">
+          <div className="vyro-footer-main">
+            <div className="vyro-footer-brand">
+              <Link to="/" className="vyro-footer-logo"><img src={vyroIcon} alt="" width={30} height={30} /> <span>VYRO</span></Link>
+              <p>Sales, stock, accounts and people. Connected.</p>
+            </div>
+            <address className="vyro-footer-contact">
+              <span className="vyro-footer-label">Get in touch</span>
+              <a href="tel:+94117275300">+94 11 727 5300 <span>(Hotline)</span></a>
+              <a href="mailto:info@vyro.com">info@vyro.com</a>
+            </address>
+          </div>
+          <div className="vyro-footer-bottom"><span>© {new Date().getFullYear()} VYRO ERP</span><span>Business, connected.</span></div>
+        </div>
+      </footer>
     </div>
   );
 }
