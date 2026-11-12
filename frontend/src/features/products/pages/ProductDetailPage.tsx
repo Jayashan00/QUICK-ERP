@@ -102,35 +102,35 @@ export function ProductDetailPage() {
 
       {product.status !== 'active' && (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          This product is {product.status} and is excluded from normal sales and purchasing selectors.
+          This {product.type === 'service' ? 'service' : 'product'} is {product.status} and is excluded from normal workflows.
         </div>
       )}
 
       <ProductOverview product={product} branchName={currentBranch?.name} />
 
-      <div className="mt-6"><ProductSuppliersSection productId={product.id} canManage={canEdit} canManagePrices={canManagePrices} /></div>
+      {product.type !== 'service' && <div className="mt-6"><ProductSuppliersSection productId={product.id} canManage={canEdit} canManagePrices={canManagePrices} /></div>}
 
-      <div className="mt-6"><ProductBundleSection product={product} canManage={canEdit} canManagePrices={canManagePrices} /></div>
+      {product.type !== 'service' && <div className="mt-6"><ProductBundleSection product={product} canManage={canEdit} canManagePrices={canManagePrices} /></div>}
 
       <div className="mt-6"><RelatedProductsSection productId={product.id} canManage={canEdit} /></div>
 
       <div className="mt-6"><ProductSpecificationsSection productId={product.id} canManage={canEdit} /></div>
 
-      <div className="mt-6"><ProductImagesSection productId={product.id} canManage={canEdit} /></div>
+      {product.type !== 'service' && <div className="mt-6"><ProductImagesSection productId={product.id} canManage={canEdit} /></div>}
 
       <div className="mt-6"><ProductDocumentsSection productId={product.id} canManage={canEdit} canDownload={canDownload} /></div>
 
-      <div className="mt-6"><ProductVariantsSection product={product} canManage={canEdit} canManagePrices={canManagePrices} /></div>
+      {product.type !== 'service' && <div className="mt-6"><ProductVariantsSection product={product} canManage={canEdit} canManagePrices={canManagePrices} /></div>}
 
-      <div className="mt-6"><ProductLabelPreview product={product} canPrint={canPrint} /></div>
+      {product.type !== 'service' && <div className="mt-6"><ProductLabelPreview product={product} canPrint={canPrint} /></div>}
 
-      <Card className="mt-6">
+      {product.type !== 'service' && <Card className="mt-6">
         <div className="flex items-center gap-2"><Layers3 size={20} className="text-slate-500" /><h2 className="text-base font-semibold text-slate-900">Extended Product Information</h2></div>
         <p className="mt-1 text-sm text-slate-500">Reserved areas for upcoming product and inventory capabilities.</p>
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {futureSections.map((section) => <div key={section} className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs font-medium text-slate-500">{section}</div>)}
         </div>
-      </Card>
+      </Card>}
 
       <ConfirmDialog
         isOpen={Boolean(pendingAction)}

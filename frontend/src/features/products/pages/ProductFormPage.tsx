@@ -74,7 +74,7 @@ export function ProductFormPage() {
     try {
       if (id) {
         const updated = await mutations.updateProduct(id, values);
-        appToast.success('Product updated successfully.');
+        appToast.success(`${values.type === 'service' ? 'Service' : 'Product'} updated successfully.`);
         navigate(`/products/${updated.id}`);
       } else {
         const created = await mutations.createProduct(values);
@@ -84,11 +84,11 @@ export function ProductFormPage() {
           attachSpecificationsToProduct(created.id),
         ]);
         draftResourcesFinalized.current = true;
-        appToast.success('Product created successfully.');
+        appToast.success(`${values.type === 'service' ? 'Service' : 'Product'} created successfully.`);
         navigate(`/products/${created.id}`);
       }
     } catch (error) {
-      setSubmitError(getErrorMessage(error, 'Unable to save the product. Review the form and try again.'));
+      setSubmitError(getErrorMessage(error, `Unable to save the ${values.type === 'service' ? 'service' : 'product'}. Review the form and try again.`));
     }
   };
 
@@ -118,7 +118,7 @@ export function ProductFormPage() {
         </Button>
       </div>
       <PageHeader
-        title={isEditing ? `Edit Product: ${detail.product?.name}` : 'Add Product'}
+        title={isEditing ? `Edit ${detail.product?.type === 'service' ? 'Service' : 'Product'}: ${detail.product?.name}` : 'Add Product or Service'}
         description={isEditing ? 'Update tenant product master data while preserving system identity.' : 'Create a tenant product or service for future sales, purchasing and inventory workflows.'}
       />
       <ProductForm

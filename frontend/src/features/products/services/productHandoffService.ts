@@ -32,7 +32,6 @@ export const productHandoffService = {
         sku: product.sku,
         barcode: product.barcode,
         uomId: product.uomId,
-        purchaseUomId: product.purchaseUomId,
         defaultCostPrice: product.costPrice,
         trackInventory: product.trackInventory,
         suppliers,
@@ -43,10 +42,11 @@ export const productHandoffService = {
 
   /** Active sale items and active variants shaped for a future POS product picker. */
   async getPosOptions(scope: TenantBranchScope, search = ''): Promise<PosProductOption[]> {
-    const [products, taxes] = await Promise.all([
+    const [selectableProducts, taxes] = await Promise.all([
       productService.getSelectableProducts(scope, 'sale'),
       taxMap(scope.tenantId),
     ]);
+    const products = selectableProducts.filter((product) => product.type !== 'service');
     const options = await Promise.all(products.map(async (product) => {
       const base = {
         productId: product.id,

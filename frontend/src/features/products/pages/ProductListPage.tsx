@@ -30,7 +30,7 @@ import type { InventoryTrackingFilter } from '../services/productService';
 import type { ProductListItem, ProductStatus, ProductType } from '../types/product';
 
 const typeLabels: Record<ProductType, string> = {
-  goods: 'Goods',
+  goods: 'Product',
   service: 'Service',
   composite: 'Composite',
 };
@@ -183,11 +183,11 @@ export function ProductListPage() {
       key: 'uomCode',
       header: 'UOM',
       width: '90px',
-      render: (product) => <span title={product.uomName}>{product.uomCode}</span>,
+      render: (product) => product.type === 'service' ? <span>—</span> : <span title={product.uomName}>{product.uomCode}</span>,
     },
     {
       key: 'sellingPrice',
-      header: 'Selling Price',
+      header: 'Price',
       sortable: true,
       align: 'right',
       render: (product) => (
@@ -227,7 +227,7 @@ export function ProductListPage() {
       <PageHeader
         title="Products & Services"
         description="Manage tenant product master data, pricing, identifiers and branch stock visibility."
-        actions={(canCreate || canImport || canExport) ? <>{canExport && <Dropdown align="right" trigger={<Button variant="secondary" leftIcon={<Download size={16} />} isLoading={productExport.isExporting}>Export</Button>} items={[{ key: 'csv', label: 'Export CSV', icon: <Download size={14} />, onClick: () => void exportProducts('csv') }, { key: 'excel', label: 'Export Excel', icon: <FileSpreadsheet size={14} />, onClick: () => void exportProducts('excel') }]} />}{canImport && <Button variant="secondary" leftIcon={<FileUp size={16} />} onClick={() => navigate('/products/import')}>Import Products</Button>}{canCreate && <Button leftIcon={<Plus size={16} />} onClick={() => navigate('/products/new')}>Add Product</Button>}</> : undefined}
+        actions={(canCreate || canImport || canExport) ? <>{canExport && <Dropdown align="right" trigger={<Button variant="secondary" leftIcon={<Download size={16} />} isLoading={productExport.isExporting}>Export</Button>} items={[{ key: 'csv', label: 'Export CSV', icon: <Download size={14} />, onClick: () => void exportProducts('csv') }, { key: 'excel', label: 'Export Excel', icon: <FileSpreadsheet size={14} />, onClick: () => void exportProducts('excel') }]} />}{canImport && <Button variant="secondary" leftIcon={<FileUp size={16} />} onClick={() => navigate('/products/import')}>Import Products</Button>}{canCreate && <Button leftIcon={<Plus size={16} />} onClick={() => navigate('/products/new')}>Add Product or Service</Button>}</> : undefined}
       />
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

@@ -201,37 +201,43 @@ function filterAndSortProducts(scope: TenantBranchScope, params: GetProductsPara
 
 function normalizeProductInput(tenantId: string, data: ProductFormValues): ProductFormValues {
   const parsed = productFormSchema.parse(data);
-  const brand = parsed.brandId
+  const isService = parsed.type === 'service';
+  const brand = !isService && parsed.brandId
     ? masterDataStore.brands.find((item) => item.tenantId === tenantId && item.id === parsed.brandId)?.name
     : undefined;
   return {
     ...parsed,
     sku: parsed.sku.toUpperCase(),
-    barcode: parsed.barcode || '',
-    barcodeType: parsed.barcode ? parsed.barcodeType : undefined,
+    barcode: isService ? '' : parsed.barcode || '',
+    barcodeType: !isService && parsed.barcode ? parsed.barcodeType : undefined,
     qrValue: parsed.qrValue || undefined,
     internalCode: parsed.internalCode || undefined,
     shortName: parsed.shortName || undefined,
-    brandId: parsed.brandId || undefined,
+    brandId: isService ? undefined : parsed.brandId || undefined,
     brand,
     description: parsed.description || undefined,
-    purchaseUomId: parsed.purchaseUomId || undefined,
-    taxCode: parsed.taxCode || undefined,
-    pricesIncludeTax: Boolean(parsed.taxCode) && parsed.pricesIncludeTax,
-    priceTiers: parsed.priceTiers
+    uomId: isService ? '' : parsed.uomId,
+    // Sales, purchasing and stock deliberately share one product UOM.
+    purchaseUomId: undefined,
+    costPrice: isService ? 0 : parsed.costPrice,
+    taxCode: isService ? undefined : parsed.taxCode || undefined,
+    pricesIncludeTax: !isService && Boolean(parsed.taxCode) && parsed.pricesIncludeTax,
+    priceTiers: (isService ? [] : parsed.priceTiers)
       .map((tier) => ({
         ...tier,
         id: tier.id || `tier-${crypto.randomUUID().slice(0, 8)}`,
         name: tier.name.trim(),
       }))
       .sort((left, right) => left.minimumQuantity - right.minimumQuantity),
-    allowNegativeStock: parsed.trackInventory ? parsed.allowNegativeStock : false,
-    trackByBatch: parsed.trackInventory ? parsed.trackByBatch : false,
-    trackBySerialNumber: parsed.trackInventory ? parsed.trackBySerialNumber : false,
-    trackExpiry: parsed.trackInventory && parsed.trackByBatch ? parsed.trackExpiry : false,
-    minStockLevel: parsed.trackInventory ? parsed.minStockLevel : undefined,
-    reorderLevel: parsed.trackInventory ? parsed.reorderLevel : undefined,
-    maxStockLevel: parsed.trackInventory ? parsed.maxStockLevel : undefined,
+    isPurchasable: isService ? false : parsed.isPurchasable,
+    trackInventory: isService ? false : parsed.trackInventory,
+    allowNegativeStock: !isService && parsed.trackInventory ? parsed.allowNegativeStock : false,
+    trackByBatch: !isService && parsed.trackInventory ? parsed.trackByBatch : false,
+    trackBySerialNumber: !isService && parsed.trackInventory ? parsed.trackBySerialNumber : false,
+    trackExpiry: !isService && parsed.trackInventory && parsed.trackByBatch ? parsed.trackExpiry : false,
+    minStockLevel: !isService && parsed.trackInventory ? parsed.minStockLevel : undefined,
+    reorderLevel: !isService && parsed.trackInventory ? parsed.reorderLevel : undefined,
+    maxStockLevel: !isService && parsed.trackInventory ? parsed.maxStockLevel : undefined,
   };
 }
 
@@ -292,10 +298,10 @@ function assertMasterDataReferences(tenantId: string, data: ProductFormValues, e
   );
   if (!hasCategory) throw new Error('Select an active category for this tenant.');
 
-  const uomIds = [data.uomId, data.purchaseUomId].filter(Boolean);
+  const uomIds = [data.uomId].filter(Boolean);
   const hasInvalidUom = uomIds.some(
     (uomId) => !masterDataStore.uoms.some(
-      (uom) => uom.id === uomId && uom.tenantId === tenantId && (uom.isActive || existing?.uomId === uom.id || existing?.purchaseUomId === uom.id),
+      (uom) => uom.id === uomId && uom.tenantId === tenantId && (uom.isActive || existing?.uomId === uom.id),
     ),
   );
   if (hasInvalidUom) throw new Error('Select an active unit of measure.');
@@ -309,6 +315,35 @@ function assertMasterDataReferences(tenantId: string, data: ProductFormValues, e
     );
     if (!hasBrand) throw new Error('Select an active brand for this tenant.');
   }
+}
+
+function generateUniqueSku(
+  tenantId: string,
+  input: { name: string; categoryId?: string; type?: ProductType },
+) {
+  const categoryCode = masterDataStore.categories.find(
+    (category) => category.tenantId === tenantId && category.id === input.categoryId,
+  )?.code?.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  const typeCode = input.type === 'service' ? 'SRV' : 'PRD';
+  const nameCode = input.name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 14) || (input.type === 'service' ? 'SERVICE' : 'PRODUCT');
+  const stem = [typeCode, categoryCode, nameCode].filter(Boolean).join('-').slice(0, 42);
+  let sequence = 1;
+  let candidate = `${stem}-${String(sequence).padStart(3, '0')}`;
+  const tenantProducts = productStore.all().filter((product) => product.tenantId === tenantId);
+  const tenantVariants = productVariantStore.all().filter((variant) => variant.tenantId === tenantId);
+  while (
+    tenantProducts.some((product) => product.sku.toLocaleLowerCase() === candidate.toLocaleLowerCase()) ||
+    tenantVariants.some((variant) => variant.sku.toLocaleLowerCase() === candidate.toLocaleLowerCase())
+  ) {
+    sequence += 1;
+    candidate = `${stem}-${String(sequence).padStart(3, '0')}`;
+  }
+  return candidate;
 }
 
 export const productService = {
@@ -350,27 +385,7 @@ export const productService = {
   ): Promise<string> {
     await wait(100);
     requireTenantId(tenantId);
-    const categoryCode = masterDataStore.categories.find(
-      (category) => category.tenantId === tenantId && category.id === input.categoryId,
-    )?.code;
-    const typeCode = input.type === 'service' ? 'SRV' : input.type === 'composite' ? 'KIT' : 'PRD';
-    const prefix = (categoryCode || typeCode).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
-    const nameCode = input.name
-      .trim()
-      .toUpperCase()
-      .replace(/[^A-Z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 14) || 'ITEM';
-    const stem = `${prefix}-${nameCode}`.slice(0, 42);
-    let sequence = 1;
-    let candidate = `${stem}-${String(sequence).padStart(3, '0')}`;
-    const tenantProducts = productStore.all().filter((product) => product.tenantId === tenantId);
-    const tenantVariants = productVariantStore.all().filter((variant) => variant.tenantId === tenantId);
-    while (tenantProducts.some((product) => product.sku.toLocaleLowerCase() === candidate.toLocaleLowerCase()) || tenantVariants.some((variant) => variant.sku.toLocaleLowerCase() === candidate.toLocaleLowerCase())) {
-      sequence += 1;
-      candidate = `${stem}-${String(sequence).padStart(3, '0')}`;
-    }
-    return candidate;
+    return generateUniqueSku(tenantId, input);
   },
 
   async checkIdentifierAvailability(
@@ -396,7 +411,10 @@ export const productService = {
   async create(tenantId: string, data: ProductFormValues): Promise<Product> {
     await wait(280);
     requireTenantId(tenantId);
-    const normalized = normalizeProductInput(tenantId, data);
+    const normalized = normalizeProductInput(tenantId, {
+      ...data,
+      sku: generateUniqueSku(tenantId, { name: data.name, categoryId: data.categoryId, type: data.type }),
+    });
     assertUniqueIdentifiers(tenantId, normalized);
     assertMasterDataReferences(tenantId, normalized);
     await assertTaxReference(tenantId, normalized.taxCode);
@@ -422,9 +440,13 @@ export const productService = {
     );
     if (index < 0) throw new Error('Product not found.');
 
-    const normalized = normalizeProductInput(tenantId, data);
-    assertUniqueIdentifiers(tenantId, normalized, id);
     const existing = productStore.all()[index];
+    const expectedPrefix = data.type === 'service' ? 'SRV-' : 'PRD-';
+    const sku = existing.type !== data.type || !existing.sku.startsWith(expectedPrefix)
+      ? generateUniqueSku(tenantId, { name: data.name, categoryId: data.categoryId, type: data.type })
+      : existing.sku;
+    const normalized = normalizeProductInput(tenantId, { ...data, sku });
+    assertUniqueIdentifiers(tenantId, normalized, id);
     assertMasterDataReferences(tenantId, normalized, existing);
     await assertTaxReference(tenantId, normalized.taxCode, existing.taxCode);
     const updated = productSchema.parse({
@@ -475,7 +497,7 @@ export const productService = {
         .filter((uom) => uom.isActive)
         .map(({ id, code, name, symbol }) => ({ id, code, name, symbol })),
       statuses: [...productStatuses],
-      types: [...productTypes],
+      types: productTypes.filter((type) => type !== 'composite'),
     };
   },
 
@@ -503,7 +525,7 @@ export const productService = {
     const products = productStore.all()
       .filter((product) => product.tenantId === scope.tenantId && product.status === 'active')
       .map((product) => enrichProduct(product, scope.branchId))
-      .filter((product) => product.trackInventory);
+      .filter((product) => product.type !== 'service' && product.trackInventory);
     return {
       stockUnits: products.reduce((total, product) => total + product.stock.quantityOnHand, 0),
       lowStockProducts: products.filter(
