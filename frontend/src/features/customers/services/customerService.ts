@@ -19,11 +19,25 @@ export interface GetCustomersParams {
 
 export type CreateCustomerInput = Omit<
   Customer,
-  'id' | 'createdAt' | 'updatedAt' | 'tenantId' | 'branchId'
+  'id' | 'code' | 'createdAt' | 'updatedAt' | 'tenantId' | 'branchId'
 >;
+export type UpdateCustomerInput = Partial<Omit<
+  Customer,
+  'id' | 'code' | 'createdAt' | 'updatedAt' | 'tenantId' | 'branchId'
+>>;
 
 const normalizeEmail = (email: string | undefined) => email?.trim().toLowerCase() ?? '';
 const normalizePhone = (phone: string | undefined) => phone?.replace(/\D/g, '') ?? '';
+
+function generateCustomerCode(tenantId: string) {
+  const highestSequence = customersStore.reduce((highest, customer) => {
+    if (customer.tenantId !== tenantId) return highest;
+    const match = /^CUST-(\d+)$/.exec(customer.code);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+
+  return `CUST-${String(highestSequence + 1).padStart(4, '0')}`;
+}
 
 function assertUniqueContact(
   tenantId: string,
@@ -91,10 +105,18 @@ export const customerService = {
   async createCustomer(scope: TenantBranchScope, data: CreateCustomerInput): Promise<Customer> {
     await new Promise((resolve) => setTimeout(resolve, 300));
     assertUniqueContact(scope.tenantId, data);
+    const localization = await tenantSettingsService.getLocalization(scope.tenantId);
+    const currency = (data.currency || localization.baseCurrency).trim().toUpperCase();
+    if (!localization.supportedCurrencies.includes(currency)) {
+      throw new Error(`${currency || 'Selected currency'} is not supported by this company`);
+    }
     const paymentTerm = tenantSettingsService.requirePaymentTerm(scope.tenantId, data.paymentTermCode ?? data.paymentTermsDays);
     const now = new Date().toISOString();
     const newCustomer: Customer = {
       ...data,
+      code: generateCustomerCode(scope.tenantId),
+      currency,
+      creditLimit: data.creditLimit === undefined ? undefined : Math.round(data.creditLimit),
       paymentTermCode: paymentTerm.code,
       paymentTermsDays: paymentTerm.dueDays,
       id: crypto.randomUUID(),
@@ -111,22 +133,32 @@ export const customerService = {
   async updateCustomer(
     scope: TenantBranchScope,
     id: string,
-    data: Partial<Customer>,
+    data: UpdateCustomerInput,
   ): Promise<Customer> {
     await new Promise((resolve) => setTimeout(resolve, 250));
     const index = customersStore.findIndex(
       (customer) => customer.id === id && belongsToScope(customer, scope),
     );
     if (index === -1) throw new Error('Customer not found');
+    const localization = await tenantSettingsService.getLocalization(scope.tenantId);
+    const currency = (data.currency || customersStore[index].currency || localization.baseCurrency).trim().toUpperCase();
+    if (!localization.supportedCurrencies.includes(currency)) {
+      throw new Error(`${currency || 'Selected currency'} is not supported by this company`);
+    }
     const paymentTerm = tenantSettingsService.requirePaymentTerm(scope.tenantId, data.paymentTermCode ?? data.paymentTermsDays ?? customersStore[index].paymentTermCode ?? customersStore[index].paymentTermsDays);
 
     const updated: Customer = {
       ...customersStore[index],
       ...data,
+      id: customersStore[index].id,
+      code: customersStore[index].code,
+      currency,
+      ...(data.creditLimit === undefined ? {} : { creditLimit: Math.round(data.creditLimit) }),
       paymentTermCode: paymentTerm.code,
       paymentTermsDays: paymentTerm.dueDays,
       tenantId: customersStore[index].tenantId,
       branchId: customersStore[index].branchId,
+      createdAt: customersStore[index].createdAt,
       updatedAt: new Date().toISOString(),
     };
     assertUniqueContact(scope.tenantId, updated, id);

@@ -17,17 +17,17 @@ const optionalWebsite = z
 
 export const customerSchema = z.object({
   name: requiredString('Customer name', 120),
-  code: requiredString('Customer code', 50),
   type: z.enum(['individual', 'company'], { error: 'Select a valid customer type.' }),
   email: emailSchema,
   phone: phoneSchema,
   website: optionalWebsite,
   taxNumber: optionalString('Tax number', 60),
-  currency: requiredString('Currency', 10).refine(
-    (value) => new Set<string>(['USD', 'LKR']).has(value),
+  currency: requiredString('Currency', 3).refine(
+    (value) => /^[A-Z]{3}$/.test(value),
     'Select a valid currency.',
   ),
-  creditLimit: optionalNonNegativeNumber('Credit limit'),
+  creditLimit: optionalNonNegativeNumber('Credit limit')
+    .refine((value) => value === undefined || Number.isInteger(value), 'Credit limit must be a whole number.'),
   paymentTermCode: optionalString('Payment term', 50).optional(),
   paymentTermsDays: nonNegativeNumber('Payment terms')
     .int('Payment terms must be a whole number of days.')
