@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Sparkles, Save, X } from 'lucide-react';
+import { Save, X } from 'lucide-react';
 
 import { Card } from '@/shared/components/common/Card';
 import { Button } from '@/shared/components/common/Button';
@@ -13,13 +13,12 @@ import { Select } from '@/shared/components/forms/Select';
 import { Textarea } from '@/shared/components/forms/Textarea';
 import { getErrorMessage } from '@/shared/validation';
 import { PaymentTermSelect } from '@/features/settings/finance/components/PaymentTermSelect';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 
 import {
   supplierSchema,
   SUPPLIER_STATUS_OPTIONS,
   SUPPLIER_CATEGORY_OPTIONS,
-  SUPPLIER_TAX_CATEGORIES,
-  SUPPLIER_CURRENCIES,
   SUPPLIER_COUNTRIES,
   SUPPLIER_PAYMENT_METHOD_OPTIONS,
   type SupplierFormValues,
@@ -34,13 +33,7 @@ interface SupplierFormProps {
   canEditStatus?: boolean;
 }
 
-function generateSupplierCode() {
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `SUP-${rand}`;
-}
-
 const defaultFormValues: SupplierFormValues = {
-  code: '',
   name: '',
   category: '',
   contactPerson: '',
@@ -50,9 +43,8 @@ const defaultFormValues: SupplierFormValues = {
   website: '',
   taxNumber: '',
   vatNumber: '',
-  taxCategory: '',
   registrationNumber: '',
-  currency: 'USD',
+  currency: '',
   paymentTermCode: '',
   paymentTermsDays: 30,
   paymentMethod: 'bank_transfer',
@@ -64,7 +56,7 @@ const defaultFormValues: SupplierFormValues = {
     branchCode: '',
     swiftCode: '',
     iban: '',
-    currency: 'USD',
+    currency: '',
   },
   status: 'active',
   address: {
@@ -88,19 +80,26 @@ export function SupplierForm({
   canEditStatus = true,
 }: SupplierFormProps) {
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const {
+    currencyCode,
+    supportedCurrencies,
+    isLoading: isCurrencyLoading,
+  } = useTenantCurrency();
+  const currencyOptions = supportedCurrencies.map((code) => ({ value: code, label: code }));
 
   const {
     register,
     handleSubmit,
     control,
+    getValues,
     setValue,
+    watch,
     reset,
     formState: { errors, isSubmitting },
   } = useForm<SupplierFormValues>({
     resolver: zodResolver(supplierSchema),
     defaultValues: {
       ...defaultFormValues,
-      code: mode === 'create' ? generateSupplierCode() : '',
       ...initialValues,
     },
   });
@@ -114,17 +113,23 @@ export function SupplierForm({
     }
   }, [initialValues, reset]);
 
+  useEffect(() => {
+    if (mode !== 'create' || !currencyCode) return;
+    if (!getValues('currency')) setValue('currency', currencyCode);
+  }, [currencyCode, getValues, mode, setValue]);
+
+  const selectedPaymentMethod = watch('paymentMethod');
+
   const handleFormSubmit = async (data: SupplierFormValues) => {
     setSubmitError(null);
     try {
-      await onSubmit(data);
+      await onSubmit({
+        ...data,
+        bankDetails: data.paymentMethod === 'cash' ? undefined : data.bankDetails,
+      });
     } catch (err) {
       setSubmitError(getErrorMessage(err, 'Failed to save supplier. Please check the form.'));
     }
-  };
-
-  const handleGenerateCode = () => {
-    setValue('code', generateSupplierCode(), { shouldValidate: true, shouldDirty: true });
   };
 
   const isPending = isLoading || isSubmitting;
@@ -153,38 +158,6 @@ export function SupplierForm({
                   error={Boolean(errors.name)}
                   {...register('name')}
                 />
-              </FormField>
-
-              <FormField
-                label="Supplier Code"
-                htmlFor="supplier-code"
-                required
-                error={errors.code?.message}
-                hint={mode === 'create' ? 'Auto-generated or custom code' : undefined}
-              >
-                <div className="flex gap-2">
-                  <TextInput
-                    id="supplier-code"
-                    placeholder="e.g. SUP-0001"
-                    error={Boolean(errors.code)}
-                    className="font-mono text-sm uppercase"
-                    readOnly={mode === 'edit'}
-                    {...register('code')}
-                  />
-                  {mode === 'create' && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={handleGenerateCode}
-                      title="Generate new code"
-                      className="shrink-0"
-                    >
-                      <Sparkles size={14} className="text-slate-500" />
-                      <span className="sr-only sm:not-sr-only sm:ml-1">Auto</span>
-                    </Button>
-                  )}
-                </div>
               </FormField>
 
               <FormField
@@ -400,9 +373,9 @@ export function SupplierForm({
           {/* Section 4: Tax / VAT Information */}
           <FormSection
             title="Tax / VAT Information"
-            description="Fiscal identifiers, tax category, and formal business registration details."
+            description="Optional fiscal identifiers and formal business registration details."
           >
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <FormField
                 label="Tax ID"
                 htmlFor="supplier-tax"
@@ -428,22 +401,6 @@ export function SupplierForm({
                   placeholder="e.g. GB999999973"
                   error={Boolean(errors.vatNumber)}
                   {...register('vatNumber')}
-                />
-              </FormField>
-
-              <FormField
-                label="Tax Category"
-                htmlFor="supplier-tax-category"
-                error={errors.taxCategory?.message}
-              >
-                <Select
-                  id="supplier-tax-category"
-                  options={[
-                    { value: '', label: 'Select tax category...' },
-                    ...SUPPLIER_TAX_CATEGORIES,
-                  ]}
-                  error={Boolean(errors.taxCategory)}
-                  {...register('taxCategory')}
                 />
               </FormField>
 
@@ -477,8 +434,9 @@ export function SupplierForm({
               >
                 <Select
                   id="supplier-currency"
-                  options={SUPPLIER_CURRENCIES.map((c) => ({ value: c.value, label: c.label }))}
+                  options={currencyOptions}
                   error={Boolean(errors.currency)}
+                  disabled={isCurrencyLoading || currencyOptions.length === 0}
                   {...register('currency')}
                 />
               </FormField>
@@ -527,7 +485,7 @@ export function SupplierForm({
           </FormSection>
 
           {/* Section 6: Bank / Payment Details */}
-          <FormSection
+          {selectedPaymentMethod === 'bank_transfer' && <FormSection
             title="Bank / Payment Details"
             description="Banking account information for electronic fund transfers (EFT/ACH/Wire). Account numbers are masked when viewed."
           >
@@ -535,6 +493,7 @@ export function SupplierForm({
               <FormField
                 label="Bank Name"
                 htmlFor="supplier-bank-name"
+                required
                 error={errors.bankDetails?.bankName?.message}
               >
                 <TextInput
@@ -548,6 +507,7 @@ export function SupplierForm({
               <FormField
                 label="Account Name / Holder"
                 htmlFor="supplier-account-name"
+                required
                 error={errors.bankDetails?.accountName?.message}
               >
                 <TextInput
@@ -561,6 +521,7 @@ export function SupplierForm({
               <FormField
                 label="Account Number"
                 htmlFor="supplier-account-number"
+                required
                 error={errors.bankDetails?.accountNumber?.message}
                 hint="Stored securely and masked in overview"
               >
@@ -637,14 +598,15 @@ export function SupplierForm({
                   id="supplier-bank-currency"
                   options={[
                     { value: '', label: 'Same as supplier currency' },
-                    ...SUPPLIER_CURRENCIES.map((c) => ({ value: c.value, label: c.label })),
+                    ...currencyOptions,
                   ]}
                   error={Boolean(errors.bankDetails?.currency)}
+                  disabled={isCurrencyLoading || currencyOptions.length === 0}
                   {...register('bankDetails.currency')}
                 />
               </FormField>
             </div>
-          </FormSection>
+          </FormSection>}
 
 
           {/* Section 6: Additional Information */}

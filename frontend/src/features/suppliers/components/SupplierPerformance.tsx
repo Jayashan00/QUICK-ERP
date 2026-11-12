@@ -79,19 +79,19 @@ export function SupplierPerformance({ supplier }: SupplierPerformanceProps) {
           title="Received"
           value={performance.receivedOrderCount}
           icon={<PackageCheck size={19} />}
-          description="Marked received"
+          description="Completed purchase orders"
         />
         <StatCard
           title="Open orders"
           value={performance.openOrderCount}
           icon={<ClipboardCheck size={19} />}
-          description="Issued or partially received"
+          description="Draft, approved, sent, or partially received"
         />
         <StatCard
           title="Open order value"
           value={formatMoney(performance.openPurchaseOrderValue, performance.currency)}
           icon={<CircleDollarSign size={19} />}
-          description="Value of issued or partial orders"
+          description="Value of currently open orders"
         />
         <StatCard
           title="Cancelled"
@@ -103,21 +103,15 @@ export function SupplierPerformance({ supplier }: SupplierPerformanceProps) {
           title="Returns"
           value={performance.returnedOrderCount}
           icon={<RotateCcw size={19} />}
-          description="Mock indicator; no return records exist"
+          description="Recorded supplier returns"
         />
         <StatCard
           title="Rejected receipts"
           value={performance.rejectedReceiptCount}
           icon={<PackageX size={19} />}
-          description="Mock indicator; no receipt records exist"
+          description="Receipts containing rejected quantities"
         />
       </div>
-
-      {performance.returnIndicatorsAreMock && (
-        <p className="mt-3 text-xs text-slate-500">
-          Return and rejection counts are deterministic mock indicators, separate from purchase order statuses.
-        </p>
-      )}
 
       <section className="mt-4 rounded-lg border border-slate-200 bg-slate-50/70 p-4" aria-labelledby={`delivery-metrics-${supplier.id}`}>
         <div className="flex flex-wrap items-start gap-3">
