@@ -23,6 +23,8 @@ import { OPPORTUNITY_STAGES, OPPORTUNITY_STATUSES } from '@/features/crm/opportu
 import { useUserOptions } from '@/features/settings/users/hooks/useUserOptions';
 import { mockCustomers } from '@/features/customers/mocks';
 import { mockLeads } from '@/features/crm/leads/mocks';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
 
 import { opportunitySchema, type OpportunityFormValues } from '../schemas/opportunitySchema';
 import { useOpportunity } from '../hooks/useOpportunity';
@@ -46,16 +48,14 @@ const leadOptions = mockLeads.map((lead) => ({
   label: `${lead.firstName} ${lead.lastName}${lead.company ? ` - ${lead.company}` : ''}`,
 }));
 
-function generateCode() {
-  return `OPP-${Math.floor(1000 + Math.random() * 9000)}`;
-}
-
 export function OpportunityFormPage() {
   const { id } = useParams<{ id: string }>();
   const isEditing = Boolean(id);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { users } = useUserOptions({ includeInactive: true });
+  const { currencyCode, supportedCurrencies, isLoading: isCurrencyLoading } = useTenantCurrency();
+  const currencyOptions = supportedCurrencies.map((code) => ({ value: code, label: code }));
   const salesOwnerOptions = users.map(user => ({ value: user.id, label: user.name }));
   const initialOwner = users.find(user => user.id === searchParams.get('ownerId'));
 
@@ -75,7 +75,6 @@ export function OpportunityFormPage() {
   } = useForm<OpportunityFormValues>({
     resolver: zodResolver(opportunitySchema),
     defaultValues: {
-      code: generateCode(),
       name: searchParams.get('opportunityName') ?? '',
       customerId: '',
       customerName: '',
@@ -86,6 +85,7 @@ export function OpportunityFormPage() {
       stage: 'prospecting',
       status: 'open',
       expectedCloseDate: '',
+      expectedCurrency: '',
       expectedValue: Number(searchParams.get('expectedValue') ?? 0),
       probability: 20,
       description: '',
@@ -102,12 +102,18 @@ export function OpportunityFormPage() {
   }, [initialOwner, isEditing, getFieldState, setValue]);
   const selectedStage = watch('stage');
   const selectedStatus = watch('status');
+  const selectedCurrency = watch('expectedCurrency');
   const isLost = selectedStage === 'closed_lost' || selectedStatus === 'lost';
+
+  useEffect(() => {
+    if (currencyCode && !selectedCurrency) {
+      setValue('expectedCurrency', currencyCode);
+    }
+  }, [currencyCode, selectedCurrency, setValue]);
 
   useEffect(() => {
     if (opportunity) {
       reset({
-        code: opportunity.code,
         name: opportunity.name,
         customerId: opportunity.customerId ?? '',
         customerName: opportunity.customerName ?? '',
@@ -118,6 +124,7 @@ export function OpportunityFormPage() {
         stage: opportunity.stage,
         status: opportunity.status,
         expectedCloseDate: opportunity.expectedCloseDate ?? '',
+        expectedCurrency: resolveCrmValueCurrency(opportunity.expectedCurrency),
         expectedValue: opportunity.expectedValue,
         probability: opportunity.probability,
         description: opportunity.description ?? '',
@@ -126,7 +133,7 @@ export function OpportunityFormPage() {
         lostNote: opportunity.lostNote ?? '',
       });
     }
-  }, [opportunity, reset]);
+  }, [currencyCode, opportunity, reset]);
 
   const onCustomerChange = (customerId: string) => {
     const cust = mockCustomers.find((c) => c.id === customerId);
@@ -196,14 +203,6 @@ export function OpportunityFormPage() {
             description="Core opportunity identification and customer relationship"
           >
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <FormField label="Opportunity Code" error={errors.code?.message} required>
-                <TextInput
-                  {...register('code')}
-                  disabled={isEditing}
-                  placeholder="e.g. OPP-1024"
-                />
-              </FormField>
-
               <FormField label="Opportunity Name" error={errors.name?.message} required>
                 <TextInput
                   {...register('name')}
@@ -293,15 +292,28 @@ export function OpportunityFormPage() {
                 </>
               )}
 
-              <FormField label="Expected Value ($)" error={errors.expectedValue?.message} required>
+              <FormField label="Expected Currency" error={errors.expectedCurrency?.message} required>
+                <Select
+                  options={currencyOptions}
+                  placeholder={isCurrencyLoading ? 'Loading currencies...' : 'Select currency'}
+                  disabled={isCurrencyLoading || currencyOptions.length === 0}
+                  {...register('expectedCurrency')}
+                />
+              </FormField>
+
+              <FormField label="Expected Value" error={errors.expectedValue?.message} required>
                 <Controller
                   name="expectedValue"
                   control={control}
-                  render={({ field }) => (
+                  render={({ field: { value, onChange, ...field } }) => (
                     <CurrencyInput
-                      value={field.value}
-                      onChange={field.onChange}
-                      currency="$"
+                      {...field}
+                      min={0}
+                      step={1}
+                      value={value}
+                      onChange={(nextValue) => onChange(nextValue === '' ? 0 : Math.round(nextValue))}
+                      currency={selectedCurrency || currencyCode || ''}
+                      placeholder="0"
                     />
                   )}
                 />

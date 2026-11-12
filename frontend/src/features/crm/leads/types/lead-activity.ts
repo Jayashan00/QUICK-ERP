@@ -31,4 +31,7 @@ export interface LeadActivity
   completedAt?: string;
 
   assignedTo?: EntityId;
+
+  origin?: "manual" | "system";
+  systemEventKey?: string;
 }

@@ -33,8 +33,12 @@ export function useExchangeRates(targetCurrency?: string) {
     queryKey: ['exchange-rates', 'frankfurter', target],
     queryFn: () => exchangeRateService.latest(target),
     enabled: Boolean(target),
-    staleTime: 60 * 60 * 1000,
+    staleTime: 0,
     gcTime: 24 * 60 * 60 * 1000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: 60 * 60 * 1000,
     retry: 1,
   });
   const rates = new Map((query.data ?? []).map((row) => [row.quote, row]));

@@ -154,7 +154,7 @@ const baseMockRoles: MockRole[] = [
     code: "viewer",
     description: "Read-only access to customer and lead records",
     tenantId: "tenant-001",
-    permissions: ["customers.view", "leads.view", "notifications.view", "notices.view", "audit.view", "audit.export", "audit.security.view", "audit.sensitive.view"],
+    permissions: ["customers.view", "leads.view", "notifications.view", "notices.view"],
     isSystem: true,
     createdAt: "2024-01-01T00:00:00Z",
     updatedAt: "2024-01-01T00:00:00Z",
@@ -370,7 +370,7 @@ const baseMockRoles: MockRole[] = [
   },
 ];
 
-const tenantSupportPermissions = ['support.view', 'support.create', 'support.reply'];
+const tenantSupportPermissions = ['support.view', 'support.create'];
 
 export const mockRoles: Role[] = baseMockRoles.map((role) => ({
   ...role,

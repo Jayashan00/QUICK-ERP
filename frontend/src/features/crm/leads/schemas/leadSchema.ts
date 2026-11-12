@@ -17,7 +17,6 @@ function personName(label: string) {
 }
 
 export const leadSchema = z.object({
-  code: requiredString('Lead code', 50),
   firstName: personName('First name'),
   lastName: personName('Last name'),
   company: optionalString('Company name', 120),
@@ -32,6 +31,7 @@ export const leadSchema = z.object({
     { error: 'Select a valid lead status.' },
   ),
   assignedTo: optionalString('Assigned user', 100),
+  estimatedCurrency: optionalString('Estimated currency', 3).optional(),
   estimatedValue: optionalNonNegativeNumber('Estimated value'),
   nextFollowUpAt: optionalTodayOrFutureDate('Next follow-up date'),
   notes: optionalString('Notes', 1000),
@@ -40,6 +40,9 @@ export const leadSchema = z.object({
   ).optional(),
   lostNote: optionalString('Lost note', 1000),
 }).superRefine((data, context) => {
+  if (data.estimatedValue !== undefined && !data.estimatedCurrency) {
+    context.addIssue({ code: 'custom', path: ['estimatedCurrency'], message: 'Select an estimated value currency.' });
+  }
   if (data.status === 'lost' && !data.lostReason) {
     context.addIssue({ code: 'custom', path: ['lostReason'], message: 'Select a lost reason.' });
   }

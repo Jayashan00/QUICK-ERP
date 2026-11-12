@@ -2,12 +2,16 @@ import { Calendar, User, Building, Clock } from 'lucide-react';
 import { StatusBadge } from '@/shared/components/common/StatusBadge';
 import { Card } from '@/shared/components/common/Card';
 import type { Opportunity } from '@/features/crm/opportunities/types/opportunity';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
 
 interface OpportunityDetailViewProps {
   opportunity: Opportunity;
 }
 
 export function OpportunityDetailView({ opportunity }: OpportunityDetailViewProps) {
+  const { formatWholeMoneyInCurrency } = useTenantCurrency();
+  const expectedCurrency = resolveCrmValueCurrency(opportunity.expectedCurrency);
   const weightedValue = Math.round((opportunity.expectedValue * opportunity.probability) / 100);
 
   return (
@@ -19,10 +23,10 @@ export function OpportunityDetailView({ opportunity }: OpportunityDetailViewProp
             Expected Value
           </span>
           <div className="mt-2 text-2xl font-bold text-slate-900">
-            ${opportunity.expectedValue.toLocaleString()}
+            {formatWholeMoneyInCurrency(opportunity.expectedValue, expectedCurrency)}
           </div>
           <div className="mt-1 text-xs text-slate-500">
-            Weighted: ${weightedValue.toLocaleString()} ({opportunity.probability}%)
+            Weighted: {formatWholeMoneyInCurrency(weightedValue, expectedCurrency)} ({opportunity.probability}%)
           </div>
         </div>
 
@@ -189,7 +193,7 @@ export function OpportunityDetailView({ opportunity }: OpportunityDetailViewProp
               </div>
               <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                 <span className="text-slate-500">Weighted Value</span>
-                <span className="font-semibold text-slate-900">${weightedValue.toLocaleString()}</span>
+                <span className="font-semibold text-slate-900">{formatWholeMoneyInCurrency(weightedValue, expectedCurrency)}</span>
               </div>
             </div>
           </Card>

@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Download, ExternalLink, FileSpreadsheet, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import type { AuditFilters, AuditModule, AuditValues, TenantAuditEntry } from '@/core/audit';
+import { auditEventService, type AuditFilters, type AuditModule, type AuditValues, type TenantAuditEntry } from '@/core/audit';
+import { useAuth } from '@/core/auth/auth-context';
 import { useBranch } from '@/core/branch/branch-context';
 import { usePermissions } from '@/core/permissions/permission-context';
 import { useUserOptions } from '@/features/settings/users/hooks/useUserOptions';
@@ -18,7 +19,7 @@ import { useAuditLogs, useAuditScope } from '../hooks/useAuditLogs';
 import { auditExportService } from '../services/auditExportService';
 
 const controlClass = 'h-10 min-w-36 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
-const modules: AuditModule[] = ['sales', 'purchases', 'inventory', 'accounting', 'hr', 'projects', 'documents', 'support', 'security', 'settings'];
+const modules: AuditModule[] = ['crm', 'customers', 'products', 'sales', 'purchases', 'inventory', 'accounting', 'hr', 'projects', 'pos', 'documents', 'notifications', 'sync', 'support', 'security', 'settings'];
 const actions = ['Submitted', 'Approved', 'Rejected', 'Cancelled', 'Status changed', 'Posted', 'Reversed', 'Created', 'Updated', 'Completed', 'Logged in', 'Logged out', 'Login failed'];
 
 function ValuesPanel({ title, values, tone }: { title: string; values?: AuditValues; tone: 'before' | 'after' }) {
@@ -31,7 +32,8 @@ function ValuesPanel({ title, values, tone }: { title: string; values?: AuditVal
 
 export function AuditLogPage() {
   const navigate = useNavigate();
-  const { branches } = useBranch();
+  const { user } = useAuth();
+  const { branches, branchId } = useBranch();
   const { hasPermission } = usePermissions();
   const users = useUserOptions({ includeInactive: true });
   const scope = useAuditScope();
@@ -61,6 +63,12 @@ export function AuditLogPage() {
     setExporting(format);
     try {
       const count = await auditExportService.export(scope, filters, format);
+      if (user) auditEventService.record({
+        tenantId: scope.tenantId, branchId: branchId ?? undefined, actorId: user.id, actorName: user.name,
+        module: 'security', entityType: 'Audit Log', entityId: `export-${Date.now()}`, reference: format.toUpperCase(),
+        action: 'Exported', description: `${user.name} exported ${count} audit event${count === 1 ? '' : 's'} as ${format.toUpperCase()}.`,
+        newValues: { format, eventCount: count }, relatedRoute: '/audit', sensitivity: 'security',
+      });
       appToast.success(`${count} audit event${count === 1 ? '' : 's'} exported.`);
     } catch (error) {
       appToast.error(error instanceof Error ? error.message : 'Audit export failed.');
@@ -70,13 +78,13 @@ export function AuditLogPage() {
   if (query.isError) return <ErrorState title="Audit log unavailable" message="The tenant audit history could not be loaded." onRetry={() => void query.refetch()} />;
 
   return <div className="space-y-6">
-    <PageHeader title="Tenant Audit Log" description="Immutable operational history for important actions in your company and permitted branches." actions={canExport ? <div className="flex flex-wrap gap-2"><Button variant="secondary" leftIcon={<Download size={16} />} isLoading={exporting === 'csv'} onClick={() => void exportData('csv')}>CSV</Button><Button variant="secondary" leftIcon={<FileSpreadsheet size={16} />} isLoading={exporting === 'excel'} onClick={() => void exportData('excel')}>Excel</Button></div> : undefined} />
-    <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 shrink-0" size={19} /><div><p className="font-semibold">Read-only audit history</p><p className="mt-1 text-sky-800">Events cannot be edited or deleted. Sensitive and security activity is only included when your permissions allow it.</p></div></div></div>
+    <PageHeader title="Tenant Audit Log" description="Tenant-administrator-only history of user actions across your company." actions={canExport ? <div className="flex flex-wrap gap-2"><Button variant="secondary" leftIcon={<Download size={16} />} isLoading={exporting === 'csv'} onClick={() => void exportData('csv')}>CSV</Button><Button variant="secondary" leftIcon={<FileSpreadsheet size={16} />} isLoading={exporting === 'excel'} onClick={() => void exportData('excel')}>Excel</Button></div> : undefined} />
+    <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 shrink-0" size={19} /><div><p className="font-semibold">Company-private audit history · 3-month retention</p><p className="mt-1 text-sky-800">Only your company tenant administrator can view and export these records. Events from other companies are never included. Records cannot be edited or manually deleted and are automatically removed three months after their event date.</p></div></div></div>
     <DataTable columns={columns} data={query.data?.data ?? []} keyField="id" isLoading={query.isLoading} onRowClick={setSelected} sortField={filters.sortField} sortOrder={filters.sortOrder} onSort={(field) => setFilters((current) => ({ ...current, page: 1, sortField: field as AuditFilters['sortField'], sortOrder: current.sortField === field && current.sortOrder === 'asc' ? 'desc' : 'asc' }))} emptyTitle="No audit events found" emptyMessage="No immutable events match the current filters and access scope." pagination={query.data ? { page: query.data.page, pageSize: query.data.pageSize, total: query.data.total, onPageChange: (page) => setFilters((current) => ({ ...current, page })), onPageSizeChange: (pageSize) => setFilters((current) => ({ ...current, page: 1, pageSize })) } : undefined} toolbar={<TableToolbar searchValue={filters.search ?? ''} onSearchChange={(value) => update('search', value)} searchPlaceholder="Search record, user, action..." filters={<>
       <select aria-label="Filter by user" className={controlClass} value={filters.userId ?? 'all'} onChange={(event) => update('userId', event.target.value)}><option value="all">All users</option>{users.users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select>
       <select aria-label="Filter by module" className={controlClass} value={filters.module ?? 'all'} onChange={(event) => update('module', event.target.value)}><option value="all">All modules</option>{modules.filter((module) => module !== 'security' || canViewSecurity).map((module) => <option key={module} value={module}>{module}</option>)}</select>
       <select aria-label="Filter by action" className={controlClass} value={filters.action ?? 'all'} onChange={(event) => update('action', event.target.value)}><option value="all">All actions</option>{actionOptions.map((action) => <option key={action} value={action}>{action}</option>)}</select>
-      <select aria-label="Filter by branch" className={controlClass} value={filters.branchId ?? 'all'} onChange={(event) => update('branchId', event.target.value)}><option value="all">All permitted branches</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
+      <select aria-label="Filter by branch" className={controlClass} value={filters.branchId ?? 'all'} onChange={(event) => update('branchId', event.target.value)}><option value="all">All company branches</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
       <select aria-label="Filter by sensitivity" className={controlClass} value={filters.sensitivity ?? 'all'} onChange={(event) => update('sensitivity', event.target.value)}><option value="all">All visible events</option><option value="normal">Normal</option>{canViewSensitive && <option value="sensitive">Sensitive</option>}{canViewSecurity && <option value="security">Security</option>}</select>
       <input aria-label="Audit date from" type="date" className={controlClass} value={filters.dateFrom ?? ''} onChange={(event) => update('dateFrom', event.target.value || undefined)} />
       <input aria-label="Audit date to" type="date" className={controlClass} value={filters.dateTo ?? ''} onChange={(event) => update('dateTo', event.target.value || undefined)} />

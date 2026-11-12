@@ -21,7 +21,7 @@ import { isPermissionEnabled, tenantEntitlementService } from '@/core/tenant/ten
 
 export const dashboardService = {
   async getDashboardOverview(filters: DashboardFilters): Promise<DashboardOverviewResponse> {
-    const { tenantId, branchId, permittedBranchIds, permissions, dateFrom, dateTo } = filters;
+    const { tenantId, branchId, permittedBranchIds, permissions, roleId, dateFrom, dateTo } = filters;
     if (!tenantId || !branchId || tenantId === 'platform' || !permittedBranchIds.includes(branchId)) throw new Error('A permitted tenant branch is required.');
     if (![dateFrom, dateTo].every(value => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value) || dateFrom > dateTo) throw new Error('Choose a valid dashboard date range.');
     const enabledModules = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
@@ -134,7 +134,7 @@ export const dashboardService = {
       if (can(P.POS.SHIFT_APPROVE)) posService.shifts(scope).filter(row => row.status === 'pending_approval' && row.cashierId !== filters.userId).forEach(row => approval({ id: row.id, module: 'POS shift', reference: row.id.slice(0, 8), description: 'Cash count review', requester: row.cashierName, date: row.openedAt.slice(0, 10), status: row.status, to: '/pos/shifts' }));
       if (can(P.POS.REPORT_VIEW)) result.pos.push({ label: 'Web orders', value: storefrontService.listForStaff(scope).filter(row => range(row.createdAt)).length });
     }});
-    if (can('audit.view')) jobs.push({ name: 'Activity', run: async () => { const rows = await auditEventService.list({ tenantId, permittedBranchIds: [branchId], canView: true, canExport: false, canViewSensitive: can('audit.sensitive.view'), canViewSecurity: can('audit.security.view') }, { branchId, dateFrom, dateTo, pageSize: 6 }); result.activity = rows.data.map(row => ({ id: row.id, action: `${row.action}  |  ${row.reference}`, user: row.actorName, module: row.module, time: row.createdAt })); }});
+    if (roleId === 'role-001') jobs.push({ name: 'Activity', run: async () => { const rows = await auditEventService.list({ tenantId, permittedBranchIds: [branchId], isTenantAdministrator: true, canView: true, canExport: false, canViewSensitive: true, canViewSecurity: true }, { branchId, dateFrom, dateTo, pageSize: 6 }); result.activity = rows.data.map(row => ({ id: row.id, action: `${row.action}  |  ${row.reference}`, user: row.actorName, module: row.module, time: row.createdAt })); }});
     // Stable mutation order keeps pipeline stages and KPI priority deterministic.
     for (const job of jobs) { try { await job.run(); } catch { result.errors.push(job.name); } }
     result.approvals.sort((a, b) => a.date.localeCompare(b.date));

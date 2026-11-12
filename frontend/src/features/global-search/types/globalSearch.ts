@@ -15,9 +15,12 @@ export interface GlobalSearchResult {
 export interface GlobalSearchEntry extends GlobalSearchResult { searchText: string }
 export interface GlobalSearchScope {
   tenantId: string;
+  companyName: string;
   branchId: string;
   permittedBranchIds: string[];
   permissions: string[];
   user: { id: string; name: string; email: string };
+  roleId: string;
+  isTenantAdministrator: boolean;
 }
 export interface GlobalSearchIndex { entries: GlobalSearchEntry[]; unavailableModules: string[] }

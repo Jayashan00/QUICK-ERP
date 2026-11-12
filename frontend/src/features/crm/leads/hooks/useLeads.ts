@@ -11,6 +11,7 @@ import { useTenant } from "@/core/tenant/tenant-context";
 import { useBranch } from "@/core/branch/branch-context";
 
 import { leadKeys } from "../queries/leadKeys";
+import { leadActivityKeys } from "../queries/leadActivityKeys";
 import type { LeadConversionFormValues } from "../schemas/leadConversionSchema";
 import type { LeadFormValues } from "../schemas/leadSchema";
 import { leadConversionService } from "../services/leadConversionService";
@@ -61,9 +62,10 @@ export function useLeads(initialSearch = "") {
     ) => leadService.create(scope, data),
 
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: leadKeys.lists(),
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: leadKeys.lists() }),
+        queryClient.invalidateQueries({ queryKey: leadActivityKeys.all }),
+      ]);
     },
   });
 
@@ -77,9 +79,10 @@ export function useLeads(initialSearch = "") {
     }) => leadService.update(scope, id, data),
 
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: leadKeys.all,
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: leadKeys.all }),
+        queryClient.invalidateQueries({ queryKey: leadActivityKeys.all }),
+      ]);
     },
   });
 
@@ -88,9 +91,10 @@ export function useLeads(initialSearch = "") {
       leadService.delete(scope, id),
 
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: leadKeys.lists(),
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: leadKeys.lists() }),
+        queryClient.invalidateQueries({ queryKey: leadActivityKeys.all }),
+      ]);
     },
   });
 
@@ -116,6 +120,10 @@ export function useLeads(initialSearch = "") {
 
         queryClient.invalidateQueries({
           queryKey: customerKeys.all,
+        }),
+
+        queryClient.invalidateQueries({
+          queryKey: leadActivityKeys.all,
         }),
       ]);
     },

@@ -15,6 +15,8 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.time.Instant;
+import java.time.Clock;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +44,9 @@ class StateStoreIntegrationTest {
     private static final String PASSWORD = "Starter-Password-1";
     private static final String TENANT = "tenant-001";
     private static final List<String> MIGRATIONS = List.of(
-            "V1__initial_schema.sql", "V2__security_and_files.sql", "V3__security_hardening.sql");
+            "V1__initial_schema.sql", "V2__security_and_files.sql", "V3__security_hardening.sql",
+            "V4__ai_assistant.sql", "V5__sync_tenant_entitlements.sql",
+            "V7__support_ticket_tenant_approval.sql", "V8__support_ticket_escalation_workflow.sql");
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final String schema = "qerp_it_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
@@ -99,6 +103,10 @@ class StateStoreIntegrationTest {
         }
         assertTrue(seeded.users() >= 10, "starter users");
         assertTrue(seeded.collections() > 100, "starter collections");
+        // Apply the access migration after seeding to simulate an existing installation being upgraded.
+        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
+            statement.execute(resource("db/migration/V6__tenant_admin_only_audit_access.sql"));
+        }
     }
 
     @AfterAll
@@ -120,6 +128,59 @@ class StateStoreIntegrationTest {
         assertNotNull(record(view, "core.roles", "role-001"));
         assertNotNull(record(view, "core.users", StateStore.ALL_RECORD));
         assertNotNull(record(view, "accounting.journals", "jn-001"));
+    }
+
+    @Test
+    void supportTicketsRequireExplicitEscalationAndSequentialStatusChanges() throws Exception {
+        Principal creator = login("sales@quickerp.test");
+        Principal tenantAdmin = login("admin@quickerp.test");
+        Principal superAdmin = login("superadmin@quickerp.test");
+        String ticketId = "support-approval-it";
+        ObjectNode pending = (ObjectNode) json("{\"id\":\"" + ticketId + "\",\"ticketNumber\":\"SUP-IT-0001\"," +
+                "\"tenantId\":\"tenant-001\",\"companyName\":\"Acme Corporation\",\"branchId\":\"branch-001\"," +
+                "\"subject\":\"Approval integration test\",\"description\":\"Verify tenant approval and platform visibility.\"," +
+                "\"category\":\"other\",\"priority\":\"medium\",\"status\":\"new\"," +
+                "\"createdBy\":{\"id\":\"usr-002\",\"name\":\"Sales Manager\"},\"attachmentIds\":[],\"conversation\":[],\"timeline\":[]," +
+                "\"createdAt\":\"2026-11-11T05:30:00Z\",\"updatedAt\":\"2026-11-11T05:30:00Z\"}");
+
+        assertEquals(List.of(), store.applyBatch(creator, batch("support.tickets", ticketId, pending)).rejected());
+        assertNotNull(record(store.load(creator), "support.tickets", ticketId));
+        assertNotNull(record(store.load(tenantAdmin), "support.tickets", ticketId));
+        assertEquals(null, record(store.load(superAdmin), "support.tickets", ticketId));
+
+        ObjectNode creatorTamper = pending.deepCopy().put("status", "in_progress");
+        assertRejected(store.applyBatch(creator, batch("support.tickets", ticketId, creatorTamper)));
+
+        ObjectNode inProgress = (ObjectNode) record(store.load(tenantAdmin), "support.tickets", ticketId).deepCopy();
+        inProgress.put("status", "in_progress").put("updatedAt", "2026-11-11T05:31:00Z");
+        assertEquals(List.of(), store.applyBatch(tenantAdmin, batch("support.tickets", ticketId, inProgress)).rejected());
+        assertEquals(null, record(store.load(superAdmin), "support.tickets", ticketId));
+
+        ObjectNode escalated = (ObjectNode) record(store.load(tenantAdmin), "support.tickets", ticketId).deepCopy();
+        escalated.putObject("sentToSuperAdminBy").put("id", "usr-001").put("name", "Admin User");
+        escalated.put("sentToSuperAdminAt", "2026-11-11T05:32:00Z").put("updatedAt", "2026-11-11T05:32:00Z");
+        assertEquals(List.of(), store.applyBatch(tenantAdmin, batch("support.tickets", ticketId, escalated)).rejected());
+        assertNotNull(record(store.load(superAdmin), "support.tickets", ticketId));
+
+        ObjectNode platformReply = (ObjectNode) record(store.load(superAdmin), "support.tickets", ticketId).deepCopy();
+        platformReply.put("status", "resolved");
+        ObjectNode reply = platformReply.withArray("conversation").addObject();
+        reply.put("id", "support-message-it");
+        reply.putObject("author").put("id", "superadmin-001").put("name", "Super Admin");
+        reply.put("authorType", "quick_erp_support");
+        reply.put("message", "Approved ticket received.");
+        reply.putArray("attachmentIds");
+        reply.put("createdAt", "2026-11-11T05:33:00Z");
+        platformReply.put("updatedAt", "2026-11-11T05:33:00Z");
+        assertEquals(List.of(), store.applyBatch(superAdmin, batch("support.tickets", ticketId, platformReply)).rejected());
+        assertEquals(1, record(store.load(tenantAdmin), "support.tickets", ticketId).path("conversation").size());
+
+        assertRejected(store.applyBatch(superAdmin, deleteBatch("support.tickets", ticketId)));
+        ObjectNode closed = (ObjectNode) record(store.load(superAdmin), "support.tickets", ticketId).deepCopy();
+        closed.put("status", "closed").put("updatedAt", "2026-11-11T05:34:00Z");
+        assertEquals(List.of(), store.applyBatch(superAdmin, batch("support.tickets", ticketId, closed)).rejected());
+        assertEquals(List.of(), store.applyBatch(superAdmin, deleteBatch("support.tickets", ticketId)).rejected());
+        assertEquals(null, record(store.load(tenantAdmin), "support.tickets", ticketId));
     }
 
     @Test
@@ -587,10 +648,17 @@ class StateStoreIntegrationTest {
     }
 
     @Test
-    void auditorsCanReadButNotWriteAccounting() throws Exception {
+    void nonAdministratorsCannotReadTenantAuditLogsOrUseAuditPermissions() throws Exception {
         Principal viewer = login("viewer@quickerp.test");
-        assertNotNull(record(store.load(viewer), "accounting.journals", "jn-001"));
+        assertTrue(store.load(viewer).records().stream().noneMatch(row -> row.collection().equals(StateStore.AUDIT_COLLECTION)));
+        Principal superAdmin = login("superadmin@quickerp.test");
+        assertTrue(store.load(superAdmin).records().stream().noneMatch(row -> row.collection().equals(StateStore.AUDIT_COLLECTION)));
+        assertTrue(store.changes(superAdmin, 0, null).records().stream().noneMatch(row -> row.collection().equals(StateStore.AUDIT_COLLECTION)));
         assertRejected(store.applyBatch(viewer, batch("accounting.journals", "jn-v", journal("draft", "[]"))));
+        ObjectNode role = mapper.createObjectNode().put("id", "role-audit-blocked").put("tenantId", TENANT)
+                .put("scope", "tenant").put("name", "Blocked audit role");
+        role.putArray("permissions").add("audit.view");
+        assertRejected(store.applyBatch(login("admin@quickerp.test"), batch("core.roles", "role-audit-blocked", role)));
     }
 
     @Test
@@ -604,6 +672,49 @@ class StateStoreIntegrationTest {
         assertEquals(List.of(), deletion.rejected());
         assertEquals(0, deletion.applied());
         assertNotNull(record(store.load(admin), "core.auditEvents", "tenant-audit-001"));
+    }
+
+    @Test
+    void serverRecordsEveryAcceptedUserChange() throws Exception {
+        Principal admin = login("admin@quickerp.test");
+        String recordId = "audit-source-it";
+        ObjectNode setting = mapper.createObjectNode().put("id", recordId).put("tenantId", TENANT).put("name", "Audit source");
+        assertEquals(List.of(), store.applyBatch(admin, batch("settings.departments", recordId, setting)).rejected());
+
+        assertTrue(store.load(admin).records().stream()
+                .filter(row -> row.collection().equals(StateStore.AUDIT_COLLECTION))
+                .map(StateStore.StoredRecord::data)
+                .anyMatch(event -> recordId.equals(event.path("entityId").asText())
+                        && admin.userId().equals(event.path("actorId").asText())
+                        && "Created".equals(event.path("action").asText())));
+    }
+
+    @Test
+    void auditMaintenanceExpiresOldDataAndRemindsTenantAdministratorsOncePerMonth() throws Exception {
+        Instant now = Instant.parse("2026-11-11T00:00:00Z");
+        db.tx(connection -> {
+            ObjectNode old = mapper.createObjectNode().put("id", "audit-expired-it").put("tenantId", TENANT)
+                    .put("actorId", "usr-001").put("actorName", "Admin User").put("module", "settings")
+                    .put("entityType", "Record").put("entityId", "old").put("reference", "old")
+                    .put("action", "Updated").put("description", "Old event").put("createdAt", "2026-07-01T00:00:00Z")
+                    .put("sensitivity", "normal");
+            Sql.update(connection,
+                    "INSERT INTO erp_records(tenant_id,collection,record_id,data,deleted,version,change_seq,updated_by) "
+                            + "VALUES(?,?,?,CAST(? AS jsonb),FALSE,1,nextval('erp_change_seq'),'it')",
+                    TENANT, StateStore.AUDIT_COLLECTION, "audit-expired-it", Sql.writeJson(mapper, old));
+            return null;
+        });
+
+        AuditRetentionService service = new AuditRetentionService(db, mapper, Clock.fixed(now, ZoneOffset.UTC));
+        AuditRetentionService.Result first = service.maintain();
+        AuditRetentionService.Result second = service.maintain();
+        StateStore.StateView view = store.load(login("admin@quickerp.test"));
+
+        assertTrue(first.expiredAuditEvents() >= 1);
+        assertTrue(first.remindersCreated() >= 1);
+        assertEquals(0, second.remindersCreated());
+        assertEquals(null, record(view, StateStore.AUDIT_COLLECTION, "audit-expired-it"));
+        assertNotNull(record(view, "notifications.records", "audit-export-reminder-2026-11-usr-001"));
     }
 
     @Test
@@ -680,6 +791,8 @@ class StateStoreIntegrationTest {
                 "Lanka Traders", "Owner Name", "owner@lankatraders.lk", "Owner-password-1", TENANT));
         Principal owner = auth.authenticate(auth.login("owner@lankatraders.lk", "Owner-password-1", "127.0.0.9").token());
         StateStore.StateView view = store.load(owner);
+        assertTrue(view.records().stream().filter(record -> record.collection().equals(StateStore.AUDIT_COLLECTION))
+                .allMatch(record -> "lanka-traders".equals(record.data().path("tenantId").asText())));
         JsonNode company = view.records().stream().filter(record -> record.collection().equals("settings.company") && record.data().isObject())
                 .findFirst().orElseThrow().data();
         assertEquals("Lanka Traders", company.path("name").asText());
@@ -716,6 +829,10 @@ class StateStoreIntegrationTest {
         JsonNode body = data;
         if (data.isObject() && data.has("id") && !recordId.equals(data.path("id").asText())) body = ((ObjectNode) data.deepCopy()).put("id", recordId);
         return new StateStore.BatchRequest("it", List.of(change(collection, recordId, body)), List.of());
+    }
+
+    private StateStore.BatchRequest deleteBatch(String collection, String recordId) {
+        return new StateStore.BatchRequest("it", List.of(new StateStore.Change(collection, recordId, null, true)), List.of());
     }
 
     private static StateStore.Change change(String collection, String recordId, JsonNode data) {

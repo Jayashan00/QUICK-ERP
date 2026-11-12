@@ -23,9 +23,12 @@ export function PermissionProvider({ children }: { children: ReactNode }) {
     if (!user) return [];
     const expectedScope: PermissionScope = user?.isSuperAdmin ? 'platform' : 'tenant';
     if (!roleQuery.data || roleQuery.data.scope !== expectedScope) return [];
-    const rolePermissions = expectedScope === 'tenant' && currentTenant && roleQuery.data.permissions.includes('*')
-      ? Object.values(TENANT_PERMISSIONS).flatMap((group) => Object.values(group))
+    const assignedPermissions = expectedScope === 'tenant'
+      ? [...new Set([...roleQuery.data.permissions, 'support.view', 'support.create'])]
       : roleQuery.data.permissions;
+    const rolePermissions = expectedScope === 'tenant' && currentTenant && assignedPermissions.includes('*')
+      ? Object.values(TENANT_PERMISSIONS).flatMap((group) => Object.values(group))
+      : assignedPermissions;
     const scoped = resolveScopedPermissions(rolePermissions, expectedScope);
     if (expectedScope === 'platform' || !currentTenant) return scoped;
     return scoped.filter((permission) => isPermissionEnabled(permission, currentTenant.entitlements.enabledModules));

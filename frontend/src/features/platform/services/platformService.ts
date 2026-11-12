@@ -69,6 +69,7 @@ export const platformService = {
   async setMaintenance(enabled: boolean, message: string, startAt?: string, endAt?: string) { store.maintenance = { enabled, message, startAt: startAt || undefined, endAt: endAt || undefined }; return structuredClone(store.maintenance); },
   async listSupport() { return supportTicketService.listForPlatform(['*']); },
   async updateSupport(ticketId: string, status: SupportStatus, assignee?: string, reply?: string) { return supportTicketService.updateFromPlatform(['*'], 'Super Admin', ticketId, status, assignee, reply); },
+  async deleteSupport(ticketId: string) { return supportTicketService.deleteFromPlatform(['*'], ticketId); },
 };
 
 registerObject('platform.foundation', store);

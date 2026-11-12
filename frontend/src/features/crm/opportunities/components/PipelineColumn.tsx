@@ -1,6 +1,8 @@
 import { useState, type DragEvent } from 'react';
 import type { Opportunity, OpportunityStage } from '@/features/crm/opportunities/types/opportunity';
 import { OpportunityCard } from './OpportunityCard';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
 
 interface PipelineColumnProps {
   stage: { value: OpportunityStage; label: string };
@@ -19,8 +21,29 @@ export function PipelineColumn({
   onMoveStage,
   onDropOpportunity,
 }: PipelineColumnProps) {
+  const {
+    currencyCode,
+    convertToBaseAmount,
+    formatWholeMoneyInCurrency,
+    isLoading: isCurrencyLoading,
+  } = useTenantCurrency();
   const [isDragOver, setIsDragOver] = useState(false);
-  const totalValue = opportunities.reduce((sum, opp) => sum + (opp.expectedValue || 0), 0);
+  const baseTotal = opportunities.reduce(
+    (total, opportunity) => {
+      const sourceCurrency = resolveCrmValueCurrency(opportunity.expectedCurrency);
+      const converted = convertToBaseAmount(opportunity.expectedValue || 0, sourceCurrency);
+      if (converted === null) total.hasMissingRate = true;
+      else total.amount += converted;
+      if (sourceCurrency !== currencyCode) total.hasForeignCurrency = true;
+      return total;
+    },
+    { amount: 0, hasMissingRate: false, hasForeignCurrency: false },
+  );
+  const formattedTotal = isCurrencyLoading && baseTotal.hasForeignCurrency
+    ? 'Converting…'
+    : baseTotal.hasMissingRate
+      ? 'Rate unavailable'
+      : formatWholeMoneyInCurrency(baseTotal.amount, currencyCode);
 
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -55,7 +78,7 @@ export function PipelineColumn({
           </span>
         </div>
         <div className="text-xs font-semibold text-slate-600">
-          ${totalValue.toLocaleString()}
+          {formattedTotal}
         </div>
       </div>
 

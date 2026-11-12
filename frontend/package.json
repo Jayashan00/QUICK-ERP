@@ -9,6 +9,8 @@
     "lint": "eslint .",
     "qa:products": "node scripts/run-product-qa.mjs",
     "qa:customers": "node scripts/run-customer-qa.mjs",
+    "qa:crm-leads": "node scripts/run-lead-activity-qa.mjs",
+    "qa:crm-opportunities": "node scripts/run-opportunity-qa.mjs",
     "qa:inventory": "node scripts/run-inventory-qa.mjs",
     "qa:purchasing": "node scripts/run-purchasing-qa.mjs",
     "qa:sales": "node scripts/run-sales-qa.mjs",

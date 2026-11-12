@@ -23,6 +23,7 @@ interface LeadActivityTimelineProps {
   onRetry?: () => void;
   isUpdating?: boolean;
   canManage?: boolean;
+  getAssignedUserName?: (userId: string) => string;
   onAdd: () => void;
   onComplete: (
     activity: LeadActivity,
@@ -73,6 +74,12 @@ function formatDate(
     return "No date scheduled";
   }
 
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(
+      new Date(`${value}T00:00:00`),
+    );
+  }
+
   return new Intl.DateTimeFormat(
     "en-US",
     {
@@ -89,6 +96,7 @@ export function LeadActivityTimeline({
   onRetry,
   isUpdating = false,
   canManage = true,
+  getAssignedUserName,
   onAdd,
   onComplete,
   onDelete,
@@ -162,6 +170,12 @@ export function LeadActivityTimeline({
                     <span className="text-xs capitalize text-slate-600">
                       {activity.status}
                     </span>
+
+                    {activity.origin === "system" && (
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+                        System
+                      </span>
+                    )}
                   </div>
 
                   {activity.description && (
@@ -169,6 +183,12 @@ export function LeadActivityTimeline({
                       {
                         activity.description
                       }
+                    </div>
+                  )}
+
+                  {activity.assignedTo && getAssignedUserName && (
+                    <div className="mt-1 text-xs text-slate-500">
+                      Assigned to {getAssignedUserName(activity.assignedTo)}
                     </div>
                   )}
 

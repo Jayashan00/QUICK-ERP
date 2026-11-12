@@ -8,7 +8,6 @@ import {
 } from '@/shared/validation';
 
 export const opportunitySchema = z.object({
-  code: requiredString('Opportunity code', 50),
   name: requiredString('Opportunity name', 200),
   customerId: optionalString('Customer', 100),
   customerName: optionalString('Customer name', 200),
@@ -24,6 +23,7 @@ export const opportunitySchema = z.object({
     message: 'Select a valid status.',
   }),
   expectedCloseDate: optionalTodayOrFutureDate('Expected close date'),
+  expectedCurrency: optionalString('Expected currency', 3).optional(),
   expectedValue: nonNegativeNumber('Expected value'),
   probability: nonNegativeNumber('Probability')
     .max(100, 'Probability cannot exceed 100%.'),
@@ -32,6 +32,9 @@ export const opportunitySchema = z.object({
   lostReason: z.enum(['price', 'competitor', 'timing', 'no_budget', 'no_decision', 'other']).optional(),
   lostNote: optionalString('Lost note', 1000),
 }).superRefine((data, context) => {
+  if (!data.expectedCurrency) {
+    context.addIssue({ code: 'custom', path: ['expectedCurrency'], message: 'Select an expected value currency.' });
+  }
   const isLost = data.stage === 'closed_lost' || data.status === 'lost';
   if (isLost && !data.lostReason) {
     context.addIssue({ code: 'custom', path: ['lostReason'], message: 'Select a lost reason.' });

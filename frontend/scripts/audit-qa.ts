@@ -1,15 +1,14 @@
 import { auditEventService, type AuditAccessScope } from '../src/core/audit';
 
 const assert = (condition: unknown, message: string) => { if (!condition) throw new Error(`Audit QA failed: ${message}`); };
-const scope: AuditAccessScope = { tenantId: 'tenant-001', permittedBranchIds: ['branch-001'], canView: true, canExport: true, canViewSensitive: true, canViewSecurity: true };
+const scope: AuditAccessScope = { tenantId: 'tenant-001', permittedBranchIds: ['branch-001'], isTenantAdministrator: true, canView: true, canExport: true, canViewSensitive: true, canViewSecurity: true };
 
 const initial = await auditEventService.list(scope, { pageSize: 100 });
 assert(initial.data.length > 0, 'scoped audit list must not be empty');
 assert(initial.data.every((event) => event.tenantId === scope.tenantId), 'tenant isolation must be enforced');
-assert(initial.data.every((event) => !event.branchId || scope.permittedBranchIds.includes(event.branchId)), 'branch restrictions must be enforced');
+assert(initial.data.some((event) => event.branchId === 'branch-002'), 'tenant administrators must receive audit events from every branch in their company');
 assert(initial.data.some((event) => event.sensitivity === 'security'), 'security events must be visible with permission');
 assert(initial.data.some((event) => event.sensitivity === 'sensitive'), 'sensitive events must be visible with permission');
-
 const restricted = await auditEventService.list({ ...scope, canViewSensitive: false, canViewSecurity: false }, { pageSize: 100 });
 assert(restricted.data.every((event) => event.sensitivity === 'normal'), 'restricted users must not receive sensitive or security events');
 
@@ -29,9 +28,15 @@ assert(exported.length === 1 && exported[0]?.id === created.id, 'export must res
 
 let viewBlocked = false;
 try { await auditEventService.list({ ...scope, canView: false }); } catch { viewBlocked = true; }
-assert(viewBlocked, 'audit.view must be enforced by the service');
+assert(viewBlocked, 'tenant administrator view authorization must be enforced by the service');
 let exportBlocked = false;
 try { await auditEventService.listForExport({ ...scope, canExport: false }); } catch { exportBlocked = true; }
-assert(exportBlocked, 'audit.export must be enforced by the service');
+assert(exportBlocked, 'tenant administrator export authorization must be enforced by the service');
+let nonAdministratorBlocked = false;
+try { await auditEventService.list({ ...scope, isTenantAdministrator: false }); } catch { nonAdministratorBlocked = true; }
+assert(nonAdministratorBlocked, 'non-administrator roles must never receive tenant audit logs');
+let superAdministratorBlocked = false;
+try { await auditEventService.list({ ...scope, isTenantAdministrator: false, canView: true, canExport: true, canViewSensitive: true, canViewSecurity: true }); } catch { superAdministratorBlocked = true; }
+assert(superAdministratorBlocked, 'platform super administrators must never receive company audit logs');
 
-console.log('Audit QA passed: event creation, immutable snapshots, tenant/branch scope, filters, sensitive/security RBAC, and export RBAC.');
+console.log('Audit QA passed: tenant-admin-only access, immutable snapshots, tenant/branch isolation, protected categories, filters, and export access.');

@@ -5,15 +5,15 @@ import { addList, group, timeSeries } from '@/features/dashboard/utils/moduleAna
 export async function aggregateSupportDashboard(context: ModuleDashboardContext) {
   const { scope, can, output, inPeriod, request } = context;
   if (!can('support.view')) return;
-  const supportScope = { tenantId: scope.tenantId, activeBranchId: scope.branchId, permittedBranchIds: scope.permittedBranchIds, user: request.user, permissions: request.permissions };
-  // Service retains ticket-owner restrictions unless support.manage is granted.
+  const supportScope = { tenantId: scope.tenantId, companyName: request.companyName, activeBranchId: scope.branchId, permittedBranchIds: scope.permittedBranchIds, user: request.user, roleId: request.roleId, isTenantAdministrator: request.isTenantAdministrator, permissions: request.permissions };
+  // The service retains own-ticket restrictions unless the identity is the company tenant administrator.
   const rows = (await supportTicketService.list(supportScope, { pageSize: Number.MAX_SAFE_INTEGER })).data;
   const selected = rows.filter(row => inPeriod(row.createdAt));
   const high = rows.filter(row => ['high', 'urgent'].includes(row.priority) && !['resolved', 'closed'].includes(row.status));
   output.metrics = [
-    { label: 'Open tickets', value: rows.filter(row => row.status === 'open').length, description: 'Current accessible queue', to: '/support/tickets' },
+    { label: 'New tickets', value: rows.filter(row => row.status === 'new').length, description: 'Current accessible queue', to: '/support/tickets' },
     { label: 'In progress', value: rows.filter(row => row.status === 'in_progress').length, description: 'Current accessible queue', to: '/support/tickets' },
-    { label: 'Waiting for user', value: rows.filter(row => row.status === 'waiting_for_user').length, description: 'Current response queue', to: '/support/tickets' },
+    { label: 'Resolved', value: rows.filter(row => row.status === 'resolved').length, description: 'Current resolved queue', to: '/support/tickets' },
     { label: 'High / urgent', value: high.length, description: 'Unresolved priority tickets', to: '/support/tickets' },
   ];
   output.charts = [

@@ -8,10 +8,11 @@ import { periodRange, previousRange, trend } from '@/features/dashboard/utils/pe
 import type { DashboardFilters } from '@/features/dashboard/types/dashboard';
 
 Object.defineProperty(globalThis, 'window', { value: globalThis, configurable: true });
-const filters: DashboardFilters = { tenantId: 'tenant-001', branchId: 'branch-001', permittedBranchIds: ['branch-001', 'branch-002'], permissions: getPermissionsForScope('tenant'), userId: 'user-001', period: 'custom', dateFrom: '2026-01-01', dateTo: '2026-12-31' };
+const filters: DashboardFilters = { tenantId: 'tenant-001', branchId: 'branch-001', permittedBranchIds: ['branch-001', 'branch-002'], permissions: getPermissionsForScope('tenant'), userId: 'user-001', roleId: 'role-001', period: 'custom', dateFrom: '2026-01-01', dateTo: '2026-12-31' };
 const load = (changes: Partial<DashboardFilters> = {}) => dashboardService.getDashboardOverview({ ...filters, ...changes });
 const data = await load();
 assert.deepEqual(data.errors, [], 'all permitted sources must load');
+assert.ok((data.activity?.length ?? 0) > 0, 'tenant administrator dashboard must load audit activity without assignable audit permissions');
 assert.ok(data.metrics.length <= 6);
 assert.ok(data.approvals.length <= 5 && data.alerts.length <= 5 && (data.activity?.length ?? 0) <= 6);
 const scope = { tenantId: filters.tenantId, branchId: filters.branchId };
@@ -35,7 +36,9 @@ assert.equal(otherTenant.sales, undefined, 'disabled tenant sales module has no 
 assert.ok(otherTenant.lowStock?.every(row => !data.lowStock?.some(first => first.id === row.id)), 'tenant stock isolation');
 const none = await load({ permissions: [] });
 assert.deepEqual(none.metrics, []);
-assert.equal(none.finance, undefined); assert.equal(none.attendance, undefined); assert.equal(none.activity, undefined);
+assert.equal(none.finance, undefined); assert.equal(none.attendance, undefined); assert.ok((none.activity?.length ?? 0) > 0, 'tenant administrator audit activity is identity-based');
+const nonAdmin = await load({ permissions: getPermissionsForScope('tenant'), roleId: 'role-002' });
+assert.equal(nonAdmin.activity, undefined, 'non-admin dashboards must never load audit activity');
 const hr = await load({ permissions: ['hr.employees.view'] });
 assert.deepEqual(hr.metrics.map(row => row.key), ['employees']);
 assert.equal(hr.attendance, undefined); assert.equal(hr.finance, undefined); assert.equal(hr.sales, undefined);
