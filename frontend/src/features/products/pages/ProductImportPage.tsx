@@ -10,11 +10,11 @@ import { appToast } from '@/shared/utils/toast';
 import { useProductImport } from '../hooks/useProductImport';
 
 const columns: ImportColumnDefinition[] = [
-  { key: 'name', label: 'Product Name', required: true }, { key: 'sku', label: 'SKU', required: true }, { key: 'barcode', label: 'Barcode' }, { key: 'category', label: 'Category ID / Code / Name', required: true }, { key: 'uom', label: 'UOM ID / Code / Name', required: true }, { key: 'costPrice', label: 'Purchase / Cost Price', required: true }, { key: 'sellingPrice', label: 'Selling Price', required: true }, { key: 'status', label: 'Status', required: true }, { key: 'type', label: 'Product Type' }, { key: 'trackInventory', label: 'Track Inventory' },
+  { key: 'name', label: 'Product or Service Name', required: true }, { key: 'barcode', label: 'Barcode' }, { key: 'category', label: 'Category ID / Code / Name', required: true }, { key: 'uom', label: 'UOM ID / Code / Name' }, { key: 'costPrice', label: 'Purchase / Cost Price' }, { key: 'sellingPrice', label: 'Price', required: true }, { key: 'status', label: 'Status', required: true }, { key: 'type', label: 'Type' }, { key: 'trackInventory', label: 'Track Inventory' },
 ];
 
 function downloadTemplate() {
-  const csv = 'name,sku,barcode,category,uom,costPrice,sellingPrice,status,type,trackInventory\nSample Product,SAMPLE-001,1234567890128,ELEC,UNIT,10,15,active,goods,true';
+  const csv = 'name,barcode,category,uom,costPrice,sellingPrice,status,type,trackInventory\nSample Product,1234567890128,ELEC,UNIT,10,15,active,goods,true';
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'quick-erp-product-import-template.csv'; anchor.click(); URL.revokeObjectURL(url); appToast.success('Product import template downloaded.');
 }
 

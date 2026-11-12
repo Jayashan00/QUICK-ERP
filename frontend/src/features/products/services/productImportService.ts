@@ -58,9 +58,9 @@ function barcodeType(value: string): ProductFormValues['barcodeType'] {
 function toProductValues(tenantId: string, values: Record<string, string>): ProductFormValues {
   const category = resolveReference(masterDataStore.categories, tenantId, values.category);
   const uom = resolveReference(masterDataStore.uoms, tenantId, values.uom);
-  const type = ['goods', 'service', 'composite'].includes(values.type) ? values.type as ProductFormValues['type'] : 'goods';
+  const type = ['goods', 'service'].includes(values.type) ? values.type as ProductFormValues['type'] : 'goods';
   const inventory = type !== 'service' && !['false', 'no', '0'].includes(values.trackInventory.toLocaleLowerCase());
-  return { name: values.name.trim(), shortName: '', sku: values.sku.trim(), internalCode: '', barcode: values.barcode.trim(), barcodeType: barcodeType(values.barcode.trim()), qrValue: '', brandId: '', brand: '', description: '', type, status: values.status as ProductFormValues['status'], categoryId: category?.id ?? '', uomId: uom?.id ?? '', purchaseUomId: '', sellingPrice: Number(values.sellingPrice), costPrice: Number(values.costPrice), priceTiers: [], taxCode: '', pricesIncludeTax: false, isSellable: true, isPurchasable: type !== 'service', trackInventory: inventory, trackByBatch: false, trackBySerialNumber: false, trackExpiry: false, allowNegativeStock: false };
+  return { name: values.name.trim(), shortName: '', sku: '', internalCode: '', barcode: values.barcode.trim(), barcodeType: barcodeType(values.barcode.trim()), qrValue: '', brandId: '', brand: '', description: '', type, status: values.status as ProductFormValues['status'], categoryId: category?.id ?? '', uomId: uom?.id ?? '', sellingPrice: Number(values.sellingPrice), costPrice: Number(values.costPrice || 0), priceTiers: [], taxCode: '', pricesIncludeTax: false, isSellable: true, isPurchasable: type !== 'service', trackInventory: inventory, trackByBatch: false, trackBySerialNumber: false, trackExpiry: false, allowNegativeStock: false };
 }
 
 export const productImportService = {
@@ -73,23 +73,22 @@ export const productImportService = {
 
   async preview(tenantId: string, file: File, mapping: ImportFieldMapping): Promise<ImportPreviewRow[]> {
     requireTenant(tenantId);
-    const { rows } = await readRows(file); const seenSku = new Set<string>(); const seenBarcode = new Set<string>();
+    const { rows } = await readRows(file); const seenBarcode = new Set<string>();
     return rows.map((raw, index) => {
-      const values = mapped(raw, mapping); const errors: ImportRowError[] = []; const sku = values.sku.trim().toLocaleLowerCase(); const barcode = values.barcode.trim().toLocaleLowerCase();
+      const values = mapped(raw, mapping); const errors: ImportRowError[] = []; const barcode = values.barcode.trim().toLocaleLowerCase();
+      const isService = values.type === 'service';
       if (!values.name.trim()) errors.push({ field: 'name', message: 'Product name is required.' });
-      if (!values.sku.trim()) errors.push({ field: 'sku', message: 'SKU is required.' });
-      else if (productStore.all().some((item) => item.tenantId === tenantId && item.sku.toLocaleLowerCase() === sku) || productVariantStore.all().some((item) => item.tenantId === tenantId && item.sku.toLocaleLowerCase() === sku)) errors.push({ field: 'sku', message: 'SKU already exists in this tenant.' });
       if (barcode && (productStore.all().some((item) => item.tenantId === tenantId && item.barcode?.toLocaleLowerCase() === barcode) || productVariantStore.all().some((item) => item.tenantId === tenantId && item.barcode?.toLocaleLowerCase() === barcode))) errors.push({ field: 'barcode', message: 'Barcode already exists in this tenant.' });
       if (!resolveReference(masterDataStore.categories, tenantId, values.category)) errors.push({ field: 'category', message: 'Category ID, code or name is invalid.' });
-      if (!resolveReference(masterDataStore.uoms, tenantId, values.uom)) errors.push({ field: 'uom', message: 'UOM ID, code or name is invalid.' });
+      if (!isService && !resolveReference(masterDataStore.uoms, tenantId, values.uom)) errors.push({ field: 'uom', message: 'UOM ID, code or name is invalid.' });
       const costPrice = Number(values.costPrice); const sellingPrice = Number(values.sellingPrice);
-      if (values.costPrice === '' || !Number.isFinite(costPrice) || costPrice < 0) errors.push({ field: 'costPrice', message: 'Cost price must be a non-negative number.' });
+      if (!isService && (values.costPrice === '' || !Number.isFinite(costPrice) || costPrice < 0)) errors.push({ field: 'costPrice', message: 'Cost price must be a non-negative number.' });
       if (values.sellingPrice === '' || !Number.isFinite(sellingPrice) || sellingPrice < 0) errors.push({ field: 'sellingPrice', message: 'Selling price must be a non-negative number.' });
       if (!['draft', 'active', 'inactive', 'archived'].includes(values.status)) errors.push({ field: 'status', message: 'Status must be draft, active, inactive or archived.' });
-      if (values.type && !['goods', 'service', 'composite'].includes(values.type)) errors.push({ field: 'type', message: 'Type must be goods, service or composite.' });
-      const duplicateInFile = (sku && seenSku.has(sku)) || (barcode && seenBarcode.has(barcode));
-      if (sku) seenSku.add(sku); if (barcode) seenBarcode.add(barcode);
-      if (duplicateInFile) return { rowNumber: index + 2, values, status: 'skipped' as const, errors: [{ field: 'row', message: 'Duplicate SKU or barcode within this file.' }] };
+      if (values.type && !['goods', 'service'].includes(values.type)) errors.push({ field: 'type', message: 'Type must be goods or service.' });
+      const duplicateInFile = barcode && seenBarcode.has(barcode);
+      if (barcode) seenBarcode.add(barcode);
+      if (duplicateInFile) return { rowNumber: index + 2, values, status: 'skipped' as const, errors: [{ field: 'row', message: 'Duplicate barcode within this file.' }] };
       return { rowNumber: index + 2, values, status: errors.length ? 'failed' as const : 'valid' as const, errors };
     });
   },

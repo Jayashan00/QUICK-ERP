@@ -8,6 +8,28 @@ export const productSortFields = ['name', 'sku', 'sellingPrice', 'createdAt', 's
 const optionalText = (maximum: number) =>
   z.string().trim().max(maximum).optional().or(z.literal(''));
 
+function hasValidGtinCheckDigit(value: string): boolean {
+  const digits = value.split('').map(Number);
+  const body = digits.slice(0, -1);
+  const weightedSum = body.reduce(
+    (sum, digit, index) => sum + digit * ((body.length - index) % 2 === 0 ? 1 : 3),
+    0,
+  );
+  return (10 - (weightedSum % 10)) % 10 === digits[digits.length - 1];
+}
+
+function validateBarcodeChecksum(
+  value: { barcode?: string; barcodeType?: (typeof barcodeTypes)[number] },
+  context: z.RefinementCtx,
+) {
+  if (value.barcodeType === 'EAN13' && value.barcode && /^\d{13}$/.test(value.barcode) && !hasValidGtinCheckDigit(value.barcode)) {
+    context.addIssue({ code: 'custom', path: ['barcode'], message: 'Enter a valid EAN-13 barcode check digit.' });
+  }
+  if (value.barcodeType === 'UPC_A' && value.barcode && /^\d{12}$/.test(value.barcode) && !hasValidGtinCheckDigit(value.barcode)) {
+    context.addIssue({ code: 'custom', path: ['barcode'], message: 'Enter a valid UPC-A barcode check digit.' });
+  }
+}
+
 const priceTierInputSchema = z.object({
   id: z.string().optional(),
   name: z.string().trim().min(1, 'Tier name is required.').max(60, 'Tier name cannot exceed 60 characters.'),
@@ -44,7 +66,7 @@ const productEditableFields = {
   type: z.enum(productTypes, { message: 'Select a product type.' }),
   status: z.enum(productStatuses, { message: 'Select a product status.' }),
   categoryId: z.string().trim().min(1, 'Select a category.'),
-  uomId: z.string().trim().min(1, 'Select a unit of measure.'),
+  uomId: z.string().trim(),
   purchaseUomId: optionalText(100),
   sellingPrice: z.number().min(0, 'Selling price cannot be negative.'),
   costPrice: z.number().min(0, 'Cost price cannot be negative.'),
@@ -67,6 +89,8 @@ function validateStockLimits(
   value: {
     barcode?: string;
     barcodeType?: (typeof barcodeTypes)[number];
+    type: (typeof productTypes)[number];
+    uomId: string;
     minStockLevel?: number;
     reorderLevel?: number;
     maxStockLevel?: number;
@@ -78,6 +102,9 @@ function validateStockLimits(
   },
   context: z.RefinementCtx,
 ) {
+  if (value.type !== 'service' && !value.uomId) {
+    context.addIssue({ code: 'custom', path: ['uomId'], message: 'Select a unit of measure.' });
+  }
   if (value.barcode && !value.barcodeType) {
     context.addIssue({ code: 'custom', path: ['barcodeType'], message: 'Select the barcode format.' });
   }
@@ -153,7 +180,9 @@ function validateStockLimits(
   });
 }
 
-export const productFormSchema = z.object(productEditableFields).superRefine(validateStockLimits);
+export const productFormSchema = z.object(productEditableFields)
+  .superRefine(validateStockLimits)
+  .superRefine(validateBarcodeChecksum);
 export type ProductFormValues = z.infer<typeof productFormSchema>;
 
 export const productSchema = z.object({

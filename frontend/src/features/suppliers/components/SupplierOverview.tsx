@@ -20,7 +20,6 @@ import type { Supplier } from '../types/supplier';
 import { SupplierStatusBadge } from './SupplierStatusBadge';
 import {
   SUPPLIER_CATEGORY_LABELS,
-  SUPPLIER_TAX_CATEGORY_LABELS,
   SUPPLIER_PAYMENT_METHOD_LABELS,
   formatMaskedAccountNumber,
 } from '../schemas/supplier.schema';
@@ -283,14 +282,6 @@ export function SupplierOverview({ supplier }: SupplierOverviewProps) {
             <div className="flex justify-between py-3">
               <dt className="text-slate-500">VAT Number</dt>
               <dd className="font-mono font-semibold text-slate-800">{supplier.vatNumber || '—'}</dd>
-            </div>
-            <div className="flex justify-between py-3">
-              <dt className="text-slate-500">Tax Category</dt>
-              <dd className="font-medium text-slate-900">
-                {supplier.taxCategory
-                  ? SUPPLIER_TAX_CATEGORY_LABELS[supplier.taxCategory] ?? supplier.taxCategory
-                  : '—'}
-              </dd>
             </div>
             <div className="flex justify-between py-3">
               <dt className="text-slate-500">Registration Number</dt>

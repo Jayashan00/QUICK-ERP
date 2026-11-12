@@ -7,7 +7,6 @@ import {
 import { useState } from "react";
 
 import { useDebounce } from "@/shared/hooks/useDebounce";
-import type { Customer } from '@/features/customers/types/customer';
 import { useTenant } from "@/core/tenant/tenant-context";
 import { useBranch } from "@/core/branch/branch-context";
 import { leadKeys } from '@/features/crm/leads/queries/leadKeys';
@@ -15,7 +14,9 @@ import { leadKeys } from '@/features/crm/leads/queries/leadKeys';
 import { customerKeys } from "../queries/customerKeys";
 import {
   customerService,
+  type CreateCustomerInput,
   type GetCustomersParams,
+  type UpdateCustomerInput,
 } from "../services/customerService";
 
 export function useCustomers(
@@ -70,16 +71,7 @@ export function useCustomers(
   });
 
   const createMutation = useMutation({
-    mutationFn: (
-      data: Omit<
-        Customer,
-        | "id"
-        | "createdAt"
-        | "updatedAt"
-        | "tenantId"
-        | "branchId"
-      >,
-    ) =>
+    mutationFn: (data: CreateCustomerInput) =>
       customerService.createCustomer(scope, data),
 
     onSuccess: async (customer) => {
@@ -98,7 +90,7 @@ export function useCustomers(
       updates,
     }: {
       id: string;
-      updates: Partial<Customer>;
+      updates: UpdateCustomerInput;
     }) =>
       customerService.updateCustomer(
         scope,
@@ -132,20 +124,11 @@ export function useCustomers(
     },
   });
 
-  const createCustomer = (
-    data: Omit<
-      Customer,
-      | "id"
-      | "createdAt"
-      | "updatedAt"
-      | "tenantId"
-      | "branchId"
-    >,
-  ) => createMutation.mutateAsync(data);
+  const createCustomer = (data: CreateCustomerInput) => createMutation.mutateAsync(data);
 
   const updateCustomer = (
     id: string,
-    updates: Partial<Customer>,
+    updates: UpdateCustomerInput,
   ) =>
     updateMutation.mutateAsync({
       id,

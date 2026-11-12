@@ -1,14 +1,16 @@
+import { useState } from 'react';
 import { Modal } from '@/shared/components/common/Modal';
 import { StatusBadge } from '@/shared/components/common/StatusBadge';
 import { Button } from '@/shared/components/common/Button';
 import type { Customer } from '@/features/customers/types/customer';
-import { Link } from 'react-router-dom';
 import { useTenant } from '@/core/tenant/tenant-context';
 import { useBranch } from '@/core/branch/branch-context';
 import { usePermissions } from '@/core/permissions/permission-context';
 import { TENANT_PERMISSIONS as P } from '@/core/permissions';
+import { useAuth } from '@/core/auth/auth-context';
 import { documentService } from '@/features/documents/documentService';
-import { Mail, Phone, MapPin, Building, Calendar, DollarSign, FileText, History } from 'lucide-react';
+import { DocumentManager } from '@/shared/components/documents/DocumentManager';
+import { Mail, Phone, MapPin, Building, Calendar, DollarSign, History } from 'lucide-react';
 import { useTenantCurrency } from '@/features/settings/finance/currency';
 
 interface CustomerDetailModalProps {
@@ -26,11 +28,18 @@ export function CustomerDetailModal({
 }: CustomerDetailModalProps) {
   const { tenantId } = useTenant();
   const { branchId, branches } = useBranch();
-  const { hasPermission } = usePermissions();
-  const { formatMoney } = useTenantCurrency();
+  const { user } = useAuth();
+  const { permissions, hasPermission } = usePermissions();
+  const { formatWholeMoneyInCurrency } = useTenantCurrency();
+  const [documentRevision, setDocumentRevision] = useState(0);
   if (!customer) return null;
+  const documentScope = {
+    tenantId: tenantId ?? '',
+    branchId: customer.branchId,
+    permittedBranchIds: branches.map((branch) => branch.id),
+  };
   const linkedDocuments = tenantId && branchId && hasPermission(P.DOCUMENTS.VIEW)
-    ? documentService.linkedPublic({ tenantId, branchId, permittedBranchIds: branches.map((branch) => branch.id) }, 'Customer', customer.id)
+    ? documentService.linked(documentScope, permissions, 'Customer', customer.id)
     : [];
 
   return (
@@ -123,7 +132,9 @@ export function CustomerDetailModal({
           <div>
             <div className="text-xs font-medium text-slate-500">Credit Limit</div>
             <div className="mt-1 font-semibold text-slate-900">
-              {customer.creditLimit === undefined ? 'Not assigned' : formatMoney(customer.creditLimit, customer.currency)}
+              {customer.creditLimit === undefined
+                ? 'Not assigned'
+                : formatWholeMoneyInCurrency(customer.creditLimit, customer.currency)}
             </div>
           </div>
           <div>
@@ -139,17 +150,47 @@ export function CustomerDetailModal({
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="rounded-lg border border-slate-200 p-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><FileText size={15} /> Documents</div>
-            <div className="mt-2 text-xs text-slate-500">{linkedDocuments.length} document(s) in the shared library.</div>
-            {linkedDocuments.map((document) => <div key={document.id} className="mt-1 text-xs text-slate-700">{document.name}</div>)}
-            {customer.documents?.length ? <p className="mt-1 text-xs text-slate-500">{customer.documents.length} legacy customer file(s) in customer metadata.</p> : null}
-            {hasPermission(P.DOCUMENTS.VIEW) && <Link to="/documents" onClick={onClose} className="mt-2 inline-block text-xs text-blue-700">Open document library</Link>}
-          </div>
-          <div className="rounded-lg border border-slate-200 p-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><History size={15} /> Activity & History</div>
             <div className="mt-2 text-xs text-slate-500">Account updated {new Date(customer.updatedAt).toLocaleString()}.</div>
           </div>
         </div>
+
+        {hasPermission(P.DOCUMENTS.VIEW) && (
+          <DocumentManager
+            key={documentRevision}
+            documents={linkedDocuments}
+            canUpload={hasPermission(P.CUSTOMERS.EDIT) && hasPermission(P.DOCUMENTS.UPLOAD)}
+            canDownload={hasPermission(P.DOCUMENTS.DOWNLOAD)}
+            canDelete={hasPermission(P.CUSTOMERS.EDIT) && hasPermission(P.DOCUMENTS.ARCHIVE)}
+            linkedEntity={{ type: 'Customer', reference: customer.code }}
+            onUpload={async (file, metadata) => {
+              if (!user) throw new Error('Sign in before uploading documents.');
+              await documentService.upload(documentScope, permissions, user, file, {
+                title: file.name.replace(/\.[^.]+$/, ''),
+                category: metadata.category,
+                expiryDate: metadata.expiryDate || undefined,
+                entityType: 'Customer',
+                entityId: customer.id,
+                entityReference: customer.code,
+                branchId: customer.branchId,
+              });
+              setDocumentRevision((revision) => revision + 1);
+            }}
+            onDownload={(document) => {
+              if (!user) return;
+              const file = documentService.download(documentScope, permissions, user, document.id);
+              const link = window.document.createElement('a');
+              link.href = file.url;
+              link.download = file.name;
+              link.click();
+            }}
+            onDelete={async (document) => {
+              if (!user) throw new Error('Sign in before removing documents.');
+              documentService.archive(documentScope, permissions, user, document.id);
+              setDocumentRevision((revision) => revision + 1);
+            }}
+          />
+        )}
 
         {/* Contact Info */}
         <div>

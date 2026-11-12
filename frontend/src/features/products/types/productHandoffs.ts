@@ -7,7 +7,6 @@ export interface PurchaseProductOption {
   sku: string;
   barcode?: string;
   uomId: string;
-  purchaseUomId?: string;
   defaultCostPrice: number;
   trackInventory: boolean;
   suppliers: ProductSupplierListItem[];

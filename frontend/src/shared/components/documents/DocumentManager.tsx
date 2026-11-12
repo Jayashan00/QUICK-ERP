@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Download, FileText, Plus } from 'lucide-react';
+import { Download, FileText, Plus, Trash2 } from 'lucide-react';
 
 import { Button } from '@/shared/components/common/Button';
 import { Card } from '@/shared/components/common/Card';
@@ -14,6 +14,7 @@ import { Select } from '@/shared/components/forms/Select';
 import { TextInput } from '@/shared/components/forms/TextInput';
 import { EmptyState } from '@/shared/components/feedback/EmptyState';
 import { ErrorState } from '@/shared/components/feedback/ErrorState';
+import { ConfirmDialog } from '@/shared/components/feedback/ConfirmDialog';
 import { Skeleton } from '@/shared/components/feedback/Skeleton';
 import { appToast } from '@/shared/utils/toast';
 import type { DocumentRecord } from '@/shared/types/document-record';
@@ -37,27 +38,46 @@ interface DocumentManagerProps {
   error?: string | null;
   canUpload?: boolean;
   canDownload?: boolean;
+  canDelete?: boolean;
+  linkedEntity?: { type: string; reference: string };
   onRetry?: () => void;
   onUpload?: (file: File, metadata: DocumentUploadMetadata) => Promise<void>;
   onDownload?: (document: DocumentRecord) => void;
+  onDelete?: (document: DocumentRecord) => Promise<void>;
 }
 
-export function DocumentManager({ documents, isLoading, error, canUpload, canDownload, onRetry, onUpload, onDownload }: DocumentManagerProps) {
+export function DocumentManager({ documents, isLoading, error, canUpload, canDownload, canDelete, linkedEntity, onRetry, onUpload, onDownload, onDelete }: DocumentManagerProps) {
   const { tenantId } = useTenant();
   const { branchId } = useBranch();
   const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<DocumentUploadMetadata>({ resolver: zodResolver(metadataSchema), defaultValues: { category: '', expiryDate: '', entityType: '', entityReference: '' } });
+  const [deletingDocument, setDeletingDocument] = useState<DocumentRecord | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const metadataDefaults = () => ({ category: '', expiryDate: '', entityType: linkedEntity?.type ?? '', entityReference: linkedEntity?.reference ?? '' });
+  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<DocumentUploadMetadata>({ resolver: zodResolver(metadataSchema), defaultValues: metadataDefaults() });
 
-  const close = () => { setIsOpen(false); setFile(null); setFileError(null); reset(); };
+  const close = () => { setIsOpen(false); setFile(null); setFileError(null); reset(metadataDefaults()); };
   const submit = async (metadata: DocumentUploadMetadata) => {
     if (!file) { setFileError('Select a file to upload.'); return; }
     await onUpload?.(file, metadata);
     if (tenantId && user) auditEventService.record({ tenantId, branchId: branchId ?? undefined, actorId: user.id, actorName: user.name, module: 'documents', entityType: metadata.entityType || 'Document', entityId: metadata.entityReference || file.name, reference: metadata.entityReference || file.name, action: 'Uploaded', description: `${user.name} uploaded ${file.name}.`, newValues: { fileName: file.name, category: metadata.category, expiryDate: metadata.expiryDate || null }, relatedRoute: globalThis.location.pathname, sensitivity: metadata.category === 'identity' || metadata.category === 'finance' ? 'sensitive' : 'normal' });
     appToast.success('Document added to mock storage.');
     close();
+  };
+  const confirmDelete = async () => {
+    if (!deletingDocument || !onDelete) return;
+    setIsDeleting(true);
+    try {
+      await onDelete(deletingDocument);
+      appToast.success('Document removed from this record.');
+      setDeletingDocument(null);
+    } catch (deleteError) {
+      appToast.error(deleteError instanceof Error ? deleteError.message : 'Unable to remove the document.');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -72,7 +92,10 @@ export function DocumentManager({ documents, isLoading, error, canUpload, canDow
             : <div className="divide-y divide-slate-100">{documents.map((document) => (
               <div key={document.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex min-w-0 gap-3"><div className="rounded-lg bg-blue-50 p-2 text-blue-600"><FileText size={18} /></div><div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-900">{document.name}</div><div className="mt-1 text-xs text-slate-500">{document.category} · {(document.sizeBytes / 1024).toFixed(1)} KB · {document.mimeType}</div><div className="mt-1 text-xs text-slate-500">{document.entityReference || 'No linked record'}{document.expiryDate ? ` · Expires ${new Date(document.expiryDate).toLocaleDateString()}` : ''}</div></div></div>
-                {canDownload && <Button variant="secondary" size="sm" leftIcon={<Download size={14} />} onClick={() => onDownload?.(document)}>Download</Button>}
+                <div className="flex flex-wrap gap-2">
+                  {canDownload && <Button variant="secondary" size="sm" leftIcon={<Download size={14} />} onClick={() => onDownload?.(document)}>Download</Button>}
+                  {canDelete && <Button variant="ghost" size="sm" className="text-red-600" leftIcon={<Trash2 size={14} />} onClick={() => setDeletingDocument(document)}>Remove</Button>}
+                </div>
               </div>
             ))}</div>}
       <Modal isOpen={isOpen} onClose={isSubmitting ? () => undefined : close} title="Upload Document" maxWidth="600px" footer={<div className="flex w-full justify-end gap-2"><Button variant="secondary" onClick={close}>Cancel</Button><Button type="submit" form="document-upload-form" isLoading={isSubmitting}>Add Document</Button></div>}>
@@ -80,10 +103,24 @@ export function DocumentManager({ documents, isLoading, error, canUpload, canDow
           <FormField label="File" required><FileUpload id="document-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx,.txt,.csv" maxSizeMb={10} selectedFileName={file?.name} error={fileError ?? undefined} onError={setFileError} onFileSelect={(selected) => { setFile(selected); setFileError(null); }} /></FormField>
           <FormField label="Category" required error={errors.category?.message}><Select options={tenantId ? documentService.categories({ tenantId, branchId: '', permittedBranchIds: [] }).filter((category) => category.active).map((category) => ({ value: category.id, label: category.name })) : []} placeholder="Select category" error={Boolean(errors.category)} {...register('category')} /></FormField>
           <FormField label="Expiry Date" error={errors.expiryDate?.message}><DatePicker {...register('expiryDate')} /></FormField>
-          <div className="grid gap-4 sm:grid-cols-2"><FormField label="Entity Type" error={errors.entityType?.message}><TextInput placeholder="e.g. Customer" {...register('entityType')} /></FormField><FormField label="Entity Reference" error={errors.entityReference?.message}><TextInput placeholder="e.g. CUST-0001" {...register('entityReference')} /></FormField></div>
+          {linkedEntity ? (
+            <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Linked to {linkedEntity.type}: {linkedEntity.reference}</p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2"><FormField label="Entity Type" error={errors.entityType?.message}><TextInput placeholder="e.g. Customer" {...register('entityType')} /></FormField><FormField label="Entity Reference" error={errors.entityReference?.message}><TextInput placeholder="e.g. CUST-0001" {...register('entityReference')} /></FormField></div>
+          )}
           <p className="text-xs text-slate-500">Allowed: PDF, images, Word, Excel, text and CSV. Maximum size: 10 MB.</p>
         </form>
       </Modal>
+      <ConfirmDialog
+        isOpen={Boolean(deletingDocument)}
+        title="Remove Document"
+        message={`Remove ${deletingDocument?.name ?? 'this document'} from the active customer documents? It will remain available in the archived document library.`}
+        confirmLabel="Remove"
+        variant="danger"
+        isLoading={isDeleting}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeletingDocument(null)}
+      />
     </Card>
   );
 }

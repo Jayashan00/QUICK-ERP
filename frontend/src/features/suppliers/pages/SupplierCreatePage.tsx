@@ -38,7 +38,6 @@ export function SupplierCreatePage() {
       website: values.website || undefined,
       taxNumber: values.taxNumber || undefined,
       vatNumber: values.vatNumber || undefined,
-      taxCategory: values.taxCategory || undefined,
       registrationNumber: values.registrationNumber || undefined,
       notes: values.notes || undefined,
       address: {

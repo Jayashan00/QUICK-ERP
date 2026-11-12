@@ -77,7 +77,7 @@ export const posService = {
     const location = inventoryStore.locations().find(l => l.id === locationId && l.warehouseId === warehouseId && sameScope(l, scope));
     if (!location) throw new Error('Choose a stock location in this branch.');
     const lines = parsed.lines.map(line => {
-      const product = productStore.all().find(p => p.id === line.productId && p.tenantId === scope.tenantId && p.status === 'active' && p.isSellable);
+      const product = productStore.all().find(p => p.id === line.productId && p.tenantId === scope.tenantId && p.status === 'active' && p.isSellable && p.type !== 'service');
       if (!product) throw new Error('Product is unavailable.');
       if (product.trackByBatch && !line.batchReference) throw new Error(`${product.name} requires a batch.`);
       if (product.trackBySerialNumber && line.serialReferences?.length !== line.quantity) throw new Error(`${product.name} requires one serial per unit.`);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Controller, useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus, Save, Trash2 } from 'lucide-react';
@@ -42,9 +42,8 @@ interface ProductFormProps {
 }
 
 const typeOptions = [
-  { value: 'goods', label: 'Goods' },
+  { value: 'goods', label: 'Product' },
   { value: 'service', label: 'Service' },
-  { value: 'composite', label: 'Composite / Bundle' },
 ];
 
 const statusOptions = [
@@ -77,7 +76,7 @@ function defaultValues(product?: Product): ProductFormValues {
     status: product?.status ?? 'draft',
     categoryId: product?.categoryId ?? '',
     uomId: product?.uomId ?? '',
-    purchaseUomId: product?.purchaseUomId ?? '',
+    purchaseUomId: '',
     sellingPrice: product?.sellingPrice ?? 0,
     costPrice: product?.costPrice ?? 0,
     priceTiers: product?.priceTiers.map((tier) => ({ ...tier })) ?? [],
@@ -123,7 +122,6 @@ export function ProductForm({
     isGeneratingSku,
     isCheckingIdentifiers,
   } = useProductIdentifierTools();
-  const [autoGenerateSku, setAutoGenerateSku] = useState(!initialData);
   const {
     control,
     handleSubmit,
@@ -147,9 +145,11 @@ export function ProductForm({
   const selectedTaxCode = watch('taxCode');
   const sellingPrice = watch('sellingPrice');
   const costPrice = watch('costPrice');
+  const generatedSku = watch('sku');
+  const isService = productType === 'service';
 
   useEffect(() => {
-    if (!autoGenerateSku || productName.trim().length < 2) return;
+    if (initialData || productName.trim().length < 2) return;
     let active = true;
     const timeout = globalThis.setTimeout(() => {
       void generateSku({
@@ -166,7 +166,7 @@ export function ProductForm({
       active = false;
       globalThis.clearTimeout(timeout);
     };
-  }, [autoGenerateSku, clearErrors, generateSku, productName, productType, selectedCategoryId, setValue]);
+  }, [clearErrors, generateSku, initialData, productName, productType, selectedCategoryId, setValue]);
 
   const checkIdentifier = async (field: 'sku' | 'barcode' | 'qrValue', value?: string) => {
     if (!value?.trim()) {
@@ -208,7 +208,7 @@ export function ProductForm({
   }, [initialData, taxQuery.taxes]);
 
   useEffect(() => {
-    if (defaultTaxApplied.current || selectedTaxCode) return;
+    if (isService || defaultTaxApplied.current || selectedTaxCode) return;
     const defaultTax = taxQuery.taxes.find(
       (tax) => tax.isDefault && isSalesTaxApplicable(tax),
     );
@@ -216,7 +216,7 @@ export function ProductForm({
       defaultTaxApplied.current = true;
       setValue('taxCode', defaultTax.code);
     }
-  }, [initialData, selectedTaxCode, setValue, taxQuery.taxes]);
+  }, [initialData, isService, selectedTaxCode, setValue, taxQuery.taxes]);
 
   const categoryOptions = (categoryQuery.data ?? []).map((category) => ({
     value: category.id,
@@ -231,12 +231,10 @@ export function ProductForm({
   const uomOptions = (uomQuery.data ?? []).map((uom) => ({
     value: uom.id,
     label: `${uom.name} (${uom.symbol})${uom.isActive ? '' : ' - Inactive'}`,
-    disabled: !uom.isActive && ![initialData?.uomId, initialData?.purchaseUomId].includes(uom.id),
+    disabled: !uom.isActive && initialData?.uomId !== uom.id,
   }));
   const busy = isSaving || isSubmitting || isCheckingIdentifiers;
-  const skuField = register('sku');
   const barcodeField = register('barcode');
-  const qrField = register('qrValue');
 
   return (
     <form className="space-y-6" onSubmit={handleSubmit(onSubmit)} noValidate>
@@ -245,48 +243,7 @@ export function ProductForm({
       <Card>
         <FormSection title="Product Identity" description="Core tenant product identifiers and classification.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <FormField label="Product name" required error={errors.name?.message} className="sm:col-span-2">
-              <TextInput {...register('name')} placeholder="e.g. Wireless Keyboard and Mouse Set" />
-            </FormField>
-            <FormField label="Status" required error={errors.status?.message}>
-              <Select options={statusOptions} disabled={!canManageLifecycle} {...register('status')} />
-            </FormField>
-            <FormField label="Product Code / SKU" required error={errors.sku?.message} hint={autoGenerateSku ? 'Generated from the category and product name.' : 'SKU must be unique within this tenant.'}>
-              <div className="space-y-2">
-                <TextInput
-                  {...skuField}
-                  disabled={autoGenerateSku}
-                  placeholder="e.g. ELEC-KBD-WL"
-                  className="font-mono"
-                  onBlur={(event) => {
-                    void skuField.onBlur(event);
-                    if (!autoGenerateSku) void checkIdentifier('sku', event.target.value);
-                  }}
-                />
-                <Switch
-                  checked={autoGenerateSku}
-                  onChange={(event) => setAutoGenerateSku(event.target.checked)}
-                  label={isGeneratingSku ? 'Generating SKU...' : 'Auto-generate SKU'}
-                />
-              </div>
-            </FormField>
-            <FormField label="Barcode format" error={errors.barcodeType?.message}>
-              <Select options={barcodeTypeOptions} {...register('barcodeType')} />
-            </FormField>
-            <FormField label="Barcode" error={errors.barcode?.message} hint="Optional master-data identifier; scanner setup is managed separately.">
-              <TextInput
-                {...barcodeField}
-                placeholder="EAN, UPC or internal barcode"
-                onBlur={(event) => {
-                  void barcodeField.onBlur(event);
-                  void checkIdentifier('barcode', event.target.value);
-                }}
-              />
-            </FormField>
-            <FormField label="Internal code" error={errors.internalCode?.message}>
-              <TextInput {...register('internalCode')} placeholder="Optional internal reference" />
-            </FormField>
-            <FormField label="Product type" required error={errors.type?.message}>
+            <FormField label="Product type" required error={errors.type?.message} className="sm:col-span-2 lg:col-span-3">
               <Controller
                 name="type"
                 control={control}
@@ -295,19 +252,64 @@ export function ProductForm({
                     options={typeOptions}
                     value={field.value}
                     onChange={(event) => {
-                      field.onChange(event.target.value);
-                      if (event.target.value === 'service') {
+                      const nextType = event.target.value as ProductFormValues['type'];
+                      field.onChange(nextType);
+                      if (nextType === 'service') {
+                        setValue('barcode', '', { shouldDirty: true, shouldValidate: true });
+                        setValue('brandId', '', { shouldDirty: true });
+                        setValue('uomId', '', { shouldDirty: true, shouldValidate: true });
+                        setValue('costPrice', 0, { shouldDirty: true });
+                        setValue('taxCode', '', { shouldDirty: true });
+                        setValue('pricesIncludeTax', false, { shouldDirty: true });
+                        setValue('isPurchasable', false, { shouldDirty: true });
                         setValue('trackInventory', false, { shouldDirty: true });
+                        setValue('allowNegativeStock', false, { shouldDirty: true });
                         setValue('trackByBatch', false, { shouldDirty: true });
                         setValue('trackBySerialNumber', false, { shouldDirty: true });
                         setValue('trackExpiry', false, { shouldDirty: true });
+                        setValue('minStockLevel', undefined, { shouldDirty: true });
+                        setValue('reorderLevel', undefined, { shouldDirty: true });
+                        setValue('maxStockLevel', undefined, { shouldDirty: true });
+                        priceTiers.replace([]);
+                        clearErrors(['barcode', 'barcodeType', 'brandId', 'uomId', 'minStockLevel', 'reorderLevel', 'maxStockLevel']);
                       }
                     }}
                   />
                 )}
               />
             </FormField>
-            <FormField label="Category" required error={errors.categoryId?.message}>
+            <FormField label={isService ? 'Service name' : 'Product name'} required error={errors.name?.message} className="sm:col-span-2">
+              <TextInput {...register('name')} placeholder={isService ? 'e.g. On-site installation' : 'e.g. Wireless Keyboard and Mouse Set'} />
+            </FormField>
+            <FormField label="Status" required error={errors.status?.message}>
+              <Select options={statusOptions} disabled={!canManageLifecycle} {...register('status')} />
+            </FormField>
+            <FormField label={isService ? 'Service code' : 'Product Code / SKU'} required error={errors.sku?.message} hint={`Automatically generated from the category and ${isService ? 'service' : 'product'} name.`}>
+              <TextInput
+                value={generatedSku}
+                readOnly
+                placeholder="Generated after entering a product name"
+                className="font-mono bg-slate-50"
+              />
+            </FormField>
+            {!isService && (
+              <>
+                <FormField label="Barcode format" error={errors.barcodeType?.message}>
+                  <Select options={barcodeTypeOptions} {...register('barcodeType')} />
+                </FormField>
+                <FormField label="Barcode" error={errors.barcode?.message} hint="Optional master-data identifier; scanner setup is managed separately.">
+                  <TextInput
+                    {...barcodeField}
+                    placeholder="EAN, UPC or internal barcode"
+                    onBlur={(event) => {
+                      void barcodeField.onBlur(event);
+                      void checkIdentifier('barcode', event.target.value);
+                    }}
+                  />
+                </FormField>
+              </>
+            )}
+            <FormField label={isService ? 'Service category' : 'Category'} required error={errors.categoryId?.message}>
               <Select
                 options={categoryOptions}
                 placeholder={categoryQuery.isLoading ? 'Loading categories...' : 'Select category...'}
@@ -315,59 +317,63 @@ export function ProductForm({
                 {...register('categoryId')}
               />
             </FormField>
-            <FormField label="Unit of measure" required error={errors.uomId?.message}>
-              <Select
-                options={uomOptions}
-                placeholder={uomQuery.isLoading ? 'Loading units...' : 'Select unit...'}
-                disabled={uomQuery.isLoading}
-                {...register('uomId')}
-              />
+            {!isService && (
+              <FormField label="Brand" error={errors.brandId?.message ?? (brandQuery.error ? 'Unable to load brands.' : undefined)}>
+                <Select {...register('brandId')} options={brandOptions} placeholder={brandQuery.isLoading ? 'Loading brands...' : 'No brand'} disabled={brandQuery.isLoading} />
+              </FormField>
+            )}
+            <FormField label={isService ? 'Short service name' : 'Short name'} error={errors.shortName?.message}>
+              <TextInput {...register('shortName')} placeholder={isService ? 'Optional short service name' : 'Optional display name'} />
             </FormField>
-            <FormField label="Brand" error={errors.brandId?.message ?? (brandQuery.error ? 'Unable to load brands.' : undefined)}>
-              <Select {...register('brandId')} options={brandOptions} placeholder={brandQuery.isLoading ? 'Loading brands...' : 'No brand'} disabled={brandQuery.isLoading} />
+            <FormField label={isService ? 'Service description' : 'Description'} error={errors.description?.message} className="sm:col-span-2 lg:col-span-3">
+              <Textarea {...register('description')} rows={3} placeholder={isService ? 'Describe the service scope and delivery details...' : 'Product description and master-data notes...'} />
             </FormField>
-            <FormField label="Short name" error={errors.shortName?.message}>
-              <TextInput {...register('shortName')} placeholder="Optional display name" />
-            </FormField>
-            <FormField label="QR value" error={errors.qrValue?.message} className="sm:col-span-2" hint="Optional value reserved for future POS and inventory scanning workflows.">
-              <TextInput
-                {...qrField}
-                placeholder="Product URL, code or other QR payload"
-                onBlur={(event) => {
-                  void qrField.onBlur(event);
-                  void checkIdentifier('qrValue', event.target.value);
-                }}
-              />
-            </FormField>
-            <FormField label="Description" error={errors.description?.message} className="sm:col-span-2 lg:col-span-3">
-              <Textarea {...register('description')} rows={3} placeholder="Product description and master-data notes..." />
-            </FormField>
+            <details className="sm:col-span-2 lg:col-span-3 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-800">
+                Advanced identifiers
+              </summary>
+              <p className="mt-1 text-xs text-slate-500">
+                The system code is generated automatically. Add an internal reference only when your company needs one.
+              </p>
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                  {isGeneratingSku ? 'Generating code…' : generatedSku || 'Code will appear after entering a name.'}
+                </div>
+                <FormField label="Internal code" error={errors.internalCode?.message} hint="Optional company-specific reference.">
+                  <TextInput {...register('internalCode')} placeholder="Optional internal reference" />
+                </FormField>
+              </div>
+            </details>
           </div>
         </FormSection>
       </Card>
 
       <Card>
-        <FormSection title="Pricing & Tax" description="Tenant-level default pricing, quantity tiers and shared Tax/VAT treatment.">
+        <FormSection title={isService ? 'Service Pricing' : 'Pricing & Tax'} description={isService ? 'Set the standard charge for this service.' : 'Tenant-level default pricing, quantity tiers and shared Tax/VAT treatment.'}>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <FormField label="Purchase / cost price" required error={errors.costPrice?.message} hint="Default product cost; supplier pricing is managed separately.">
+            {!isService && <FormField label="Purchase / cost price" required error={errors.costPrice?.message} hint="Default product cost; supplier pricing is managed separately.">
               <Controller
                 name="costPrice"
                 control={control}
                 render={({ field }) => <CurrencyInput currency={tenantCurrency.currencyLabel} min={0} value={field.value} onChange={field.onChange} disabled={!canManagePrices} />}
               />
-            </FormField>
-            <FormField label="Selling price" required error={errors.sellingPrice?.message}>
+            </FormField>}
+            <FormField label={isService ? 'Service price' : 'Selling price'} required error={errors.sellingPrice?.message}>
               <Controller
                 name="sellingPrice"
                 control={control}
                 render={({ field }) => <CurrencyInput currency={tenantCurrency.currencyLabel} min={0} value={field.value} onChange={field.onChange} disabled={!canManagePrices} />}
               />
             </FormField>
+            {!isService && (
             <FormField label="Gross margin" hint={`Company currency: ${tenantCurrency.currencyCode ?? 'Loading…'}`}>
               <div className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
                 {sellingPrice > 0 ? `${(((sellingPrice - costPrice) / sellingPrice) * 100).toFixed(1)}%` : '0.0%'}
               </div>
             </FormField>
+            )}
+            {!isService && (
+            <>
             <FormField label="Sales tax" error={errors.taxCode?.message ?? (taxQuery.error || undefined)}>
               <Select
                 options={taxOptions}
@@ -384,8 +390,11 @@ export function ProductForm({
                 <Switch checked={field.value} onChange={field.onChange} disabled={!selectedTaxCode || !canManagePrices} label="Selling price includes tax" />
               )}
             />
+            </>
+            )}
           </div>
 
+          {!isService && (
           <div className="mt-6 border-t border-slate-200 pt-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -417,21 +426,37 @@ export function ProductForm({
               <p className="mt-4 rounded-lg border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500">No wholesale price tiers configured.</p>
             )}
           </div>
+          )}
         </FormSection>
       </Card>
 
       <Card>
-        <FormSection title="Sales, Purchasing & Stock" description="Product eligibility and master-level stock thresholds.">
+        <FormSection
+          title={isService ? 'Service Availability' : 'Sales, Purchasing & Stock'}
+          description={isService ? 'Control whether this service is available for sales.' : 'Product eligibility, one shared unit for sales, purchasing and stock, and master-level stock thresholds.'}
+        >
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            {!isService && <FormField label="Unit of measure" required error={errors.uomId?.message}>
+              <Select
+                options={uomOptions}
+                placeholder={uomQuery.isLoading ? 'Loading units...' : 'Select unit...'}
+                disabled={uomQuery.isLoading}
+                {...register('uomId')}
+              />
+            </FormField>}
             <Controller name="isSellable" control={control} render={({ field }) => <Switch checked={field.value} onChange={field.onChange} label="Available for sales" />} />
-            <Controller name="isPurchasable" control={control} render={({ field }) => <Switch checked={field.value} onChange={field.onChange} label="Available for purchasing" />} />
-            <Controller name="trackInventory" control={control} render={({ field }) => <Switch checked={field.value} onChange={(event) => { field.onChange(event); if (!event.target.checked) { setValue('trackByBatch', false, { shouldDirty: true }); setValue('trackBySerialNumber', false, { shouldDirty: true }); setValue('trackExpiry', false, { shouldDirty: true }); } }} disabled={productType === 'service'} label="Track inventory" />} />
-            <Controller name="allowNegativeStock" control={control} render={({ field }) => <Switch checked={field.value} onChange={field.onChange} disabled={!trackInventory} label="Allow negative stock" />} />
+            {!isService && (
+              <>
+                <Controller name="isPurchasable" control={control} render={({ field }) => <Switch checked={field.value} onChange={field.onChange} label="Available for purchasing" />} />
+                <Controller name="trackInventory" control={control} render={({ field }) => <Switch checked={field.value} onChange={(event) => { field.onChange(event); if (!event.target.checked) { setValue('trackByBatch', false, { shouldDirty: true }); setValue('trackBySerialNumber', false, { shouldDirty: true }); setValue('trackExpiry', false, { shouldDirty: true }); } }} label="Track inventory" />} />
+                <Controller name="allowNegativeStock" control={control} render={({ field }) => <Switch checked={field.value} onChange={field.onChange} disabled={!trackInventory} label="Allow negative stock" />} />
+              </>
+            )}
           </div>
 
-          {trackInventory && (
+          {!isService && trackInventory && (
             <div className="mt-5 space-y-5">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <FormField label="Minimum stock" error={errors.minStockLevel?.message}>
                   <Controller name="minStockLevel" control={control} render={({ field }) => <NumberInput min={0} value={field.value ?? ''} onChange={(value) => field.onChange(value === '' ? undefined : value)} />} />
                 </FormField>
@@ -440,9 +465,6 @@ export function ProductForm({
                 </FormField>
                 <FormField label="Maximum stock" error={errors.maxStockLevel?.message}>
                   <Controller name="maxStockLevel" control={control} render={({ field }) => <NumberInput min={0} value={field.value ?? ''} onChange={(value) => field.onChange(value === '' ? undefined : value)} />} />
-                </FormField>
-                <FormField label="Purchase UOM" error={errors.purchaseUomId?.message}>
-                  <Select options={uomOptions} placeholder="Same as base UOM" {...register('purchaseUomId')} />
                 </FormField>
               </div>
 
@@ -466,15 +488,15 @@ export function ProductForm({
         </FormSection>
       </Card>
 
-      {initialData && <ProductSuppliersSection productId={initialData.id} canManage={canManageSpecifications} canManagePrices={canManagePrices} />}
+      {initialData && !isService && <ProductSuppliersSection productId={initialData.id} canManage={canManageSpecifications} canManagePrices={canManagePrices} />}
 
-      {initialData && <ProductBundleSection product={initialData} canManage={canManageSpecifications} canManagePrices={canManagePrices} />}
+      {initialData && productType === 'composite' && <ProductBundleSection product={initialData} canManage={canManageSpecifications} canManagePrices={canManagePrices} />}
 
       {initialData && <RelatedProductsSection productId={initialData.id} canManage={canManageSpecifications} />}
 
       <ProductSpecificationsSection productId={specificationProductId} canManage={canManageSpecifications} />
 
-      <ProductImagesSection productId={imageProductId} canManage={canManageImages} />
+      {!isService && <ProductImagesSection productId={imageProductId} canManage={canManageImages} />}
 
       <ProductDocumentsSection
         productId={documentProductId}
@@ -490,7 +512,7 @@ export function ProductForm({
           isLoading={busy}
           disabled={busy || (Boolean(initialData) && !isDirty)}
         >
-          {initialData ? 'Save Changes' : 'Create Product'}
+          {initialData ? 'Save Changes' : isService ? 'Create Service' : 'Create Product'}
         </Button>
       </div>
     </form>

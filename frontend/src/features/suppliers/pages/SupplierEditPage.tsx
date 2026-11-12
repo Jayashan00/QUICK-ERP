@@ -94,7 +94,6 @@ export function SupplierEditPage() {
       website: values.website || undefined,
       taxNumber: values.taxNumber || undefined,
       vatNumber: values.vatNumber || undefined,
-      taxCategory: values.taxCategory || undefined,
       registrationNumber: values.registrationNumber || undefined,
       notes: values.notes || undefined,
       address: {
@@ -112,7 +111,6 @@ export function SupplierEditPage() {
   };
 
   const initialValues: Partial<SupplierFormValues> = {
-    code: supplier.code,
     name: supplier.name,
     category: supplier.category ?? '',
     contactPerson: supplier.contactPerson,
@@ -122,7 +120,6 @@ export function SupplierEditPage() {
     website: supplier.website ?? '',
     taxNumber: supplier.taxNumber ?? '',
     vatNumber: supplier.vatNumber ?? '',
-    taxCategory: supplier.taxCategory ?? '',
     registrationNumber: supplier.registrationNumber ?? '',
     currency: supplier.currency,
     paymentTermCode: supplier.paymentTermCode,
