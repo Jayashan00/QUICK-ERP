@@ -218,6 +218,12 @@
 .vyro-workflow.is-visible::before { transform: scaleX(1); }
 .vyro-workflow-item { opacity: 0; transform: translateY(.7rem); transition: opacity .5s ease, transform .5s cubic-bezier(.2,.75,.25,1); }
 .vyro-workflow.is-visible .vyro-workflow-item { opacity: 1; transform: translateY(0); }
+.vyro-flow-icon { transition: color .2s ease, background-color .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
+.vyro-workflow.is-visible .vyro-flow-icon { animation: vyro-step-in .55s cubic-bezier(.2,.75,.25,1) both; }
+.vyro-workflow.is-visible .vyro-workflow-item:nth-child(2) .vyro-flow-icon { animation-delay: .08s; }
+.vyro-workflow.is-visible .vyro-workflow-item:nth-child(3) .vyro-flow-icon { animation-delay: .16s; }
+.vyro-workflow.is-visible .vyro-workflow-item:nth-child(4) .vyro-flow-icon { animation-delay: .24s; }
+.vyro-workflow-item:hover .vyro-flow-icon { transform: translateY(-3px); border-color: #bba5df; background: #f8f5fc; box-shadow: 0 8px 18px -12px rgb(70 44 112 / 55%); }
 .vyro-chart-stroke { stroke-dasharray: 1; stroke-dashoffset: 1; }
 .vyro-dashboard-wrap .vyro-chart-stroke { animation: vyro-chart-draw 1.7s .55s ease-out forwards; }
 .vyro-chart-bars i { transform: scaleY(0); transform-origin: center bottom; }
@@ -246,6 +252,7 @@
 @keyframes vyro-soft-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgb(98 173 124 / 0%); } 50% { box-shadow: 0 0 0 .28rem rgb(98 173 124 / 18%); } }
 @keyframes vyro-dot-in { 0% { box-shadow: 0 0 0 0 rgb(129 91 193 / 0%); } 45% { box-shadow: 0 0 0 .35rem rgb(129 91 193 / 18%); } 100% { box-shadow: 0 0 0 0 rgb(129 91 193 / 0%); } }
 @keyframes vyro-node-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes vyro-step-in { 0% { opacity: .45; transform: translateY(7px) scale(.88); box-shadow: 0 0 0 0 rgb(112 69 194 / 0%); } 65% { opacity: 1; transform: translateY(-2px) scale(1.04); box-shadow: 0 0 0 .35rem rgb(112 69 194 / 10%); } 100% { transform: translateY(0) scale(1); box-shadow: 0 0 0 0 rgb(112 69 194 / 0%); } }
 
 @media (min-width: 640px) {
   .vyro-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -289,6 +296,7 @@
   .vyro-reveal, .vyro-reveal.is-visible { opacity: 1; transform: none; transition: none; }
   .vyro-workflow::before { transform: none; transition: none; }
   .vyro-workflow-item, .vyro-workflow.is-visible .vyro-workflow-item { opacity: 1; transform: none; transition: none; }
+  .vyro-flow-icon, .vyro-workflow.is-visible .vyro-flow-icon { animation: none; transition: none; }
   .vyro-table-row, .vyro-stock-row, .vyro-task-row { opacity: 1; transform: none; transition: none; }
   .vyro-chart-stroke { stroke-dasharray: none; stroke-dashoffset: 0; animation: none; }
   .vyro-chart-bars i { transform: none; animation: none !important; }
