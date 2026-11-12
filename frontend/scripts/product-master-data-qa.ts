@@ -24,8 +24,18 @@ assert((await productService.getAll(otherScope)).data.every((item) => item.tenan
 const posOptions = await productHandoffService.getPosOptions(mainScope);
 assert(posOptions.length > 0);
 assert(posOptions.every((item) => item.status === 'active'));
+assert(!posOptions.some((item) => ['prod-007', 'prod-012'].includes(item.productId)));
 assert(!posOptions.some((item) => item.selectionId === 'variant-glove-large'));
-assert((await productHandoffService.getPurchaseOptions(mainScope)).every((item) => item.productId && item.sku));
+const purchaseOptions = await productHandoffService.getPurchaseOptions(mainScope);
+assert(purchaseOptions.every((item) => item.productId && item.sku));
+assert(purchaseOptions.every((item) => item.uomId && !('purchaseUomId' in item)));
+assert(!purchaseOptions.some((item) => ['prod-007', 'prod-012'].includes(item.productId)));
+
+const generatedProductCode = await productService.generateSku(mainScope.tenantId, { name: 'QA Catalog Item', categoryId: 'cat-electronics', type: 'goods' });
+const generatedServiceCode = await productService.generateSku(mainScope.tenantId, { name: 'QA Catalog Item', categoryId: 'cat-services', type: 'service' });
+assert.match(generatedProductCode, /^PRD-/);
+assert.match(generatedServiceCode, /^SRV-/);
+assert.notEqual(generatedProductCode, generatedServiceCode);
 
 const validProduct = {
   name: 'QA Product', sku: 'QA-PRODUCT-001', barcode: '', barcodeType: 'CODE128' as const,
@@ -38,6 +48,52 @@ assert(productFormSchema.safeParse(validProduct).success);
 assert.equal(productFormSchema.safeParse({ ...validProduct, costPrice: -1 }).success, false);
 assert.equal(productFormSchema.safeParse({ ...validProduct, minStockLevel: 10, maxStockLevel: 5 }).success, false);
 assert.equal(productFormSchema.safeParse({ ...validProduct, trackExpiry: true, trackByBatch: false }).success, false);
+assert.equal(productFormSchema.safeParse({ ...validProduct, barcode: '4006381333931', barcodeType: 'EAN13' }).success, true);
+assert.equal(productFormSchema.safeParse({ ...validProduct, barcode: '4006381333932', barcodeType: 'EAN13' }).success, false);
+assert.equal(productFormSchema.safeParse({ ...validProduct, barcode: '036000291452', barcodeType: 'UPC_A' }).success, true);
+assert.equal(productFormSchema.safeParse({ ...validProduct, barcode: '036000291453', barcodeType: 'UPC_A' }).success, false);
+assert.equal(productFormSchema.safeParse({ ...validProduct, uomId: '' }).success, false);
+assert.equal(productFormSchema.safeParse({ ...validProduct, type: 'service', uomId: '' }).success, true);
+
+const normalizedService = await productService.create(mainScope.tenantId, {
+  ...validProduct,
+  name: 'QA Service',
+  sku: 'QA-SERVICE-001',
+  type: 'service',
+  categoryId: 'cat-services',
+  uomId: 'uom-hour',
+  barcode: '4006381333931',
+  barcodeType: 'EAN13',
+  brandId: 'brand-logitech',
+  purchaseUomId: 'uom-box',
+  isPurchasable: true,
+  trackInventory: true,
+  allowNegativeStock: true,
+  minStockLevel: 5,
+  reorderLevel: 8,
+  maxStockLevel: 20,
+  priceTiers: [{ name: 'Legacy tier', minimumQuantity: 2, price: 15 }],
+});
+assert.equal(normalizedService.barcode, undefined);
+assert.match(normalizedService.sku, /^SRV-/);
+assert.equal(normalizedService.brandId, undefined);
+assert.equal(normalizedService.purchaseUomId, undefined);
+assert.equal(normalizedService.uomId, '');
+assert.equal(normalizedService.costPrice, 0);
+assert.deepEqual(normalizedService.priceTiers, []);
+assert.equal(normalizedService.taxCode, undefined);
+assert.equal(normalizedService.isPurchasable, false);
+assert.equal(normalizedService.trackInventory, false);
+assert.equal(normalizedService.allowNegativeStock, false);
+assert.equal(normalizedService.minStockLevel, undefined);
+const nextServiceCode = await productService.generateSku(mainScope.tenantId, { name: normalizedService.name, categoryId: normalizedService.categoryId, type: 'service' });
+assert.match(nextServiceCode, /^SRV-/);
+assert.notEqual(nextServiceCode, normalizedService.sku);
+assert(!(await productHandoffService.getPosOptions(mainScope)).some((item) => item.productId === normalizedService.id));
+assert(!(await productHandoffService.getPurchaseOptions(mainScope)).some((item) => item.productId === normalizedService.id));
+const updatedService = await productService.update(mainScope.tenantId, normalizedService.id, { ...normalizedService, sku: 'MANUAL-CODE-NOT-ALLOWED' });
+assert.equal(updatedService.sku, normalizedService.sku);
+await productService.remove(mainScope.tenantId, normalizedService.id);
 
 const lists = await priceListService.getAll(mainScope.tenantId, { page: 1, pageSize: 100 });
 assert(lists.data.every((item) => item.tenantId === mainScope.tenantId));
