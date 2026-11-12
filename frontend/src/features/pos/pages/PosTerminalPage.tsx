@@ -51,7 +51,7 @@ export function PosTerminalPage() {
   const warehouses = inventoryStore.warehouses().filter(w => w.tenantId === scope.tenantId && w.branchId === branch && w.isActive);
   const locations = inventoryStore.locations().filter(l => l.tenantId === scope.tenantId && l.branchId === branch && warehouses.some(w => w.id === l.warehouseId));
   const location = locations.find(l => l.id === locationId) ?? locations.find(l => l.id === settings.locationId) ?? locations[0];
-  const products = productStore.all().filter(p => p.tenantId === scope.tenantId && p.status === 'active' && p.isSellable);
+  const products = productStore.all().filter(p => p.tenantId === scope.tenantId && p.status === 'active' && p.isSellable && p.type !== 'service');
   const shown = products.filter(p => `${p.name} ${p.sku} ${p.barcode ?? ''} ${(p.alternateBarcodes ?? []).join(' ')}`.toLowerCase().includes(search.toLowerCase())).slice(0, 12);
   const lines = cart.flatMap(item => { const product = products.find(p => p.id === item.productId); if (!product) return []; const bundle = productRelationshipStore.bundles().find(b => b.tenantId === scope.tenantId && b.productId === product.id && b.status === 'active' && b.type === 'fixed'); return [{ ...item, product, bundle }]; });
   let quote: ReturnType<typeof priceCart> | null = null; let quoteError = '';

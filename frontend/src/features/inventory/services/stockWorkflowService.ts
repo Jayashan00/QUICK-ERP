@@ -113,7 +113,7 @@ function productFor(tenantId: string, productId: string) {
   const product = productStore
     .all()
     .find((item) => item.tenantId === tenantId && item.id === productId);
-  if (!product || !product.trackInventory)
+  if (!product || product.type === 'service' || !product.trackInventory)
     throw new Error("The selected product is not inventory tracked.");
   return product;
 }

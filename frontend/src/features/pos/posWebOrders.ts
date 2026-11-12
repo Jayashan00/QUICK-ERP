@@ -19,7 +19,7 @@ export const posWebOrders = {
     const data = webOrderSchema.parse(input);
     if (!customerService.getCachedCustomerById(scope, data.customerId)) throw new Error('Choose a customer in this branch.');
     const location = inventoryStore.locations().find(l => l.id === data.locationId && scoped(l, scope));
-    const product = productStore.all().find(p => p.id === data.productId && p.tenantId === scope.tenantId && p.isSellable && p.status === 'active');
+    const product = productStore.all().find(p => p.id === data.productId && p.tenantId === scope.tenantId && p.isSellable && p.status === 'active' && p.type !== 'service');
     if (!location || !product) throw new Error('Choose a product and location in this branch.');
     if (product.trackByBatch || product.trackBySerialNumber) throw new Error('Tracked items need batch or serial selection before web order confirmation.');
     const order: WebOrder = { ...data, id: crypto.randomUUID(), scope, status: 'new', createdAt: new Date().toISOString() };
