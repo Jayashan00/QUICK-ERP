@@ -39,21 +39,6 @@ const ProductUomPage = lazyPage(() =>
     default: ProductUomPage,
   })),
 );
-const PriceListPage = lazyPage(() =>
-  import("@/features/products").then(({ PriceListPage }) => ({
-    default: PriceListPage,
-  })),
-);
-const PriceListFormPage = lazyPage(() =>
-  import("@/features/products").then(({ PriceListFormPage }) => ({
-    default: PriceListFormPage,
-  })),
-);
-const PriceListDetailPage = lazyPage(() =>
-  import("@/features/products").then(({ PriceListDetailPage }) => ({
-    default: PriceListDetailPage,
-  })),
-);
 const InventoryDashboardPage = lazyPage(() =>
   import("@/features/inventory").then(({ InventoryDashboardPage }) => ({
     default: InventoryDashboardPage,
@@ -256,60 +241,6 @@ export const inventoryRoutes: RouteObject[] = [
         ]}
       >
         <ProductUomPage />
-      </RequirePermission>
-    ),
-  },
-  {
-    path: "products/price-lists",
-    element: (
-      <RequirePermission
-        allOf={[
-          PERMISSIONS.PRODUCTS.PRODUCTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_VIEW,
-        ]}
-      >
-        <PriceListPage />
-      </RequirePermission>
-    ),
-  },
-  {
-    path: "products/price-lists/new",
-    element: (
-      <RequirePermission
-        allOf={[
-          PERMISSIONS.PRODUCTS.PRODUCTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_CREATE,
-        ]}
-      >
-        <PriceListFormPage />
-      </RequirePermission>
-    ),
-  },
-  {
-    path: "products/price-lists/:id/edit",
-    element: (
-      <RequirePermission
-        allOf={[
-          PERMISSIONS.PRODUCTS.PRODUCTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_EDIT,
-        ]}
-      >
-        <PriceListFormPage />
-      </RequirePermission>
-    ),
-  },
-  {
-    path: "products/price-lists/:id",
-    element: (
-      <RequirePermission
-        allOf={[
-          PERMISSIONS.PRODUCTS.PRODUCTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_VIEW,
-        ]}
-      >
-        <PriceListDetailPage />
       </RequirePermission>
     ),
   },

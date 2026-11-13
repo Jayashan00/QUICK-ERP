@@ -1,20 +1,63 @@
 import assert from 'node:assert/strict';
+import * as XLSX from 'xlsx';
 import { hasPermission } from '../src/core/permissions/permissionUtils';
 import { isPermissionInScope } from '../src/core/permissions/permissionScope';
 import { productFormSchema } from '../src/features/products/schemas/productSchema';
-import { priceListFormSchema, priceRuleFormSchema } from '../src/features/products/schemas/priceListSchema';
+import { brandFormSchema, categoryFormSchema, uomFormSchema } from '../src/features/products/schemas/masterDataSchemas';
 import { productService } from '../src/features/products/services/productService';
+import { buildProductImportTemplateCsv, productImportColumns, productImportService } from '../src/features/products/services/productImportService';
 import { productHandoffService } from '../src/features/products/services/productHandoffService';
-import { priceListService } from '../src/features/products/services/priceListService';
+import { categoryService } from '../src/features/products/services/categoryService';
+import { brandService } from '../src/features/products/services/brandService';
+import { uomService } from '../src/features/products/services/uomService';
 
 const mainScope = { tenantId: 'tenant-001', branchId: 'branch-001' };
 const otherScope = { tenantId: 'tenant-002', branchId: 'branch-201' };
 
 assert.equal(isPermissionInScope('products.view', 'tenant'), true);
-assert.equal(isPermissionInScope('products.price_lists.view', 'tenant'), true);
 assert.equal(isPermissionInScope('platform.tenants.view', 'tenant'), false);
 assert.equal(hasPermission(['products.view'], 'products.edit'), false);
 assert.equal(hasPermission(['products.view', 'products.import', 'products.export'], 'products.export'), true);
+
+const categoryValues = { name: 'QA Auto Category', description: '', parentId: '', sortOrder: 95, isActive: true };
+assert(categoryFormSchema.safeParse(categoryValues).success);
+const generatedCategory = await categoryService.create(mainScope.tenantId, categoryValues);
+assert.equal(generatedCategory.code, 'QA-AUTO-CATEGORY');
+await assert.rejects(
+  () => categoryService.create(mainScope.tenantId, { ...categoryValues, name: 'QA Duplicate Display Order' }),
+  /Display order 95 is already used/,
+);
+const categoryWithMatchingCodeBase = await categoryService.create(mainScope.tenantId, { ...categoryValues, name: 'QA Auto-Category', sortOrder: 96 });
+assert.equal(categoryWithMatchingCodeBase.code, 'QA-AUTO-CATEGORY-2');
+await categoryService.remove(mainScope.tenantId, categoryWithMatchingCodeBase.id);
+const renamedCategory = await categoryService.update(mainScope.tenantId, generatedCategory.id, { ...categoryValues, name: 'QA Renamed Category' });
+assert.equal(renamedCategory.code, generatedCategory.code);
+await categoryService.remove(mainScope.tenantId, generatedCategory.id);
+
+const brandValues = { name: 'QA Auto Brand', description: '', websiteUrl: '', isActive: true };
+assert(brandFormSchema.safeParse(brandValues).success);
+const generatedBrand = await brandService.create(mainScope.tenantId, brandValues);
+assert.equal(generatedBrand.code, 'QA-AUTO-BRAND');
+assert.equal(generatedBrand.logoUrl, undefined);
+const brandWithMatchingCodeBase = await brandService.create(mainScope.tenantId, { ...brandValues, name: 'QA Auto-Brand' });
+assert.equal(brandWithMatchingCodeBase.code, 'QA-AUTO-BRAND-2');
+await brandService.remove(mainScope.tenantId, brandWithMatchingCodeBase.id);
+const renamedBrand = await brandService.update(mainScope.tenantId, generatedBrand.id, { ...brandValues, name: 'QA Renamed Brand' });
+assert.equal(renamedBrand.code, generatedBrand.code);
+await brandService.remove(mainScope.tenantId, generatedBrand.id);
+
+const uomValues = { name: 'QA Weight Unit', symbol: 'qwu', type: 'weight' as const, decimalPlaces: 3, description: '', isDefault: false, isActive: true };
+assert(uomFormSchema.safeParse(uomValues).success);
+const uomOptions = await uomService.getOptions(mainScope.tenantId);
+assert(uomOptions[0]?.isDefault);
+const generatedUom = await uomService.create(mainScope.tenantId, uomValues);
+assert.equal(generatedUom.code, 'QA-WEIGHT-UNIT');
+const uomWithMatchingCodeBase = await uomService.create(mainScope.tenantId, { ...uomValues, name: 'QA Weight-Unit', symbol: 'qwu2' });
+assert.equal(uomWithMatchingCodeBase.code, 'QA-WEIGHT-UNIT-2');
+await uomService.remove(mainScope.tenantId, uomWithMatchingCodeBase.id);
+const renamedUom = await uomService.update(mainScope.tenantId, generatedUom.id, { ...uomValues, name: 'QA Renamed Unit' });
+assert.equal(renamedUom.code, generatedUom.code);
+await uomService.remove(mainScope.tenantId, generatedUom.id);
 
 const product = await productService.getById(mainScope, 'prod-001');
 assert(product);
@@ -25,7 +68,8 @@ const posOptions = await productHandoffService.getPosOptions(mainScope);
 assert(posOptions.length > 0);
 assert(posOptions.every((item) => item.status === 'active'));
 assert(!posOptions.some((item) => ['prod-007', 'prod-012'].includes(item.productId)));
-assert(!posOptions.some((item) => item.selectionId === 'variant-glove-large'));
+assert(posOptions.every((item) => !item.variantId && !item.variantLabel));
+assert(posOptions.some((item) => item.productId === 'prod-011' && item.selectionId === 'prod-011'));
 const purchaseOptions = await productHandoffService.getPurchaseOptions(mainScope);
 assert(purchaseOptions.every((item) => item.productId && item.sku));
 assert(purchaseOptions.every((item) => item.uomId && !('purchaseUomId' in item)));
@@ -54,6 +98,37 @@ assert.equal(productFormSchema.safeParse({ ...validProduct, barcode: '0360002914
 assert.equal(productFormSchema.safeParse({ ...validProduct, barcode: '036000291453', barcodeType: 'UPC_A' }).success, false);
 assert.equal(productFormSchema.safeParse({ ...validProduct, uomId: '' }).success, false);
 assert.equal(productFormSchema.safeParse({ ...validProduct, type: 'service', uomId: '' }).success, true);
+
+const importTemplate = buildProductImportTemplateCsv();
+const importTemplateLines = importTemplate.split(/\r?\n/);
+const importHeaders = importTemplateLines[0].split(',');
+assert.equal(importTemplateLines.length, 3);
+assert.equal(importHeaders.length, productImportColumns.length);
+assert(!importHeaders.includes('sku'));
+assert(importHeaders.includes('brand'));
+assert(importHeaders.includes('taxCode'));
+assert(importHeaders.includes('minStockLevel'));
+assert(importHeaders.includes('trackBySerialNumber'));
+const importFile = new File([importTemplate], 'product-service-template.csv', { type: 'text/csv' });
+const importMapping = Object.fromEntries(productImportColumns.map((column) => [column.key, column.key]));
+const importPreview = await productImportService.preview(mainScope.tenantId, importFile, importMapping);
+assert.equal(importPreview.length, 2);
+assert(importPreview.every((row) => row.status === 'valid'));
+assert.equal(importPreview[0].values.type, 'goods');
+assert.equal(importPreview[1].values.type, 'service');
+const importWorkbook = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(importWorkbook, XLSX.utils.aoa_to_sheet(importTemplateLines.map((line) => line.split(','))), 'Products');
+for (const [extension, bookType] of [['xlsx', 'xlsx'], ['xls', 'biff8']] as const) {
+  const workbookFile = new File(
+    [XLSX.write(importWorkbook, { bookType, type: 'array' })],
+    `product-service-template.${extension}`,
+  );
+  const preparedWorkbook = await productImportService.prepareFile(workbookFile);
+  assert.deepEqual(preparedWorkbook.sourceColumns, importHeaders);
+  const workbookPreview = await productImportService.preview(mainScope.tenantId, workbookFile, importMapping);
+  assert.equal(workbookPreview.length, 2);
+  assert(workbookPreview.every((row) => row.status === 'valid'));
+}
 
 const normalizedService = await productService.create(mainScope.tenantId, {
   ...validProduct,
@@ -95,18 +170,5 @@ const updatedService = await productService.update(mainScope.tenantId, normalize
 assert.equal(updatedService.sku, normalizedService.sku);
 await productService.remove(mainScope.tenantId, normalizedService.id);
 
-const lists = await priceListService.getAll(mainScope.tenantId, { page: 1, pageSize: 100 });
-assert(lists.data.every((item) => item.tenantId === mainScope.tenantId));
-assert.equal(await priceListService.getById(otherScope.tenantId, 'price-list-retail'), null);
-assert.equal(priceListFormSchema.safeParse({ name: 'QA', code: 'QA', type: 'retail', currency: 'LKR', status: 'active', effectiveStartDate: '2026-12-31', effectiveEndDate: '2026-01-01' }).success, false);
-assert.equal(priceRuleFormSchema.safeParse({ productId: 'prod-001', pricingType: 'quantity_tier', tiers: [{ minQuantity: 1, maxQuantity: 10, price: 10 }, { minQuantity: 10, price: 8 }] }).success, false);
-assert.equal((await priceListService.resolvePrice(mainScope, { priceListId: 'price-list-wholesale', productId: 'prod-006', quantity: 10, date: '2026-09-25' })).price, 5.9);
-await assert.rejects(() => priceListService.createRule(mainScope, 'price-list-retail', { productId: 'prod-001', variantId: '', pricingType: 'fixed', fixedPrice: 1000, tiers: [] }), /already exists/);
-await assert.rejects(() => priceListService.remove(mainScope.tenantId, 'price-list-wholesale'), /has pricing rules/);
-
-const qaList = await priceListService.create(mainScope.tenantId, { name: 'QA Customer Pricing', code: 'QA-PRICE', description: '', type: 'custom', currency: 'LKR', status: 'active', effectiveStartDate: '', effectiveEndDate: '' });
-await priceListService.remove(mainScope.tenantId, qaList.id);
-assert.equal(await priceListService.getById(mainScope.tenantId, qaList.id), null);
-
 assert.equal((await productService.getDeletionImpact(mainScope.tenantId, 'prod-001')).canDelete, false);
-console.log('Product Master Data QA passed: permissions, tenant isolation, validation, price lists, handoffs, and deletion safeguards.');
+console.log('Product Master Data QA passed: permissions, tenant isolation, validation, handoffs, and deletion safeguards.');

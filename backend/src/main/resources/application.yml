@@ -103,8 +103,6 @@ app:
       - products.brands
       - products.uoms
       - products.attributes
-      - products.priceLists
-      - products.priceRules
       - products.bundles
       - products.related
       - inventory.warehouses

@@ -14,6 +14,7 @@ try {
     platform: 'node',
     format: 'esm',
     target: 'node22',
+    mainFields: ['module', 'main'],
     tsconfig: 'tsconfig.app.json',
     logLevel: 'silent',
   });

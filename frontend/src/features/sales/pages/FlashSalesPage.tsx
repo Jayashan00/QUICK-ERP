@@ -28,7 +28,7 @@ export function FlashSalesPage() {
   const scope = { tenantId: tenantId ?? '', branchId: branchId ?? '' };
   const permitted = branches.map(branch => branch.id);
   const records = flashSaleService.list({ ...scope, branchId: branchFilter }, permitted);
-  const products = productStore.all().filter(product => product.tenantId === tenantId && product.status === 'active' && product.isSellable && product.type !== 'composite' && !product.hasVariants);
+  const products = productStore.all().filter(product => product.tenantId === tenantId && product.status === 'active' && product.isSellable && product.type !== 'composite');
   const form = useForm<FlashSaleInput>({ resolver: zodResolver(flashSaleSchema), defaultValues: { name: '', productId: '', branchId: branchId ?? '', salePrice: 0, startsAt: localTime(new Date()), endsAt: localTime(new Date(Date.now() + 86400000)), enabled: true } });
   const open = (sale?: FlashSale) => { setEditing(sale ?? null); form.reset(sale ? { name: sale.name, productId: sale.productId, branchId: sale.branchId, salePrice: sale.salePrice, startsAt: localTime(new Date(sale.startsAt)), endsAt: localTime(new Date(sale.endsAt)), enabled: sale.enabled } : { name: '', productId: '', branchId: branchId ?? '', salePrice: 0, startsAt: localTime(new Date()), endsAt: localTime(new Date(Date.now() + 86400000)), enabled: true }); setShowForm(true); };
   const save = form.handleSubmit(values => { try { if (!canEdit) throw new Error('Price management permission is required.'); flashSaleService.save(scope, permitted, values, editing?.id); setShowForm(false); refresh(value => value + 1); appToast.success('Flash sale saved.'); } catch (error) { appToast.error(error instanceof Error ? error.message : 'Unable to save flash sale.'); } });

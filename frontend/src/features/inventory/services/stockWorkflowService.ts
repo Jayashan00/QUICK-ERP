@@ -8,11 +8,13 @@ import type { ApprovalStatus } from "@/shared/types/approval";
 import type { AuditEntry } from "@/shared/types/audit";
 import {
   branchStockRequestSchema,
+  openingStockSchema,
   stockAdjustmentSchema,
   stockCountSchema,
   stockReturnWastageSchema,
   stockTransferSchema,
   type BranchStockRequestFormValues,
+  type OpeningStockFormValues,
   type StockAdjustmentFormValues,
   type StockCountFormValues,
   type StockReturnWastageFormValues,
@@ -691,6 +693,129 @@ export const stockWorkflowService = {
         history: [{ id: `approval-${crypto.randomUUID().slice(0, 8)}`, status: "pending", actorId: actor.id, actorName: actor.name, timestamp: now }],
       },
       auditEntries: [auditEntry(scope.tenantId, data.branchId, "Stock Adjustment", referenceNumber, referenceNumber, "Submitted", actor, data.notes)],
+      createdAt: now,
+      updatedAt: now,
+    };
+    inventoryStore.insertAdjustment(item);
+    return item;
+  },
+
+  async recordOpeningStock(
+    scope: TenantBranchScope,
+    permittedBranchIds: string[],
+    productId: string,
+    values: OpeningStockFormValues,
+    actor: WorkflowActor,
+  ) {
+    requireScope(scope, permittedBranchIds);
+    const data = openingStockSchema.parse(values);
+    requireLocation(scope.tenantId, permittedBranchIds, data.branchId, data.warehouseId, data.locationId);
+    const product = productFor(scope.tenantId, productId);
+    if (inventoryStore.balances().some((item) => item.tenantId === scope.tenantId && item.productId === productId) ||
+        inventoryStore.movements().some((item) => item.tenantId === scope.tenantId && item.productId === productId)) {
+      throw new Error("Opening stock can only be recorded before a product has inventory activity.");
+    }
+
+    const batchReference = data.batchReference?.trim() || undefined;
+    const expiryDate = data.expiryDate?.trim() || undefined;
+    const serialReferences = [...new Set(data.serialReferences.map((item) => item.trim()).filter(Boolean))];
+    if (product.trackByBatch && !batchReference)
+      throw new Error(`${product.name} requires a batch reference for opening stock.`);
+    if (product.trackExpiry && !expiryDate)
+      throw new Error(`${product.name} requires an expiry date for opening stock.`);
+    if (expiryDate && expiryDate < new Date().toISOString().slice(0, 10))
+      throw new Error("Opening stock cannot use an expired batch.");
+    if (product.trackBySerialNumber && (!Number.isInteger(data.quantity) || serialReferences.length !== data.quantity))
+      throw new Error(`${product.name} requires one unique serial number per opening unit.`);
+    if (serialReferences.length !== data.serialReferences.filter((item) => item.trim()).length)
+      throw new Error("Opening stock serial numbers must be unique.");
+    if (batchReference && inventoryStore.batches().some((item) => item.tenantId === scope.tenantId && item.productId === productId && item.batchNumber === batchReference))
+      throw new Error("This batch reference already exists for the product.");
+    if (serialReferences.some((serialNumber) => inventoryStore.serialNumbers().some((item) => item.tenantId === scope.tenantId && item.serialNumber === serialNumber)))
+      throw new Error("One or more opening stock serial numbers already exist.");
+
+    assertOpenAccountingPeriod(scope.tenantId, new Date().toISOString().slice(0, 10), "record opening stock");
+    const now = new Date().toISOString();
+    const referenceNumber = reference("OPEN", inventoryStore.adjustments().length);
+    const line: StockWorkflowLine = {
+      id: `opening-line-${crypto.randomUUID().slice(0, 8)}`,
+      productId,
+      quantity: data.quantity,
+      batchReference: product.trackByBatch ? batchReference : undefined,
+      serialReferences: product.trackBySerialNumber ? serialReferences : [],
+    };
+    const result = applyBalance(scope.tenantId, data.branchId, data.warehouseId, data.locationId, line, data.quantity);
+
+    if (line.batchReference) {
+      inventoryStore.insertBatch({
+        id: `batch-${crypto.randomUUID().slice(0, 8)}`,
+        tenantId: scope.tenantId,
+        branchId: data.branchId,
+        warehouseId: data.warehouseId,
+        locationId: data.locationId,
+        productId,
+        batchNumber: line.batchReference,
+        receivedQuantity: data.quantity,
+        remainingQuantity: data.quantity,
+        expiryDate: product.trackExpiry ? expiryDate : undefined,
+        receivedAt: now,
+        status: "available",
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    for (const serialNumber of line.serialReferences ?? []) {
+      inventoryStore.insertSerial({
+        id: `serial-${crypto.randomUUID().slice(0, 8)}`,
+        tenantId: scope.tenantId,
+        branchId: data.branchId,
+        warehouseId: data.warehouseId,
+        locationId: data.locationId,
+        productId,
+        serialNumber,
+        status: "available",
+        receivedAt: now,
+        referenceNumber,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    addMovement({
+      tenantId: scope.tenantId,
+      branchId: data.branchId,
+      warehouseId: data.warehouseId,
+      locationId: data.locationId,
+      line,
+      type: "opening_balance",
+      quantity: data.quantity,
+      before: result.before,
+      after: result.after,
+      referenceNumber,
+      actor,
+      notes: data.notes || "Opening stock recorded during product creation.",
+    });
+    const audit = auditEntry(scope.tenantId, data.branchId, "Opening Stock", productId, referenceNumber, "Opening stock recorded", actor, data.notes);
+    const item: StockAdjustment = {
+      id: `opening-stock-${crypto.randomUUID().slice(0, 8)}`,
+      tenantId: scope.tenantId,
+      branchId: data.branchId,
+      warehouseId: data.warehouseId,
+      locationId: data.locationId,
+      referenceNumber,
+      direction: "increase",
+      reason: "Opening stock",
+      notes: data.notes || undefined,
+      status: "completed",
+      lines: [line],
+      createdBy: actor.id,
+      createdByName: actor.name,
+      approval: {
+        status: "approved",
+        submittedAt: now,
+        submittedBy: actor.name,
+        history: [{ id: `approval-${crypto.randomUUID().slice(0, 8)}`, status: "approved", actorId: actor.id, actorName: actor.name, timestamp: now, remarks: "Recorded during product creation." }],
+      },
+      auditEntries: [audit],
       createdAt: now,
       updatedAt: now,
     };

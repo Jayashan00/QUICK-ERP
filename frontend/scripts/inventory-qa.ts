@@ -8,6 +8,7 @@ import { inventoryWorkflowService } from "../src/features/inventory/services/inv
 import { inventoryStore } from "../src/features/inventory/services/inventoryStore";
 import { inventoryReportService } from "../src/features/inventory/services/inventoryReportService";
 import { productStore } from "../src/features/products/services/productStore";
+import { productService } from "../src/features/products/services/productService";
 import { productVariantStore } from "../src/features/products/services/productVariantStore";
 import { stockWorkflowService } from "../src/features/inventory/services/stockWorkflowService";
 import { inventorySettingsService } from "../src/features/inventory/services/inventorySettingsService";
@@ -351,6 +352,63 @@ assert.throws(
 );
 
 const qaActor = { id: "usr-qa", name: "Inventory QA" };
+const openingProduct = await productService.create(mainScope.tenantId, {
+  name: "QA Opening Stock Product",
+  sku: "QA-OPENING-STOCK",
+  barcode: "",
+  barcodeType: "CODE128",
+  type: "goods",
+  status: "active",
+  categoryId: "cat-electronics",
+  uomId: "uom-unit",
+  sellingPrice: 100,
+  costPrice: 60,
+  priceTiers: [],
+  pricesIncludeTax: false,
+  isSellable: true,
+  isPurchasable: true,
+  trackInventory: true,
+  trackByBatch: true,
+  trackBySerialNumber: true,
+  trackExpiry: true,
+  allowNegativeStock: false,
+  minStockLevel: 1,
+  reorderLevel: 2,
+  maxStockLevel: 10,
+});
+const openingRecord = await stockWorkflowService.recordOpeningStock(
+  mainScope,
+  mainBranches,
+  openingProduct.id,
+  {
+    branchId: "branch-001",
+    warehouseId: "warehouse-hq-main",
+    locationId: "loc-hq-main",
+    quantity: 2,
+    batchReference: "QA-OPEN-BATCH-001",
+    expiryDate: "2027-12-31",
+    serialReferences: ["QA-OPEN-SERIAL-001", "QA-OPEN-SERIAL-002"],
+    notes: "Inventory QA opening balance",
+  },
+  qaActor,
+);
+assert.equal(openingRecord.status, "completed");
+assert.equal(inventoryStore.balances().find((item) => item.productId === openingProduct.id)?.quantityOnHand, 2);
+assert.equal(inventoryStore.movements().find((item) => item.productId === openingProduct.id)?.type, "opening_balance");
+assert.equal(inventoryStore.batches().find((item) => item.productId === openingProduct.id)?.expiryDate, "2027-12-31");
+assert.equal(inventoryStore.serialNumbers().filter((item) => item.productId === openingProduct.id).length, 2);
+await assert.rejects(
+  stockWorkflowService.recordOpeningStock(mainScope, mainBranches, openingProduct.id, {
+    branchId: "branch-001",
+    warehouseId: "warehouse-hq-main",
+    locationId: "loc-hq-main",
+    quantity: 1,
+    batchReference: "QA-OPEN-BATCH-002",
+    expiryDate: "2027-12-31",
+    serialReferences: ["QA-OPEN-SERIAL-003"],
+  }, qaActor),
+  /only be recorded before a product has inventory activity/,
+);
 const adjustmentBalance = inventoryStore.balances().find(
   (item) =>
     item.tenantId === "tenant-001" &&
@@ -545,5 +603,5 @@ await assert.rejects(
 );
 
 console.log(
-  "Inventory QA passed: RBAC, tenant and branch isolation, settings, mobile count drafts/completion, velocity classification/export, dependent locations, calculations, alerts, tracking visibility, filters, pagination, workflow handoffs, and ledger integration.",
+  "Inventory QA passed: RBAC, tenant and branch isolation, opening stock, settings, mobile count drafts/completion, velocity classification/export, dependent locations, calculations, alerts, tracking visibility, filters, pagination, workflow handoffs, and ledger integration.",
 );

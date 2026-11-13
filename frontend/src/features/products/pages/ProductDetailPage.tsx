@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Archive, ArrowLeft, Edit, Layers3, MoreHorizontal, Power, PowerOff, Trash2 } from 'lucide-react';
+import { Archive, ArrowLeft, Edit, MoreHorizontal, Power, PowerOff, Trash2 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { TENANT_PERMISSIONS as PERMISSIONS } from '@/core/permissions';
 import { usePermission } from '@/core/permissions/permission-context';
@@ -17,23 +17,18 @@ import { formatDate } from '@/shared/utils/formatters';
 import { appToast } from '@/shared/utils/toast';
 import { ProductOverview } from '../components/ProductOverview';
 import { ProductPageSkeleton } from '../components/ProductLoadingStates';
-import { ProductLabelPreview } from '../components/ProductLabelPreview';
 import { ProductImagesSection } from '../components/ProductImagesSection';
 import { ProductDocumentsSection } from '../components/ProductDocumentsSection';
-import { ProductVariantsSection } from '../components/ProductVariantsSection';
 import { ProductSpecificationsSection } from '../components/ProductSpecificationsSection';
 import { ProductBundleSection, ProductSuppliersSection, RelatedProductsSection } from '../components/ProductRelationshipsSections';
 import { useProduct } from '../hooks/useProduct';
 import { useProductMutations } from '../hooks/useProducts';
-
-const futureSections = ['Purchasing', 'Batches & Serials', 'Audit History'];
 
 export function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { currentBranch } = useBranch();
   const canEdit = usePermission(PERMISSIONS.PRODUCTS.PRODUCTS_EDIT);
-  const canPrint = usePermission(PERMISSIONS.PRODUCTS.PRODUCTS_PRINT);
   const canDownload = usePermission(PERMISSIONS.PRODUCTS.PRODUCTS_DOWNLOAD);
   const canDelete = usePermission(PERMISSIONS.PRODUCTS.PRODUCTS_DELETE);
   const canActivate = usePermission(PERMISSIONS.PRODUCTS.PRODUCTS_ACTIVATE);
@@ -120,23 +115,11 @@ export function ProductDetailPage() {
 
       <div className="mt-6"><ProductDocumentsSection productId={product.id} canManage={canEdit} canDownload={canDownload} /></div>
 
-      {product.type !== 'service' && <div className="mt-6"><ProductVariantsSection product={product} canManage={canEdit} canManagePrices={canManagePrices} /></div>}
-
-      {product.type !== 'service' && <div className="mt-6"><ProductLabelPreview product={product} canPrint={canPrint} /></div>}
-
-      {product.type !== 'service' && <Card className="mt-6">
-        <div className="flex items-center gap-2"><Layers3 size={20} className="text-slate-500" /><h2 className="text-base font-semibold text-slate-900">Extended Product Information</h2></div>
-        <p className="mt-1 text-sm text-slate-500">Reserved areas for upcoming product and inventory capabilities.</p>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {futureSections.map((section) => <div key={section} className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs font-medium text-slate-500">{section}</div>)}
-        </div>
-      </Card>}
-
       <ConfirmDialog
         isOpen={Boolean(pendingAction)}
         title={pendingAction ? `${pendingAction[0].toUpperCase()}${pendingAction.slice(1)} Product` : 'Update Product'}
         message={pendingAction === 'delete'
-          ? `Permanently delete ${product.name}? Products with variants, relationships, stock or other dependent records cannot be deleted and should be archived instead.`
+          ? `Permanently delete ${product.name}? Products with relationships, stock or other dependent records cannot be deleted and should be archived instead.`
           : pendingAction === 'archive'
             ? `Archive ${product.name}? It will remain visible to authorized users but will be excluded from normal transaction selectors.`
             : `${pendingAction === 'activate' ? 'Activate' : 'Deactivate'} ${product.name}?`}

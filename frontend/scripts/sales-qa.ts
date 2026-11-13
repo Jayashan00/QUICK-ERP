@@ -10,7 +10,8 @@ const scope = { tenantId: "tenant-001", branchId: "branch-001" };
 const branches = ["branch-001"];
 const actor = { id: "usr-002", name: "Sales QA" };
 const item = { productId: "prod-002", variantId: "", quantity: 2, unitPrice: 249.5, discountPercent: 2, taxPercent: 8 };
-const overCreditLimitItem = { ...item, quantity: 1, unitPrice: 200000, discountPercent: 0, taxPercent: 0 };
+const quotationItem = { ...item, unitPrice: 1, taxCode: "", taxPercent: 0 };
+const overCreditLimitItem = { ...quotationItem, quantity: 1000, discountPercent: 0 };
 const fractionalUnitItem = { ...item, quantity: 1.5 };
 
 assert.equal(isPermissionInScope("sales.view", "tenant"), true);
@@ -18,25 +19,27 @@ assert.equal(isPermissionInScope("payment.receive", "tenant"), true);
 assert.equal(hasPermission(["sales.view"], "quotation.approve"), false);
 
 await assert.rejects(
-  () => salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", currency: "USD", notes: "Over limit", items: [overCreditLimitItem] }, actor),
+  () => salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", notes: "Over limit", items: [overCreditLimitItem] }, actor),
   /credit limit/,
 );
 await assert.rejects(
-  () => salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", currency: "USD", notes: "Fractional unit", items: [fractionalUnitItem] }, actor),
+  () => salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", notes: "Fractional unit", items: [fractionalUnitItem] }, actor),
   /requires a whole-number quantity/,
 );
 
-const quotation = await salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", currency: "USD", notes: "QA quotation", items: [item] }, actor);
+const quotation = await salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", notes: "QA quotation", items: [quotationItem] }, actor);
 assert.equal(quotation.status, "draft");
 assert.equal(quotation.referenceNumber, "Q-00001");
+assert.equal(quotation.currency, "LKR");
+assert.equal(quotation.items[0].unitPrice, 249.5);
 assert.equal(quotation.items[0].taxCode, "VAT18");
 assert.equal(quotation.items[0].taxPercent, 18);
 assert.ok(Math.abs(quotation.items[0].taxAmount - (quotation.items[0].subtotal - quotation.items[0].discountAmount) * 0.18) < 1e-9);
 await assert.rejects(
-  () => salesService.updateQuotation(scope, branches, quotation.id, { customerId: quotation.customerId, branchId: quotation.branchId, salespersonId: quotation.salespersonId, opportunityId: "", quotationDate: quotation.quotationDate, expiryDate: quotation.expiryDate, terms: "Over limit", currency: quotation.currency, notes: "Over limit", items: [overCreditLimitItem] }, actor),
+  () => salesService.updateQuotation(scope, branches, quotation.id, { customerId: quotation.customerId, branchId: quotation.branchId, salespersonId: quotation.salespersonId, opportunityId: "", quotationDate: quotation.quotationDate, expiryDate: quotation.expiryDate, terms: "Over limit", notes: "Over limit", items: [overCreditLimitItem] }, actor),
   /credit limit/,
 );
-await salesService.updateQuotation(scope, branches, quotation.id, { customerId: quotation.customerId, branchId: quotation.branchId, salespersonId: quotation.salespersonId, opportunityId: "", quotationDate: quotation.quotationDate, expiryDate: quotation.expiryDate, terms: "Updated QA terms", currency: quotation.currency, notes: "Edited", items: [item] }, actor);
+await salesService.updateQuotation(scope, branches, quotation.id, { customerId: quotation.customerId, branchId: quotation.branchId, salespersonId: quotation.salespersonId, opportunityId: "", quotationDate: quotation.quotationDate, expiryDate: quotation.expiryDate, terms: "Updated QA terms", notes: "Edited", items: [quotationItem] }, actor);
 await salesService.transitionQuotation(scope, branches, quotation.id, "submit", actor);
 await salesService.transitionQuotation(scope, branches, quotation.id, "approve", actor, "Margin approved");
 await salesService.transitionQuotation(scope, branches, quotation.id, "send", actor);

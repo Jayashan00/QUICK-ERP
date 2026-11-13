@@ -174,13 +174,16 @@ const lineItems = (
     taxPercent: number;
     pricesIncludeTax?: boolean;
   }>,
-  taxContext?: { tenantId: string; date: string },
+  taxContext?: { tenantId: string; date: string; useMasterDataPricing?: boolean },
 ): SalesLine[] =>
   values.map((value) => {
-    const subtotal = value.quantity * value.unitPrice;
-    const discountAmount = (subtotal * value.discountPercent) / 100;
     const product = taxContext ? productStore.all().find((item) => item.tenantId === taxContext.tenantId && item.id === value.productId) : undefined;
-    const requestedTaxCode = value.taxCode === undefined ? product?.taxCode : value.taxCode || undefined;
+    const unitPrice = taxContext?.useMasterDataPricing && product ? product.sellingPrice : value.unitPrice;
+    const subtotal = value.quantity * unitPrice;
+    const discountAmount = (subtotal * value.discountPercent) / 100;
+    const requestedTaxCode = taxContext?.useMasterDataPricing
+      ? product?.taxCode
+      : value.taxCode === undefined ? product?.taxCode : value.taxCode || undefined;
     const rate = taxContext ? tenantSettingsService.resolveTaxRate(taxContext.tenantId, requestedTaxCode, 'sales', taxContext.date) : undefined;
     const taxPercent = taxContext ? rate?.percentage ?? 0 : value.taxPercent;
     const pricesIncludeTax = taxContext ? Boolean(rate && product?.pricesIncludeTax) : Boolean(value.pricesIncludeTax);
@@ -191,6 +194,7 @@ const lineItems = (
     return {
       id: `sales-line-${crypto.randomUUID().slice(0, 8)}`,
       ...value,
+      unitPrice,
       taxCode: rate?.code ?? (taxContext ? undefined : value.taxCode),
       taxPercent,
       pricesIncludeTax,
@@ -647,7 +651,8 @@ export const salesService = {
           "The opportunity does not match the selected customer and branch.",
         );
     }
-    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.quotationDate }),
+    const localization = await tenantSettingsService.getLocalization(scope.tenantId),
+      items = lineItems(data.items, { tenantId: scope.tenantId, date: data.quotationDate, useMasterDataPricing: true }),
       amount = totals(items),
       now = new Date().toISOString();
     assertWithinCreditLimit(customer, amount.totalAmount);
@@ -656,6 +661,7 @@ export const salesService = {
       tenantId: scope.tenantId,
       referenceNumber: tenantSettingsService.nextDocumentNumber(scope.tenantId, "quotation"),
       ...data,
+      currency: localization.baseCurrency,
       opportunityId: data.opportunityId || undefined,
       notes: data.notes || undefined,
       salespersonName: salesperson.name,
@@ -705,12 +711,14 @@ export const salesService = {
     data.items.forEach((item) =>
       requireValidQuantity(scope.tenantId, item.productId, item.quantity),
     );
-    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.quotationDate });
+    const localization = await tenantSettingsService.getLocalization(scope.tenantId);
+    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.quotationDate, useMasterDataPricing: true });
     const amount = totals(items);
     assertWithinCreditLimit(customer, amount.totalAmount);
     const next: SalesQuotation = {
       ...current,
       ...data,
+      currency: localization.baseCurrency,
       opportunityId: data.opportunityId || undefined,
       notes: data.notes || undefined,
       salespersonName: salesperson.name,

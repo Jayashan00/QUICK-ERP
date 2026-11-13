@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Controller, useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus, Save, Trash2 } from 'lucide-react';
 import { useTenantCurrency } from '@/features/settings/finance/currency';
 import { isSalesTaxApplicable, useTaxRates } from '@/features/settings/finance/tax';
+import { ProductOpeningStockSection, openingStockSchema, type OpeningStockFormValues } from '@/features/inventory';
 import { Button } from '@/shared/components/common/Button';
 import { Card } from '@/shared/components/common/Card';
 import { CurrencyInput } from '@/shared/components/forms/CurrencyInput';
@@ -35,7 +36,8 @@ interface ProductFormProps {
   canManageSpecifications: boolean;
   canManagePrices: boolean;
   canManageLifecycle: boolean;
-  onSubmit: (values: ProductFormValues) => Promise<void>;
+  canRecordOpeningStock: boolean;
+  onSubmit: (values: ProductFormValues, openingStock?: OpeningStockFormValues) => Promise<void>;
   onCancel: () => void;
   isSaving?: boolean;
   submitError?: string | null;
@@ -106,6 +108,7 @@ export function ProductForm({
   canManageSpecifications,
   canManagePrices,
   canManageLifecycle,
+  canRecordOpeningStock,
   onSubmit,
   onCancel,
   isSaving = false,
@@ -140,13 +143,69 @@ export function ProductForm({
   const productType = watch('type');
   const productName = watch('name');
   const selectedCategoryId = watch('categoryId');
+  const selectedUomId = watch('uomId');
   const trackInventory = watch('trackInventory');
   const trackByBatch = watch('trackByBatch');
+  const trackBySerialNumber = watch('trackBySerialNumber');
+  const trackExpiry = watch('trackExpiry');
   const selectedTaxCode = watch('taxCode');
   const sellingPrice = watch('sellingPrice');
   const costPrice = watch('costPrice');
   const generatedSku = watch('sku');
   const isService = productType === 'service';
+  const [openingStockEnabled, setOpeningStockEnabled] = useState(false);
+  const [openingStockErrors, setOpeningStockErrors] = useState<Record<string, string>>({});
+  const [openingStock, setOpeningStock] = useState<OpeningStockFormValues>({
+    branchId: '',
+    warehouseId: '',
+    locationId: '',
+    quantity: 0,
+    batchReference: '',
+    expiryDate: '',
+    serialReferences: [],
+    notes: '',
+  });
+
+  useEffect(() => {
+    if (initialData || isService || !trackInventory) {
+      setOpeningStockEnabled(false);
+      setOpeningStockErrors({});
+    }
+  }, [initialData, isService, trackInventory]);
+
+  const submitForm = async (values: ProductFormValues) => {
+    if (!initialData && !isService && trackInventory && openingStockEnabled) {
+      const parsed = openingStockSchema.safeParse(openingStock);
+      const nextErrors: Record<string, string> = {};
+      if (!parsed.success) {
+        for (const issue of parsed.error.issues) {
+          const field = String(issue.path[0] ?? 'openingStock');
+          nextErrors[field] ??= issue.message;
+        }
+      }
+      if (trackByBatch && !openingStock.batchReference?.trim()) nextErrors.batchReference = 'Batch reference is required.';
+      if (trackExpiry && !openingStock.expiryDate?.trim()) nextErrors.expiryDate = 'Expiry date is required.';
+      if (trackBySerialNumber) {
+        if (!Number.isInteger(openingStock.quantity)) nextErrors.quantity = 'Serialized opening stock must use a whole quantity.';
+        if (openingStock.serialReferences.length !== openingStock.quantity) nextErrors.serialReferences = 'Enter one serial number for every opening unit.';
+        if (new Set(openingStock.serialReferences).size !== openingStock.serialReferences.length) nextErrors.serialReferences = 'Serial numbers must be unique.';
+      }
+      if (Object.keys(nextErrors).length || !parsed.success) {
+        setOpeningStockErrors(nextErrors);
+        return;
+      }
+      setOpeningStockErrors({});
+      await onSubmit(values, {
+        ...parsed.data,
+        batchReference: trackByBatch ? parsed.data.batchReference : undefined,
+        expiryDate: trackExpiry ? parsed.data.expiryDate : undefined,
+        serialReferences: trackBySerialNumber ? parsed.data.serialReferences : [],
+      });
+      return;
+    }
+    setOpeningStockErrors({});
+    await onSubmit(values);
+  };
 
   useEffect(() => {
     if (initialData || productName.trim().length < 2) return;
@@ -218,6 +277,13 @@ export function ProductForm({
     }
   }, [initialData, isService, selectedTaxCode, setValue, taxQuery.taxes]);
 
+  useEffect(() => {
+    if (initialData || isService || selectedUomId) return;
+    const defaultUom = (uomQuery.data ?? []).find((uom) => uom.isDefault && uom.isActive);
+    if (!defaultUom) return;
+    setValue('uomId', defaultUom.id, { shouldValidate: true });
+  }, [initialData, isService, selectedUomId, setValue, uomQuery.data]);
+
   const categoryOptions = (categoryQuery.data ?? []).map((category) => ({
     value: category.id,
     label: `${category.name} (${category.code})${category.isActive ? '' : ' - Inactive'}`,
@@ -237,7 +303,7 @@ export function ProductForm({
   const barcodeField = register('barcode');
 
   return (
-    <form className="space-y-6" onSubmit={handleSubmit(onSubmit)} noValidate>
+    <form className="space-y-6" onSubmit={handleSubmit(submitForm)} noValidate>
       <FormSubmitError message={submitError ?? null} />
 
       <Card>
@@ -436,7 +502,7 @@ export function ProductForm({
           description={isService ? 'Control whether this service is available for sales.' : 'Product eligibility, one shared unit for sales, purchasing and stock, and master-level stock thresholds.'}
         >
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {!isService && <FormField label="Unit of measure" required error={errors.uomId?.message}>
+            {!isService && <FormField label="Unit of measure" required error={errors.uomId?.message} hint={!initialData ? 'The tenant default unit is selected automatically; you can choose another unit.' : undefined}>
               <Select
                 options={uomOptions}
                 placeholder={uomQuery.isLoading ? 'Loading units...' : 'Select unit...'}
@@ -487,6 +553,28 @@ export function ProductForm({
           )}
         </FormSection>
       </Card>
+
+      {!initialData && !isService && trackInventory && (
+        <ProductOpeningStockSection
+          enabled={openingStockEnabled}
+          canRecord={canRecordOpeningStock}
+          value={openingStock}
+          errors={openingStockErrors}
+          trackByBatch={trackByBatch}
+          trackBySerialNumber={trackBySerialNumber}
+          trackExpiry={trackExpiry}
+          costPrice={costPrice}
+          currency={tenantCurrency.currencyCode ?? 'Loading…'}
+          onEnabledChange={(enabled) => {
+            setOpeningStockEnabled(enabled);
+            setOpeningStockErrors({});
+          }}
+          onChange={(value) => {
+            setOpeningStock(value);
+            setOpeningStockErrors({});
+          }}
+        />
+      )}
 
       {initialData && !isService && <ProductSuppliersSection productId={initialData.id} canManage={canManageSpecifications} canManagePrices={canManagePrices} />}
 

@@ -7,6 +7,7 @@ import { useSync } from "@/features/sync";
 import type { ApprovalStatus } from "@/shared/types/approval";
 import type {
   BranchStockRequestFormValues,
+  OpeningStockFormValues,
   StockAdjustmentFormValues,
   StockCountFormValues,
   StockReturnWastageFormValues,
@@ -101,6 +102,11 @@ export function useStockWorkflowMutations() {
   return {
     isPending: mutation.isPending,
     createAdjustment: (values: StockAdjustmentFormValues) => run(() => createOfflineCapable("stock.adjust", values.branchId, "stock_adjustment", "stock.adjustment.create", { values }, () => stockWorkflowService.createAdjustment(context.scope, context.permittedBranchIds, values, context.actor))),
+    recordOpeningStock: (productId: string, values: OpeningStockFormValues) => run(async () => {
+      if (!hasPermission("stock.adjust") || !hasPermission("stock.approve"))
+        throw new Error("Stock adjustment and approval permissions are required to record opening stock.");
+      return createOfflineCapable("stock.adjust", values.branchId, "opening_stock", "stock.opening.create", { productId, values }, () => stockWorkflowService.recordOpeningStock(context.scope, context.permittedBranchIds, productId, values, context.actor));
+    }),
     decideAdjustment: (id: string, status: Extract<ApprovalStatus, "approved" | "rejected">, remarks?: string) => run(() => stockWorkflowService.decideAdjustment(context.scope, context.permittedBranchIds, id, decision(status, remarks).status, context.actor, remarks)),
     createTransfer: (values: StockTransferFormValues) => run(() => createOfflineCapable("stock.transfer", values.sourceBranchId, "stock_transfer", "stock.transfer.create", { values }, () => stockWorkflowService.createTransfer(context.scope, context.permittedBranchIds, values, context.actor))),
     advanceTransfer: (id: string, action: "approve" | "dispatch" | "mark_in_transit" | "receive" | "complete", remarks?: string) => run(() => stockWorkflowService.advanceTransfer(context.scope, context.permittedBranchIds, id, action, context.actor, remarks)),

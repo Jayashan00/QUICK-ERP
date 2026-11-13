@@ -46,7 +46,6 @@ export const salesQuotationSchema = z
     quotationDate: date("Quotation date"),
     expiryDate: date("Expiry date"),
     terms: required("Terms"),
-    currency: required("Currency"),
   })
   .refine(
     (value) => Date.parse(value.expiryDate) >= Date.parse(value.quotationDate),
