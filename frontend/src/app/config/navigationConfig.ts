@@ -123,11 +123,6 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
             path: "/products/uoms",
             permission: "products.uoms.view",
           },
-          {
-            label: "Price Lists",
-            path: "/products/price-lists",
-            allPermissions: ["products.view", "products.price_lists.view"],
-          },
         ],
       },
       {
