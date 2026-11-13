@@ -15,6 +15,7 @@ import { TextInput } from "@/shared/components/forms/TextInput";
 import { getErrorMessage } from "@/shared/utils/errors";
 import { appToast } from "@/shared/utils/toast";
 import { usePaymentTerms, useTaxRates } from '@/features/settings/finance/hooks/useTenantSettings';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 import { PaymentTermSelect } from '@/features/settings/finance/components/PaymentTermSelect';
 import { addPaymentTermDays, matchPaymentTerm } from '@/features/settings/finance/paymentTerms';
 import { isSalesTaxApplicable } from '@/features/settings/finance/tax';
@@ -64,6 +65,7 @@ interface EditableLine {
   discountPercent: number;
   taxCode?: string;
   taxPercent: number;
+  pricesIncludeTax?: boolean;
 }
 const today = () => new Date().toISOString().slice(0, 10);
 const future = (days: number) =>
@@ -76,6 +78,7 @@ const blankLine = (): EditableLine => ({
   discountPercent: 0,
   taxCode: "",
   taxPercent: 0,
+  pricesIncludeTax: false,
 });
 const option = (
   rows: Array<{
@@ -118,10 +121,16 @@ function SalesLineEditor({
   value,
   onChange,
   taxDate,
+  currencyCode = "",
+  formatMoney = (amount) => amount.toFixed(2),
+  lockMasterData = false,
 }: {
   value: EditableLine[];
   onChange: (value: EditableLine[]) => void;
   taxDate: string;
+  currencyCode?: string;
+  formatMoney?: (amount: number) => string;
+  lockMasterData?: boolean;
 }) {
   const products = useSalesProductOptions();
   const taxQuery = useTaxRates();
@@ -132,6 +141,39 @@ function SalesLineEditor({
         itemIndex === index ? { ...line, ...patch } : line,
       ),
     );
+  const pricedLines = value.map((line) => {
+    if (!lockMasterData) return line;
+    const product = products.data?.find((item) => item.id === line.productId);
+    if (!product) return line;
+    const tax = taxes.find((item) => item.code === product.taxCode);
+    return {
+      ...line,
+      unitPrice: product.sellingPrice,
+      taxCode: tax?.code ?? "",
+      taxPercent: tax?.percentage ?? 0,
+      pricesIncludeTax: product.pricesIncludeTax,
+    };
+  });
+  const amounts = pricedLines.map((line) => {
+    const subtotal = line.quantity * line.unitPrice;
+    const discountAmount = subtotal * line.discountPercent / 100;
+    const taxableAmount = subtotal - discountAmount;
+    const taxAmount = line.pricesIncludeTax
+      ? taxableAmount - taxableAmount / (1 + line.taxPercent / 100)
+      : taxableAmount * line.taxPercent / 100;
+    return {
+      subtotal,
+      discountAmount,
+      taxAmount,
+      total: line.pricesIncludeTax ? taxableAmount : taxableAmount + taxAmount,
+    };
+  });
+  const summary = amounts.reduce((total, amount) => ({
+    subtotal: total.subtotal + amount.subtotal,
+    discountAmount: total.discountAmount + amount.discountAmount,
+    taxAmount: total.taxAmount + amount.taxAmount,
+    total: total.total + amount.total,
+  }), { subtotal: 0, discountAmount: 0, taxAmount: 0, total: 0 });
   return (
     <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -150,14 +192,15 @@ function SalesLineEditor({
       </div>
       {value.map((line, index) => {
         const selectedProduct = products.data?.find((item) => item.id === line.productId);
+        const pricedLine = pricedLines[index];
         const decimalPlaces = selectedProduct?.quantityDecimalPlaces ?? 2;
         const quantityStep = 10 ** -decimalPlaces;
         return (
           <div
             key={index}
-            className="grid gap-3 rounded-lg bg-white p-3 sm:grid-cols-2 lg:grid-cols-6"
+            className={`grid gap-3 rounded-lg bg-white p-3 sm:grid-cols-2 ${lockMasterData ? "lg:grid-cols-12" : "lg:grid-cols-6"}`}
           >
-          <FormField label="Product / service" className="lg:col-span-2">
+          <FormField label="Product / service" className={lockMasterData ? "lg:col-span-3" : "lg:col-span-2"}>
             <Select
               value={line.productId}
               onChange={(event) => {
@@ -167,9 +210,10 @@ function SalesLineEditor({
                 const tax = taxes.find((item) => item.code === product?.taxCode);
                 update(index, {
                   productId: event.target.value,
-                  unitPrice: product?.sellingPrice ?? line.unitPrice,
+                  unitPrice: product?.sellingPrice ?? 0,
                   taxCode: tax?.code ?? "",
                   taxPercent: tax?.percentage ?? 0,
+                  pricesIncludeTax: product?.pricesIncludeTax ?? false,
                   quantity:
                     product?.quantityDecimalPlaces === 0 && !Number.isInteger(line.quantity)
                       ? 1
@@ -183,7 +227,7 @@ function SalesLineEditor({
               }))}
             />
           </FormField>
-          <FormField label={selectedProduct ? `Quantity (${selectedProduct.uomName})` : "Quantity"}>
+          <FormField className={lockMasterData ? "lg:col-span-2" : undefined} label={selectedProduct ? `Quantity (${selectedProduct.uomName})` : "Quantity"}>
             <TextInput
               type="number"
               min={quantityStep}
@@ -196,18 +240,20 @@ function SalesLineEditor({
               }}
             />
           </FormField>
-          <FormField label="Unit price">
-            <TextInput
-              type="number"
-              min="0"
-              step="0.01"
-              value={line.unitPrice}
-              onChange={(event) =>
-                update(index, { unitPrice: Number(event.target.value) })
-              }
-            />
+          <FormField className={lockMasterData ? "lg:col-span-2" : undefined} label={lockMasterData ? `Unit price (${currencyCode || "base currency"})` : "Unit price"}>
+            {lockMasterData ? (
+              <TextInput type="number" value={pricedLine.unitPrice} readOnly className="bg-slate-100" />
+            ) : (
+              <TextInput
+                type="number"
+                min="0"
+                step="0.01"
+                value={line.unitPrice}
+                onChange={(event) => update(index, { unitPrice: Number(event.target.value) })}
+              />
+            )}
           </FormField>
-          <FormField label="Discount %">
+          <FormField className={lockMasterData ? "lg:col-span-1" : undefined} label="Discount %">
             <TextInput
               type="number"
               min="0"
@@ -218,32 +264,51 @@ function SalesLineEditor({
               }
             />
           </FormField>
-          <FormField label="Sales tax">
-            <Select
-              value={line.taxCode ?? ""}
-              onChange={(event) => {
-                const tax = taxes.find((item) => item.code === event.target.value);
-                update(index, { taxCode: tax?.code ?? "", taxPercent: tax?.percentage ?? 0 });
-              }}
-              options={[{ value: "", label: "No tax / Exempt" }, ...taxes.map((tax) => ({ value: tax.code, label: `${tax.name} (${tax.percentage}%)` }))]}
-            />
+          <FormField className={lockMasterData ? "lg:col-span-2" : undefined} label="Sales tax">
+            {lockMasterData ? (
+              <TextInput
+                value={pricedLine.taxCode ? `${pricedLine.taxCode} (${pricedLine.taxPercent}%)${pricedLine.pricesIncludeTax ? " · Included" : ""}` : "No tax / Exempt"}
+                readOnly
+                className="bg-slate-100"
+              />
+            ) : (
+              <Select
+                value={line.taxCode ?? ""}
+                onChange={(event) => {
+                  const tax = taxes.find((item) => item.code === event.target.value);
+                  update(index, { taxCode: tax?.code ?? "", taxPercent: tax?.percentage ?? 0 });
+                }}
+                options={[{ value: "", label: "No tax / Exempt" }, ...taxes.map((tax) => ({ value: tax.code, label: `${tax.name} (${tax.percentage}%)` }))]}
+              />
+            )}
           </FormField>
+          {lockMasterData && <FormField className="lg:col-span-2" label="Line total">
+              <TextInput value={formatMoney(amounts[index].total)} readOnly className="bg-slate-100 font-semibold" />
+            </FormField>}
           {value.length > 1 && (
-            <Button
-              type="button"
-              size="sm"
-              variant="danger"
-              leftIcon={<Trash2 size={14} />}
-              onClick={() =>
-                onChange(value.filter((_, itemIndex) => itemIndex !== index))
-              }
-            >
-              Remove
-            </Button>
+            <div className={`flex justify-end sm:col-span-2 ${lockMasterData ? "lg:col-span-12" : "lg:col-span-6"}`}>
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                leftIcon={<Trash2 size={14} />}
+                onClick={() =>
+                  onChange(value.filter((_, itemIndex) => itemIndex !== index))
+                }
+              >
+                Remove
+              </Button>
+            </div>
           )}
           </div>
         );
       })}
+      {lockMasterData && <div className="grid gap-3 border-t border-slate-200 pt-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <div><p className="text-slate-500">Subtotal</p><p className="font-semibold text-slate-900">{formatMoney(summary.subtotal)}</p></div>
+        <div><p className="text-slate-500">Discount</p><p className="font-semibold text-slate-900">{formatMoney(summary.discountAmount)}</p></div>
+        <div><p className="text-slate-500">Sales tax</p><p className="font-semibold text-slate-900">{formatMoney(summary.taxAmount)}</p></div>
+        <div className="rounded-lg bg-violet-50 px-3 py-2"><p className="text-violet-700">Quotation total</p><p className="text-base font-bold text-violet-900">{formatMoney(summary.total)}</p></div>
+      </div>}
     </div>
   );
 }
@@ -258,6 +323,7 @@ export function SalesQuotationFormModal({
     people = useSalespersonOptions(),
     opportunities = useSalesOpportunityOptions(),
     mutations = useSalesMutations();
+  const tenantCurrency = useTenantCurrency();
   const form = useForm<SalesQuotationFormValues>({
     resolver: zodResolver(salesQuotationSchema),
     defaultValues: {
@@ -268,7 +334,6 @@ export function SalesQuotationFormModal({
       quotationDate: today(),
       expiryDate: future(30),
       terms: "Prices valid until the expiry date.",
-      currency: "USD",
       notes: "",
       items: [blankLine()],
     },
@@ -285,7 +350,6 @@ export function SalesQuotationFormModal({
             quotationDate: quotation.quotationDate,
             expiryDate: quotation.expiryDate,
             terms: quotation.terms,
-            currency: quotation.currency,
             notes: quotation.notes ?? "",
             items: quotation.items.map((item) => ({
               productId: item.productId,
@@ -295,6 +359,7 @@ export function SalesQuotationFormModal({
               discountPercent: item.discountPercent,
               taxCode: item.taxCode,
               taxPercent: item.taxPercent,
+              pricesIncludeTax: item.pricesIncludeTax,
             })),
           }
         : {
@@ -305,7 +370,6 @@ export function SalesQuotationFormModal({
             quotationDate: today(),
             expiryDate: future(30),
             terms: "Prices valid until the expiry date.",
-            currency: "USD",
             notes: "",
             items: [blankLine()],
           },
@@ -388,7 +452,6 @@ export function SalesQuotationFormModal({
                   );
                   if (customer) {
                     form.setValue("branchId", customer.branchId);
-                    form.setValue("currency", customer.currency);
                   }
                 },
               })}
@@ -423,15 +486,19 @@ export function SalesQuotationFormModal({
           >
             <DatePicker {...form.register("expiryDate")} />
           </FormField>
-          <FormField label="Currency">
-            <TextInput {...form.register("currency")} />
-          </FormField>
         </div>
         <Controller
           control={form.control}
           name="items"
           render={({ field }) => (
-            <SalesLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("quotationDate")} />
+            <SalesLineEditor
+              value={field.value}
+              onChange={field.onChange}
+              taxDate={form.watch("quotationDate")}
+              currencyCode={tenantCurrency.currencyCode ?? ""}
+              formatMoney={(amount) => tenantCurrency.formatMoneyInCurrency(amount, tenantCurrency.currencyCode)}
+              lockMasterData
+            />
           )}
         />
         <FormField
