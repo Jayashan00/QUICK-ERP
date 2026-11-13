@@ -11,6 +11,7 @@ import { PageContainer } from '@/shared/components/layout/PageContainer';
 import { PageHeader } from '@/shared/components/layout/PageHeader';
 import { getErrorMessage } from '@/shared/validation';
 import { appToast } from '@/shared/utils/toast';
+import { useStockWorkflowMutations, type OpeningStockFormValues } from '@/features/inventory';
 import { ProductForm } from '../components/ProductForm';
 import { ProductPageSkeleton } from '../components/ProductLoadingStates';
 import { useProduct } from '../hooks/useProduct';
@@ -40,12 +41,16 @@ export function ProductFormPage() {
     discardTemporary: discardTemporarySpecifications,
   } = productSpecifications;
   const mutations = useProductMutations();
+  const stockMutations = useStockWorkflowMutations();
   const canManageImages = usePermission(
     isEditing ? PERMISSIONS.PRODUCTS.PRODUCTS_EDIT : PERMISSIONS.PRODUCTS.PRODUCTS_CREATE,
   );
   const canDownloadDocuments = usePermission(PERMISSIONS.PRODUCTS.PRODUCTS_DOWNLOAD);
   const canManagePrices = usePermission(PERMISSIONS.PRODUCTS.PRODUCTS_MANAGE_PRICES);
   const canManageLifecycle = usePermission(PERMISSIONS.PRODUCTS.PRODUCTS_ACTIVATE);
+  const canAdjustStock = usePermission(PERMISSIONS.INVENTORY.STOCK_ADJUST);
+  const canApproveStock = usePermission(PERMISSIONS.INVENTORY.STOCK_APPROVE);
+  const canRecordOpeningStock = canAdjustStock && canApproveStock;
   const [submitError, setSubmitError] = useState<string | null>(null);
   const draftResourcesFinalized = useRef(isEditing);
 
@@ -69,7 +74,7 @@ export function ProductFormPage() {
     navigate(returnPath);
   };
 
-  const submit = async (values: ProductFormValues) => {
+  const submit = async (values: ProductFormValues, openingStock?: OpeningStockFormValues) => {
     setSubmitError(null);
     try {
       if (id) {
@@ -78,13 +83,21 @@ export function ProductFormPage() {
         navigate(`/products/${updated.id}`);
       } else {
         const created = await mutations.createProduct(values);
+        if (openingStock) {
+          try {
+            await stockMutations.recordOpeningStock(created.id, openingStock);
+          } catch (error) {
+            await mutations.deleteProduct(created.id).catch(() => undefined);
+            throw error;
+          }
+        }
         await Promise.all([
           attachToProduct(created.id),
           attachDocumentsToProduct(created.id),
           attachSpecificationsToProduct(created.id),
         ]);
         draftResourcesFinalized.current = true;
-        appToast.success(`${values.type === 'service' ? 'Service' : 'Product'} created successfully.`);
+        appToast.success(openingStock ? 'Product and opening stock created successfully.' : `${values.type === 'service' ? 'Service' : 'Product'} created successfully.`);
         navigate(`/products/${created.id}`);
       }
     } catch (error) {
@@ -132,9 +145,10 @@ export function ProductFormPage() {
         canManageSpecifications={canManageImages}
         canManagePrices={canManagePrices}
         canManageLifecycle={canManageLifecycle}
+        canRecordOpeningStock={canRecordOpeningStock}
         onSubmit={submit}
         onCancel={cancel}
-        isSaving={mutations.isSaving}
+        isSaving={mutations.isSaving || stockMutations.isPending}
         submitError={submitError}
       />
     </PageContainer>

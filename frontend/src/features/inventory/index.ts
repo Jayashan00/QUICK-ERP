@@ -16,6 +16,7 @@ export * from "./pages/InventoryOperationsPages";
 export * from "./pages/StockWorkflowPages";
 export * from "./pages/WarehousePages";
 export * from "./pages/StockLocationPages";
+export * from "./components/ProductOpeningStockSection";
 export * from "./pages/InventorySettingsPage";
 export * from "./pages/MobileStockCountPage";
 export * from "./pages/StockVelocityPage";
