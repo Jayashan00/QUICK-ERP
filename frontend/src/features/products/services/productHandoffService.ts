@@ -1,14 +1,8 @@
 import type { TenantBranchScope } from '@/core/tenant/dataScope';
 import { getTenantTaxRates, isSalesTaxApplicable } from '@/features/settings/finance/tax';
-import type { ProductVariantListItem } from '../types/product';
 import type { PosProductOption, ProductTaxReference, PurchaseProductOption, StorefrontProductItem } from '../types/productHandoffs';
 import { productService } from './productService';
-import { productVariantService } from './productVariantService';
 import { productBundleService, productSupplierService, relatedProductService } from './productRelationshipService';
-
-function variantLabel(variant: ProductVariantListItem) {
-  return variant.attributes.map((attribute) => `${attribute.attributeName}: ${attribute.value}`).join(' / ');
-}
 
 async function taxMap(tenantId: string) {
   const taxes = await getTenantTaxRates(tenantId);
@@ -40,45 +34,32 @@ export const productHandoffService = {
     }));
   },
 
-  /** Active sale items and active variants shaped for a future POS product picker. */
+  /** Active goods shaped for the POS product picker. Services and legacy variants are excluded. */
   async getPosOptions(scope: TenantBranchScope, search = ''): Promise<PosProductOption[]> {
     const [selectableProducts, taxes] = await Promise.all([
       productService.getSelectableProducts(scope, 'sale'),
       taxMap(scope.tenantId),
     ]);
     const products = selectableProducts.filter((product) => product.type !== 'service');
-    const options = await Promise.all(products.map(async (product) => {
-      const base = {
+    const options = products.map((product) => ({
         productId: product.id,
+        selectionId: product.id,
         name: product.name,
+        sku: product.sku,
+        barcode: product.barcode,
+        sellingPrice: product.sellingPrice,
         tax: product.taxCode ? taxes.get(product.taxCode) ?? null : null,
         status: 'active' as const,
         trackInventory: product.trackInventory,
         trackByBatch: product.trackByBatch,
         trackBySerialNumber: product.trackBySerialNumber,
         trackExpiry: product.trackExpiry,
-      };
-      const variants = await productVariantService.getSelectable(scope.tenantId, product.id);
-      if (variants.length) {
-        return variants.map((variant) => ({
-          ...base,
-          selectionId: variant.id,
-          variantId: variant.id,
-          variantLabel: variantLabel(variant),
-          sku: variant.sku,
-          barcode: variant.barcode,
-          sellingPrice: variant.effectiveSellingPrice,
-        }));
-      }
-      if (product.hasVariants) return [];
-      return [{ ...base, selectionId: product.id, sku: product.sku, barcode: product.barcode, sellingPrice: product.sellingPrice }];
-    }));
+      }));
     const query = search.trim().toLocaleLowerCase();
-    return options.flat().filter((option) => !query || [
+    return options.filter((option) => !query || [
       option.name,
       option.sku,
       option.barcode,
-      'variantLabel' in option ? option.variantLabel : undefined,
     ]
       .some((value) => value?.toLocaleLowerCase().includes(query)));
   },
@@ -90,8 +71,7 @@ export const productHandoffService = {
       taxMap(scope.tenantId),
     ]);
     return Promise.all(products.map(async (product) => {
-      const [variants, relatedProducts, bundle] = await Promise.all([
-        productVariantService.getSelectable(scope.tenantId, product.id),
+      const [relatedProducts, bundle] = await Promise.all([
         relatedProductService.getAll(scope.tenantId, product.id),
         product.type === 'composite' ? productBundleService.get(scope.tenantId, product.id) : Promise.resolve(null),
       ]);
@@ -103,7 +83,7 @@ export const productHandoffService = {
         sellingPrice: bundle?.status === 'active' ? bundle.sellingPrice : product.sellingPrice,
         tax: product.taxCode ? taxes.get(product.taxCode) ?? null : null,
         primaryImage: product.primaryImage,
-        variants,
+        variants: [],
         relatedProducts: relatedProducts.filter((related) => related.status === 'active'),
         bundle: bundle?.status === 'active' ? bundle : null,
       };

@@ -356,7 +356,7 @@ export function ProductListPage() {
         isOpen={Boolean(pendingAction)}
         title={pendingAction ? `${pendingAction.type[0].toUpperCase()}${pendingAction.type.slice(1)} Product` : 'Update Product'}
         message={pendingAction?.type === 'delete'
-          ? `Permanently delete ${pendingAction.product.name}? Products with variants, relationships, stock or other dependent records cannot be deleted and should be archived instead.`
+          ? `Permanently delete ${pendingAction.product.name}? Products with relationships, stock or other dependent records cannot be deleted and should be archived instead.`
           : pendingAction?.type === 'archive'
             ? `Archive ${pendingAction.product.name}? It will remain available to authorized users but will be excluded from normal transaction selectors.`
             : `${pendingAction?.type === 'activate' ? 'Activate' : 'Deactivate'} ${pendingAction?.product.name ?? 'this product'}?`}
