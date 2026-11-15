@@ -1,5 +1,5 @@
 import { ModuleDashboardPage } from "@/features/dashboard/components/ModuleDashboard";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Download,
   Plus,
@@ -190,43 +190,33 @@ function SalesDetail({
       const anchor = window.document.createElement('a'); anchor.href = file.url; anchor.download = file.name; anchor.click();
     } catch (error) { appToast.error(error instanceof Error ? error.message : 'Download unavailable.'); }
   };
-  const action = async (type: "print" | "share" | "email") => {
+  const print = async () => {
     if (!row) return;
+    const previewWindow = kind === "quotations"
+      ? window.open("about:blank", "_blank")
+      : null;
     try {
-      if (type === "print") {
+      if (kind !== "quotations") {
         window.print();
         return;
       }
-
-      const documentUrl = new URL(window.location.href);
-      documentUrl.searchParams.set("record", row.id);
-      documentUrl.searchParams.set("reference", row.referenceNumber);
-      const shareUrl = documentUrl.toString();
-      const title = `${kind === "deliveries" ? "Delivery Note" : "Sales Document"} ${row.referenceNumber}`;
-
-      if (type === "share") {
-        if (typeof navigator.share === "function") {
-          await navigator.share({ title, text: title, url: shareUrl });
-          appToast.success(`${row.referenceNumber} shared.`);
-        } else if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(shareUrl);
-          appToast.success(`Share link copied for ${row.referenceNumber}.`);
-        } else {
-          window.prompt(`Copy the share link for ${row.referenceNumber}:`, shareUrl);
-        }
-        return;
+      const pdf = await mutations.quotationPdf(row.id);
+      const url = URL.createObjectURL(pdf.blob);
+      if (previewWindow) {
+        previewWindow.opener = null;
+        previewWindow.location.href = url;
+      } else {
+        const anchor = window.document.createElement("a");
+        anchor.href = url;
+        anchor.download = pdf.fileName;
+        anchor.click();
+        appToast.success(`${pdf.fileName} downloaded. Open it to print.`);
       }
-
-      const subject = encodeURIComponent(title);
-      const body = encodeURIComponent(`Please review ${title}:\n\n${shareUrl}`);
-      const emailLink = window.document.createElement("a");
-      emailLink.href = `mailto:?subject=${subject}&body=${body}`;
-      emailLink.click();
-      appToast.success(`Email draft opened for ${row.referenceNumber}.`);
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      previewWindow?.close();
       appToast.error(
-        getErrorMessage(error, `Unable to ${type} ${row.referenceNumber}.`),
+        getErrorMessage(error, `Unable to print ${row.referenceNumber}.`),
       );
     }
   };
@@ -247,29 +237,13 @@ function SalesDetail({
             <div className="flex flex-wrap gap-2">
               <StatusBadge status={row.status} />
               {canPrint && (
-                <>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void action("print")}
-                  >
-                    Print
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void action("share")}
-                  >
-                    Share
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void action("email")}
-                  >
-                    Email
-                  </Button>
-                </>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void print()}
+                >
+                  Print
+                </Button>
               )}
             </div>
           </div>
@@ -775,15 +749,90 @@ function QuotationConversion({
   );
 }
 export function SalesQuotationsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialOpportunityId = searchParams.get("opportunityId") ?? "";
   const filters = useFilters(),
     query = useSalesQuotations(filters.params),
+    customers = useSalesCustomerOptions(),
     orders = useSalesOrders({ branchId: "all", pageSize: Number.MAX_SAFE_INTEGER }),
     mutations = useSalesMutations(),
     [open, setOpen] = useState(false),
-    [editing, setEditing] = useState<SalesQuotation | null>(null);
+    [editing, setEditing] = useState<SalesQuotation | null>(null),
+    [emailPreview, setEmailPreview] = useState<SalesQuotation | null>(null),
+    [emailPreviewUrl, setEmailPreviewUrl] = useState<string | null>(null),
+    [emailPreviewError, setEmailPreviewError] = useState<string | null>(null),
+    [isPreviewLoading, setIsPreviewLoading] = useState(false),
+    [isEmailSending, setIsEmailSending] = useState(false);
+  const previewRequestId = useRef(0);
   const canCreate = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_CREATE),
     canEdit = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_EDIT),
-    canApprove = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_APPROVE);
+    canApprove = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_APPROVE),
+    canPrint = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_PRINT);
+  useEffect(() => {
+    if (!initialOpportunityId || !canCreate) return;
+    setEditing(null);
+    setOpen(true);
+  }, [canCreate, initialOpportunityId]);
+
+  useEffect(
+    () => () => {
+      if (emailPreviewUrl) URL.revokeObjectURL(emailPreviewUrl);
+    },
+    [emailPreviewUrl],
+  );
+
+  const closeEmailPreview = () => {
+    previewRequestId.current += 1;
+    if (emailPreviewUrl) URL.revokeObjectURL(emailPreviewUrl);
+    setEmailPreview(null);
+    setEmailPreviewUrl(null);
+    setEmailPreviewError(null);
+    setIsPreviewLoading(false);
+    setIsEmailSending(false);
+  };
+
+  const openEmailPreview = async (quotation: SalesQuotation) => {
+    const requestId = ++previewRequestId.current;
+    if (emailPreviewUrl) URL.revokeObjectURL(emailPreviewUrl);
+    setEmailPreview(quotation);
+    setEmailPreviewUrl(null);
+    setEmailPreviewError(null);
+    setIsPreviewLoading(true);
+    try {
+      const pdf = await mutations.quotationPdf(quotation.id);
+      const url = URL.createObjectURL(pdf.blob);
+      if (requestId !== previewRequestId.current) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      setEmailPreviewUrl(url);
+    } catch (error) {
+      if (requestId !== previewRequestId.current) return;
+      setEmailPreviewError(
+        getErrorMessage(error, `Unable to preview ${quotation.referenceNumber}.`),
+      );
+    } finally {
+      if (requestId === previewRequestId.current) setIsPreviewLoading(false);
+    }
+  };
+
+  const sendPreviewedQuotation = async () => {
+    if (!emailPreview || !emailPreviewUrl) return;
+    setIsEmailSending(true);
+    try {
+      const delivered = await mutations.emailQuotation(emailPreview.id);
+      appToast.success(
+        `${emailPreview.referenceNumber} emailed to ${delivered.delivery?.recipientEmail}.`,
+      );
+      closeEmailPreview();
+    } catch (error) {
+      appToast.error(
+        getErrorMessage(error, `Unable to email ${emailPreview.referenceNumber}.`),
+      );
+      setIsEmailSending(false);
+    }
+  };
+
   const actions = (row: SalesQuotation) => (
     <div className="flex flex-wrap gap-2">
       {row.status === "draft" && (
@@ -831,14 +880,10 @@ export function SalesQuotationsPage() {
           }}
         />
       )}
-      {row.status === "approved" && (
-        <ConfirmAction
-          label="Mark Sent"
-          message={`Mark ${row.referenceNumber} as sent?`}
-          onConfirm={async () => {
-            await mutations.transitionQuotation(row.id, "send");
-          }}
-        />
+      {row.status === "approved" && canEdit && canPrint && (
+        <Button size="sm" onClick={() => void openEmailPreview(row)}>
+          Email PDF
+        </Button>
       )}
       {row.status === "sent" && (
         <>
@@ -873,6 +918,14 @@ export function SalesQuotationsPage() {
   const close = () => {
     setOpen(false);
     setEditing(null);
+    if (initialOpportunityId) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete("opportunityId");
+        next.delete("customerId");
+        return next;
+      }, { replace: true });
+    }
   };
   return (
     <>
@@ -904,8 +957,64 @@ export function SalesQuotationsPage() {
       <SalesQuotationFormModal
         isOpen={open}
         quotation={editing}
+        initialOpportunityId={initialOpportunityId}
         onClose={close}
       />
+      <Modal
+        isOpen={Boolean(emailPreview)}
+        onClose={closeEmailPreview}
+        title={emailPreview ? `Review ${emailPreview.referenceNumber} PDF` : "Review quotation PDF"}
+        maxWidth="1000px"
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeEmailPreview}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!emailPreviewUrl || isPreviewLoading}
+              isLoading={isEmailSending}
+              onClick={() => void sendPreviewedQuotation()}
+            >
+              Send Email
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {emailPreview && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              Review the generated quotation before sending it to{" "}
+              <span className="font-semibold">
+                {customers.data?.find((customer) => customer.id === emailPreview.customerId)?.email ||
+                  "the customer's saved email address"}
+              </span>
+              . The quotation changes to Sent only after the email is delivered successfully.
+            </div>
+          )}
+          {isPreviewLoading && (
+            <div className="flex h-[60vh] items-center justify-center rounded-lg border border-slate-200 text-sm text-slate-500">
+              Generating quotation PDF...
+            </div>
+          )}
+          {emailPreviewError && !isPreviewLoading && (
+            <div className="flex h-[60vh] flex-col items-center justify-center gap-4 rounded-lg border border-red-200 bg-red-50 px-6 text-center">
+              <p className="text-sm font-medium text-red-700">{emailPreviewError}</p>
+              {emailPreview && (
+                <Button variant="secondary" onClick={() => void openEmailPreview(emailPreview)}>
+                  Try Again
+                </Button>
+              )}
+            </div>
+          )}
+          {emailPreviewUrl && !isPreviewLoading && (
+            <iframe
+              title={`${emailPreview?.referenceNumber ?? "Quotation"} PDF preview`}
+              src={emailPreviewUrl}
+              className="h-[60vh] w-full rounded-lg border border-slate-200"
+            />
+          )}
+        </div>
+      </Modal>
     </>
   );
 }

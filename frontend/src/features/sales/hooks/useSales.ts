@@ -199,6 +199,12 @@ export function useSalesMutations() {
           remarks,
         ),
       ),
+    emailQuotation: (id: string) =>
+      run(() =>
+        salesService.emailQuotation(context.scope, context.permitted, id),
+      ),
+    quotationPdf: (id: string) =>
+      salesService.quotationPdf(context.scope, context.permitted, id),
     createOrder: (values: SalesOrderFormValues) =>
       run(() =>
         salesService.createOrder(
