@@ -125,8 +125,8 @@ java -jar target/quick-erp-backend.jar
 | `MAX_JSON_BYTES` | `16777216` | Largest JSON request body; larger requests get HTTP 413 |
 | `MAX_LOGIN_FAILURES` / `LOGIN_LOCK_MINUTES` | `10` / `15` | Account lockout after failed sign-ins |
 | `PASSWORD_RESET_URL` | `http://localhost:3000/reset-password` | Frontend page used in reset emails. Use your production URL |
-| `MAIL_FROM` | `no-reply@quickerp.local` | Sender address of reset emails |
-| `SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `SPRING_MAIL_USERNAME`, `SPRING_MAIL_PASSWORD`, `SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=true`, `SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true` | not set | SMTP server for reset emails. **Without it, reset emails are written to the backend log** |
+| `MAIL_FROM` | `no-reply@quickerp.local` | Sender address of reset emails and quotation emails |
+| `SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `SPRING_MAIL_USERNAME`, `SPRING_MAIL_PASSWORD`, `SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=true`, `SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true` | not set | SMTP server for reset emails and approved quotation PDF delivery. **Without it, reset emails are written to the backend log and quotation delivery is rejected without changing its status** |
 | `GEMINI_API_KEY` | not set | Backend-only Google Gemini credential used by the read-only ERP assistant. Never put this in a `VITE_*` variable |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used to summarize authorized tool results |
 | `AI_MAX_HISTORY_MESSAGES` | `12` | Maximum prior tenant/user-scoped messages sent as conversation context (capped at 30) |
