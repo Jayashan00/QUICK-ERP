@@ -18,6 +18,13 @@ assert.equal(isPermissionInScope("sales.view", "tenant"), true);
 assert.equal(isPermissionInScope("payment.receive", "tenant"), true);
 assert.equal(hasPermission(["sales.view"], "quotation.approve"), false);
 
+const opportunityOptions = await salesService.opportunityOptions(scope, branches);
+const wonOpportunity = opportunityOptions.find((option) => option.id === "opp-012");
+assert(wonOpportunity, "Won opportunities must be available when creating quotations.");
+assert.equal(wonOpportunity.customerId, "cust-003");
+assert.equal(wonOpportunity.branchId, "branch-001");
+assert.equal(wonOpportunity.salespersonId, "usr-001");
+
 await assert.rejects(
   () => salesService.createQuotation(scope, branches, { customerId: "cust-001", branchId: "branch-001", salespersonId: "usr-004", opportunityId: "", quotationDate: "2026-09-29", expiryDate: "2026-10-29", terms: "QA terms", notes: "Over limit", items: [overCreditLimitItem] }, actor),
   /credit limit/,
@@ -41,7 +48,41 @@ await assert.rejects(
 );
 await salesService.updateQuotation(scope, branches, quotation.id, { customerId: quotation.customerId, branchId: quotation.branchId, salespersonId: quotation.salespersonId, opportunityId: "", quotationDate: quotation.quotationDate, expiryDate: quotation.expiryDate, terms: "Updated QA terms", notes: "Edited", items: [quotationItem] }, actor);
 await salesService.transitionQuotation(scope, branches, quotation.id, "submit", actor);
+const otherBranchQuotations = await salesService.listQuotations(
+  { tenantId: scope.tenantId, branchId: "branch-002" },
+  { branchId: "all", permittedBranchIds: ["branch-002"], pageSize: 100 },
+);
+assert(
+  otherBranchQuotations.data.every((row) => row.branchId === "branch-002"),
+  "Quotation lists must contain only records from the user's assigned branches.",
+);
+assert(
+  !otherBranchQuotations.data.some((row) => row.id === quotation.id),
+  "A quotation from another branch must not be visible to an approver.",
+);
+await assert.rejects(
+  () =>
+    salesService.transitionQuotation(
+      { tenantId: scope.tenantId, branchId: "branch-002" },
+      ["branch-002"],
+      quotation.id,
+      "approve",
+      actor,
+      "Cross-branch approval must be denied",
+    ),
+  /Quotation not found/,
+);
 await salesService.transitionQuotation(scope, branches, quotation.id, "approve", actor, "Margin approved");
+await assert.rejects(
+  () => salesService.emailQuotation(scope, branches, quotation.id),
+  /backend mode and configured SMTP settings/,
+  "Mock mode must not pretend that a quotation email was delivered.",
+);
+await assert.rejects(
+  () => salesService.quotationPdf(scope, branches, quotation.id),
+  /requires backend mode/,
+  "Mock mode must not return a placeholder quotation PDF.",
+);
 await salesService.transitionQuotation(scope, branches, quotation.id, "send", actor);
 await salesService.transitionQuotation(scope, branches, quotation.id, "accept", actor);
 await assert.rejects(() => salesService.createOrderFromQuotation(scope, ["branch-002"], quotation.id, "warehouse-hq-main", actor));

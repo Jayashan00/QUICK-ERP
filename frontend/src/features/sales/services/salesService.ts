@@ -1,4 +1,6 @@
 import type { TenantBranchScope } from "@/core/tenant/dataScope";
+import { apiClient } from "@/core/api";
+import { isBackendEnabled } from "@/core/persistence/backendSession";
 import { userService } from "@/core/auth/userService";
 import { auditEventService } from "@/core/audit";
 import { hrService } from '@/features/hr/hrService';
@@ -92,6 +94,12 @@ export interface SalesCustomerOption {
   currency: string;
   paymentTerms: string;
   deliveryAddress: string;
+  email: string;
+}
+interface QuotationPdfResponse {
+  fileName: string;
+  contentType: "application/pdf";
+  base64: string;
 }
 export interface SalespersonOption {
   id: string;
@@ -485,6 +493,7 @@ export const salesService = {
         deliveryAddress: customer.shippingAddress
           ? `${customer.shippingAddress.street}, ${customer.shippingAddress.city}, ${customer.shippingAddress.postalCode}, ${customer.shippingAddress.country}`
           : `${customer.billingAddress.street}, ${customer.billingAddress.city}, ${customer.billingAddress.postalCode}, ${customer.billingAddress.country}`,
+        email: customer.email,
       }));
   },
   async salespersonOptions(tenantId: string): Promise<SalespersonOption[]> {
@@ -540,13 +549,13 @@ export const salesService = {
       permitted.map((branchId) =>
         opportunityService.getOpportunities(
           { tenantId: scope.tenantId, branchId },
-          { status: "open", pageSize: 100 },
+          { pageSize: 100 },
         ),
       ),
     );
     return results
       .flatMap((result) => result.data)
-      .filter((item) => item.customerId)
+      .filter((item) => item.customerId && ["open", "won"].includes(item.status))
       .map((item) => ({
         id: item.id,
         name: item.name,
@@ -811,6 +820,77 @@ export const salesService = {
     };
     salesStore.replaceQuotation(index, next);
     return next;
+  },
+
+  async emailQuotation(
+    scope: TenantBranchScope,
+    permitted: string[],
+    id: string,
+  ): Promise<SalesQuotation> {
+    requireScope(scope, permitted);
+    const index = salesStore
+      .quotations()
+      .findIndex(
+        (item) =>
+          item.id === id &&
+          item.tenantId === scope.tenantId &&
+          permitted.includes(item.branchId),
+      );
+    if (index < 0) throw new Error("Quotation not found.");
+    if (salesStore.quotations()[index].status !== "approved") {
+      throw new Error("Only an approved quotation can be emailed to a customer.");
+    }
+    if (!isBackendEnabled()) {
+      throw new Error(
+        "Real quotation email delivery requires backend mode and configured SMTP settings.",
+      );
+    }
+    const { data } = await apiClient.post<SalesQuotation>(
+      `/sales/quotations/${encodeURIComponent(id)}/email`,
+    );
+    if (
+      data.id !== id ||
+      data.tenantId !== scope.tenantId ||
+      !permitted.includes(data.branchId) ||
+      data.status !== "sent" ||
+      data.delivery?.status !== "sent"
+    ) {
+      throw new Error("The server returned an invalid quotation delivery result.");
+    }
+    salesStore.replaceQuotation(index, data);
+    return data;
+  },
+
+  async quotationPdf(
+    scope: TenantBranchScope,
+    permitted: string[],
+    id: string,
+  ): Promise<{ fileName: string; blob: Blob }> {
+    requireScope(scope, permitted);
+    const quotation = salesStore
+      .quotations()
+      .find(
+        (item) =>
+          item.id === id &&
+          item.tenantId === scope.tenantId &&
+          permitted.includes(item.branchId),
+      );
+    if (!quotation) throw new Error("Quotation not found.");
+    if (!isBackendEnabled()) {
+      throw new Error("Real quotation PDF printing requires backend mode.");
+    }
+    const { data } = await apiClient.get<QuotationPdfResponse>(
+      `/sales/quotations/${encodeURIComponent(id)}/pdf`,
+    );
+    if (!data.fileName || data.contentType !== "application/pdf" || !data.base64) {
+      throw new Error("The server returned an invalid quotation PDF.");
+    }
+    const binary = globalThis.atob(data.base64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return {
+      fileName: data.fileName,
+      blob: new Blob([bytes], { type: data.contentType }),
+    };
   },
 
   async createOrder(

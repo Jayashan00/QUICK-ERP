@@ -53,6 +53,7 @@ interface Props {
 }
 interface QuotationProps extends Props {
   quotation?: SalesQuotation | null;
+  initialOpportunityId?: string;
 }
 interface OrderProps extends Props {
   order?: SalesOrder | null;
@@ -317,6 +318,7 @@ export function SalesQuotationFormModal({
   isOpen,
   onClose,
   quotation,
+  initialOpportunityId = "",
 }: QuotationProps) {
   const { branches, branchId } = useBranch();
   const customers = useSalesCustomerOptions(),
@@ -366,7 +368,7 @@ export function SalesQuotationFormModal({
             customerId: "",
             branchId: branchId ?? "",
             salespersonId: "",
-            opportunityId: "",
+            opportunityId: initialOpportunityId,
             quotationDate: today(),
             expiryDate: future(30),
             terms: "Prices valid until the expiry date.",
@@ -374,7 +376,22 @@ export function SalesQuotationFormModal({
             items: [blankLine()],
           },
     );
-  }, [branchId, form, isOpen, quotation]);
+  }, [branchId, form, initialOpportunityId, isOpen, quotation]);
+  useEffect(() => {
+    if (!isOpen || quotation || !initialOpportunityId) return;
+    const opportunity = opportunities.data?.find(
+      (item) => item.id === initialOpportunityId,
+    );
+    if (!opportunity) return;
+    form.setValue("opportunityId", opportunity.id, { shouldValidate: true });
+    form.setValue("customerId", opportunity.customerId, { shouldValidate: true });
+    form.setValue("branchId", opportunity.branchId, { shouldValidate: true });
+    if (opportunity.salespersonId) {
+      form.setValue("salespersonId", opportunity.salespersonId, {
+        shouldValidate: true,
+      });
+    }
+  }, [form, initialOpportunityId, isOpen, opportunities.data, quotation]);
   const submit = form.handleSubmit(async (values) => {
     try {
       if (quotation) await mutations.updateQuotation(quotation.id, values);

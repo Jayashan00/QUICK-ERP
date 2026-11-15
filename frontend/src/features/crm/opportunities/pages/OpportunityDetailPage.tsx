@@ -146,7 +146,7 @@ export function OpportunityDetailPage() {
               <Button
                 variant="secondary"
                 leftIcon={<FilePlus2 size={16} />}
-                onClick={() => navigate(`/sales/quotations?opportunityId=${encodeURIComponent(opportunity.id)}&customerId=${encodeURIComponent(opportunity.customerId ?? '')}`)}
+                onClick={() => navigate(`/sales/quotations?opportunityId=${encodeURIComponent(opportunity.id)}`)}
               >
                 Create Quotation
               </Button>

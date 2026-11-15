@@ -77,6 +77,19 @@ export interface SalesQuotation extends SalesDocument {
   discountAmount: number;
   taxAmount: number;
   totalAmount: number;
+  delivery?: {
+    status: "sending" | "sent" | "failed";
+    requestId: string;
+    channel: "email";
+    recipientEmail: string;
+    requestedAt: string;
+    requestedBy: EntityId;
+    sentAt?: string;
+    sentBy?: EntityId;
+    failedAt?: string;
+    failureReason?: string;
+    attachmentName?: string;
+  };
 }
 export interface SalesOrder extends SalesDocument {
   sourceQuotationId?: EntityId;
