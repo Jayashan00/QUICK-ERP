@@ -55,6 +55,55 @@ class RecordGuardsTest {
     }
 
     @Test
+    void inventoryReturnsNeedPermissionReasonAndSalesResubmission() throws Exception {
+        Principal inventoryUser = new Principal("usr-inventory", "tenant-001", false, "role-inventory", "inventory@test");
+        JsonNode processing = mapper.readTree("{\"id\":\"so-1\",\"status\":\"processing\"}");
+        JsonNode returned = mapper.readTree("{\"id\":\"so-1\",\"status\":\"returned_to_sales\",\"fulfilmentReturn\":{"
+                + "\"reason\":\"Requested quantity is not available.\",\"returnedAt\":\"2026-11-17T10:00:00Z\","
+                + "\"returnedBy\":\"usr-inventory\",\"returnedByName\":\"Inventory Manager\",\"previousStatus\":\"processing\"}}");
+        Permissions inventory = Permissions.of(List.of("salesOrder.process"));
+        Permissions salesManager = Permissions.of(List.of("salesOrder.confirm"));
+
+        assertThrows(ApiException.class,
+                () -> RecordGuards.checkSalesOrder(Permissions.of(List.of()), inventoryUser, processing, returned));
+        assertDoesNotThrow(() -> RecordGuards.checkSalesOrder(inventory, inventoryUser, processing, returned));
+
+        JsonNode changedReason = returned.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) changedReason.get("fulfilmentReturn"))
+                .put("reason", "Sales changed the Inventory reason.");
+        assertThrows(ApiException.class,
+                () -> RecordGuards.checkSalesOrder(salesManager, inventoryUser, returned, changedReason));
+
+        JsonNode resubmitted = returned.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) resubmitted).put("status", "confirmed");
+        assertThrows(ApiException.class,
+                () -> RecordGuards.checkSalesOrder(inventory, inventoryUser, returned, resubmitted));
+        assertDoesNotThrow(() -> RecordGuards.checkSalesOrder(salesManager, inventoryUser, returned, resubmitted));
+    }
+
+    @Test
+    void customerCreditNotesFollowFinanceWorkflowAndLockAfterPosting() throws Exception {
+        JsonNode pending = mapper.readTree("{\"id\":\"cn-1\",\"status\":\"pending_approval\",\"amount\":100,\"auditEntries\":[]}");
+        JsonNode approved = mapper.readTree("{\"id\":\"cn-1\",\"status\":\"approved\",\"amount\":100,\"auditEntries\":[]}");
+        JsonNode posted = mapper.readTree("{\"id\":\"cn-1\",\"status\":\"posted\",\"amount\":100,\"unappliedAmount\":20,\"auditEntries\":[]}");
+        Permissions sales = Permissions.of(List.of("salesReturn.create"));
+        Permissions finance = Permissions.of(List.of("creditNote.approve", "creditNote.post", "creditNote.return", "creditNote.void", "creditNote.refund"));
+
+        assertDoesNotThrow(() -> RecordGuards.checkCreditNote(sales, null, pending));
+        assertThrows(ApiException.class, () -> RecordGuards.checkCreditNote(clerk, null, pending));
+        assertDoesNotThrow(() -> RecordGuards.checkCreditNote(finance, pending, approved));
+        assertDoesNotThrow(() -> RecordGuards.checkCreditNote(finance, approved, posted));
+
+        JsonNode editedPosted = posted.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) editedPosted).put("amount", 90);
+        assertThrows(ApiException.class, () -> RecordGuards.checkCreditNote(finance, posted, editedPosted));
+        JsonNode refunded = posted.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) refunded).put("unappliedAmount", 0).put("refundedAmount", 20);
+        assertDoesNotThrow(() -> RecordGuards.checkCreditNote(finance, posted, refunded));
+        assertThrows(ApiException.class, () -> RecordGuards.checkCreditNote(finance, posted, null));
+    }
+
+    @Test
     void workflowTransitions() throws Exception {
         assertDoesNotThrow(() -> RecordGuards.checkJournal(clerk, null, journal("draft", 10, 10)));
         assertDoesNotThrow(() -> RecordGuards.checkJournal(clerk, journal("draft", 10, 10), journal("pending_approval", 10, 10)));

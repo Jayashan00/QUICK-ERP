@@ -152,23 +152,13 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
             permission: "sales.view",
           },
           {
-            label: "Payments Received",
-            path: "/sales/payments",
-            permission: "sales.view",
-          },
-          {
             label: "Delivery Notes",
             path: "/sales/deliveries",
             permission: "sales.view",
           },
           {
-            label: "Sales Returns",
+            label: "Customer Returns",
             path: "/sales/returns",
-            permission: "sales.view",
-          },
-          {
-            label: "Credit Notes",
-            path: "/sales/credit-notes",
             permission: "sales.view",
           },
           {
@@ -253,6 +243,15 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
             label: "Overview",
             path: "/inventory",
             permission: "inventory.view",
+          },
+          {
+            label: "Sales Fulfilment",
+            path: "/inventory/fulfilment",
+            allPermissions: [
+              "inventory.view",
+              "salesOrder.fulfillment.view",
+              "salesOrder.process",
+            ],
           },
           {
             label: "Stock Levels",
@@ -373,6 +372,8 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
         icon: DollarSign,
         children: [
           { label: "Accounting Dashboard", path: "/finance/dashboard", permission: "finance.reports.view" },
+          { label: "Invoice Approvals", path: "/finance/invoice-approvals", permission: "invoice.approve" },
+          { label: "Customer Credit Notes", path: "/finance/credit-memos", permission: "finance.receivables.view" },
           {
             label: "Chart of Accounts",
             path: "/finance/chart-of-accounts",

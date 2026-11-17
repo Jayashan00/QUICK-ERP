@@ -8,6 +8,7 @@ const AccountingImportPage = lazyPage(() => import('@/features/accounting/Accoun
 
 const pages: { path: string; section: string; permission: string }[] = [
   { path: 'dashboard', section: 'dashboard', permission: PERMISSIONS.FINANCE.REPORTS_VIEW },
+  { path: 'invoice-approvals', section: 'invoice-approvals', permission: PERMISSIONS.SALES_WORKFLOW.INVOICE_APPROVE },
   { path: 'chart-of-accounts', section: 'accounts', permission: PERMISSIONS.FINANCE.CHART_OF_ACCOUNTS_VIEW },
   { path: 'opening-balances', section: 'opening', permission: PERMISSIONS.FINANCE.CHART_OF_ACCOUNTS_VIEW },
   { path: 'journal', section: 'journals', permission: PERMISSIONS.FINANCE.JOURNALS_VIEW },

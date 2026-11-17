@@ -76,11 +76,14 @@ async function salesRows(request: ReportRequest): Promise<ReportRow[]> {
     return rows(results.flatMap((result) => result.data).map((item) => ({ id: item.id, branchId: item.branchId, opportunity: item.name, customer: item.customerName ?? '', salesperson: item.salesOwnerName ?? '', stage: item.stage, status: item.status, expectedValue: item.expectedValue, probability: item.probability, weightedValue: round(item.expectedValue * item.probability / 100) })));
   }
   const params = { ...listParams(request), customerId: filters.customerId, salespersonId: filters.userId, productId: filters.productId };
-  const [quotations, invoices, payments] = await Promise.all([
+  const [quotations, invoices] = await Promise.all([
     salesService.listQuotations(activeScope, params),
     salesService.listInvoices(activeScope, params),
-    salesService.listPayments(activeScope, params),
   ]);
+  const payments = accountingService.settlements(
+    { tenantId: scope.tenantId, branchId: scope.activeBranchId, permittedBranchIds: scope.permittedBranchIds },
+    { branchId: filters.branchId === 'all' ? undefined : filters.branchId, from: filters.dateFrom || undefined, to: filters.dateTo || undefined },
+  ).filter(item => item.kind === 'receipt' && (!filters.customerId || item.party === filters.customerId));
   if (reportId === 'quotation-conversion') return rows(quotations.data.map((item) => ({ id: item.id, date: item.quotationDate, branchId: item.branchId, reference: item.referenceNumber, customer: item.customerName ?? item.customerId, salesperson: item.salespersonName, status: item.status, totalAmount: item.totalAmount })));
   if (reportId === 'sales-by-product') {
     const grouped = new Map<string, { product: string; quantity: number; totalAmount: number }>();
@@ -96,7 +99,7 @@ async function salesRows(request: ReportRequest): Promise<ReportRow[]> {
   if (reportId === 'customer-ageing') return rows(invoices.data.filter((item) => item.outstandingAmount > 0).map((item) => ({ id: item.id, customer: item.customerName ?? item.customerId, reference: item.referenceNumber, dueDate: item.dueDate, bucket: ageBucket(item.dueDate, filters.dateTo), outstanding: item.outstandingAmount })));
   if (reportId === 'customer-statement') return rows([
     ...invoices.data.map((item) => ({ id: item.id, date: item.invoiceDate, customer: item.customerName ?? item.customerId, reference: item.referenceNumber, type: 'Invoice', debit: item.totalAmount, credit: 0, status: item.status })),
-    ...payments.data.map((item) => ({ id: item.id, date: item.paymentDate, customer: item.customerId, reference: item.referenceNumber, type: 'Payment', debit: 0, credit: item.amount, status: 'received' })),
+    ...payments.map((item) => ({ id: item.id, date: item.date, customer: item.party, reference: item.reference, type: 'Receipt', debit: 0, credit: item.amount, status: 'posted' })),
   ].sort((a, b) => String(a.date).localeCompare(String(b.date))));
   if (reportId === 'customer-outstanding') {
     const grouped = new Map<string, { customer: string; invoiceCount: number; outstanding: number }>();

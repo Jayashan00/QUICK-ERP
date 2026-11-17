@@ -6,6 +6,7 @@ import { tenantSettingsService } from '../src/features/settings/finance/services
 import { hrService } from '../src/features/hr/hrService';
 import { stockAccountingService } from '../src/features/inventory/services/stockAccountingService';
 import { fxRevaluationService } from '../src/features/accounting/fxRevaluationService';
+import { integrationSettingsService } from '../src/features/settings/integrations/services/integrationSettingsService';
 
 const scope: AccountingScope = { tenantId: 'tenant-001', branchId: 'branch-001', permittedBranchIds: ['branch-001'] };
 const other: AccountingScope = { tenantId: 'tenant-qa-other', branchId: 'branch-001', permittedBranchIds: ['branch-001'] };
@@ -24,6 +25,10 @@ assert.throws(() => fxRevaluationService.review(scope, actor, fxPosition.id));
 assert.equal(accountingService.ledger(scope).filter(row => row.reference === fxPosition.reference).length, 0);
 assert.equal(hasPermission([TENANT_PERMISSIONS.FINANCE.JOURNALS_VIEW], TENANT_PERMISSIONS.FINANCE.JOURNALS_POST), false);
 assert.equal(accountingService.accounts(other.tenantId).length, 0);
+const settlementBank = await integrationSettingsService.getSettlementBankAccount(scope.tenantId);
+assert.equal(settlementBank.ledgerAccountId, 'acct-1200');
+assert.deepEqual(accountingService.cashBankAccounts(scope.tenantId).map(account => account.id).sort(), ['acct-1100', 'acct-1200']);
+assert.throws(() => accountingService.saveAccount(scope, actor, { ...accountingService.accounts(scope.tenantId).find(account => account.id === 'acct-1200')!, active: false }), /cannot be deactivated/);
 assert.equal(accountingService.journals(other).length, 0);
 assert.equal(accountingService.handoffs(other).length, 0);
 assert.ok(accountingService.handoffs(scope).length > 0);
@@ -122,6 +127,7 @@ assert.equal(accountingService.cashFlow(scope).rows.find((row) => row.reference 
 
 const receivable = accountingService.receivables(scope).find((row) => row.outstanding > 0);
 assert.ok(receivable);
+assert.throws(() => accountingService.createSettlement(scope, actor, { branchId: receivable.branchId, date: '2026-09-28', reference: 'QA-NON-CASH', kind: 'receipt', documentId: receivable.id, party: receivable.party, amount: Math.min(10, receivable.outstanding), accountId: 'acct-1500' }), /cash or bank account/);
 assert.throws(() => accountingService.createSettlement(scope, actor, { branchId: receivable.branchId, date: '2026-09-28', reference: 'QA-OVERPAY', kind: 'receipt', documentId: receivable.id, party: receivable.party, amount: receivable.outstanding + 1, accountId: 'acct-1200' }));
 const receipt = accountingService.createSettlement(scope, actor, { branchId: receivable.branchId, date: '2026-09-28', reference: 'QA-RECEIPT', kind: 'receipt', documentId: receivable.id, party: receivable.party, amount: Math.min(100, receivable.outstanding), accountId: 'acct-1200' });
 assert.equal(receipt.reference, 'R-00001');

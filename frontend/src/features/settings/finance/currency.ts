@@ -76,6 +76,14 @@ export function useTenantCurrency() {
     return convertCurrency(amount, sourceCode, baseCurrency, exchange.rates);
   }, [exchange.rates, settings?.baseCurrency, storedCurrency]);
 
+  const convertFromBaseAmount = useCallback((amount: number, targetCurrency?: string) => {
+    const baseCurrency = settings?.baseCurrency ?? storedCurrency;
+    const targetCode = targetCurrency ?? storedCurrency ?? baseCurrency;
+    if (!baseCurrency || !targetCode || targetCode === baseCurrency) return amount;
+    const row = exchange.rates.get(targetCode);
+    return row?.base === baseCurrency ? amount * row.rate : null;
+  }, [exchange.rates, settings?.baseCurrency, storedCurrency]);
+
   return {
     currencyCode: settings?.baseCurrency,
     supportedCurrencies: settings?.supportedCurrencies ?? [],
@@ -88,6 +96,7 @@ export function useTenantCurrency() {
     formatMoneyInCurrency,
     formatWholeMoneyInCurrency,
     convertToBaseAmount,
+    convertFromBaseAmount,
     rateDate: exchange.rateDate,
     isLoading: localization.isLoading || exchange.isLoading,
     error: localization.error ?? exchange.error,

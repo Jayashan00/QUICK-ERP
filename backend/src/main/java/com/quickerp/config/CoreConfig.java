@@ -14,6 +14,8 @@ import com.quickerp.core.CollectionRule;
 import com.quickerp.core.AuthService;
 import com.quickerp.core.CoreSettings;
 import com.quickerp.core.Db;
+import com.quickerp.core.DeliveryNotePdfService;
+import com.quickerp.core.CreditNotePdfService;
 import com.quickerp.core.FileStore;
 import com.quickerp.core.Mailer;
 import com.quickerp.core.MfaService;
@@ -22,6 +24,8 @@ import com.quickerp.core.PasswordHasher;
 import com.quickerp.core.ProvisioningService;
 import com.quickerp.core.QuotationDeliveryService;
 import com.quickerp.core.SeedService;
+import com.quickerp.core.SalesOrderPdfService;
+import com.quickerp.core.SalesInvoicePdfService;
 import com.quickerp.core.StateStore;
 import com.quickerp.core.TokenService;
 import java.io.InputStream;
@@ -217,6 +221,26 @@ public class CoreConfig {
     @Bean
     public QuotationDeliveryService quotationDeliveryService(Db db, ObjectMapper mapper, AccessRules access, Mailer mailer) {
         return new QuotationDeliveryService(db, mapper, access, mailer);
+    }
+
+    @Bean
+    public SalesOrderPdfService salesOrderPdfService(Db db, ObjectMapper mapper, AccessRules access) {
+        return new SalesOrderPdfService(db, mapper, access);
+    }
+
+    @Bean
+    public DeliveryNotePdfService deliveryNotePdfService(Db db, ObjectMapper mapper, AccessRules access) {
+        return new DeliveryNotePdfService(db, mapper, access);
+    }
+
+    @Bean
+    public SalesInvoicePdfService salesInvoicePdfService(Db db, ObjectMapper mapper, AccessRules access, Mailer mailer) {
+        return new SalesInvoicePdfService(db, mapper, access, mailer);
+    }
+
+    @Bean
+    public CreditNotePdfService creditNotePdfService(Db db, ObjectMapper mapper, AccessRules access) {
+        return new CreditNotePdfService(db, mapper, access);
     }
 
     @Bean

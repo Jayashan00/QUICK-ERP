@@ -1,7 +1,6 @@
 import { registerList } from '@/core/persistence/stateRegistry';
 import {
   mockCreditNotes,
-  mockCustomerPayments,
   mockDeliveryNotes,
   mockRecurringInvoices,
   mockSalesInvoices,
@@ -11,7 +10,6 @@ import {
 } from "../mocks/sales";
 import type {
   CreditNote,
-  CustomerPayment,
   DeliveryNote,
   RecurringInvoice,
   SalesInvoice,
@@ -24,7 +22,6 @@ let quotations = structuredClone(mockSalesQuotations);
 let orders = structuredClone(mockSalesOrders);
 let deliveries = structuredClone(mockDeliveryNotes);
 let invoices = structuredClone(mockSalesInvoices);
-let payments = structuredClone(mockCustomerPayments);
 let returns = structuredClone(mockSalesReturns);
 let creditNotes = structuredClone(mockCreditNotes);
 let recurring = structuredClone(mockRecurringInvoices);
@@ -37,7 +34,6 @@ export const salesStore = {
   orders: (): SalesOrder[] => orders,
   deliveries: (): DeliveryNote[] => deliveries,
   invoices: (): SalesInvoice[] => invoices,
-  payments: (): CustomerPayment[] => payments,
   returns: (): SalesReturn[] => returns,
   creditNotes: (): CreditNote[] => creditNotes,
   recurring: (): RecurringInvoice[] => recurring,
@@ -61,15 +57,16 @@ export const salesStore = {
   },
   replaceInvoice: (index: number, item: SalesInvoice) =>
     replace(invoices, index, item),
-  insertPayment: (item: CustomerPayment) => {
-    payments = [item, ...payments];
-  },
   insertReturn: (item: SalesReturn) => {
     returns = [item, ...returns];
   },
+  replaceReturn: (index: number, item: SalesReturn) =>
+    replace(returns, index, item),
   insertCreditNote: (item: CreditNote) => {
     creditNotes = [item, ...creditNotes];
   },
+  replaceCreditNote: (index: number, item: CreditNote) =>
+    replace(creditNotes, index, item),
   insertRecurring: (item: RecurringInvoice) => {
     recurring = [item, ...recurring];
   },
@@ -82,7 +79,6 @@ registerList('sales.quotations', () => quotations, (rows) => { quotations = rows
 registerList('sales.orders', () => orders, (rows) => { orders = rows; });
 registerList('sales.deliveries', () => deliveries, (rows) => { deliveries = rows; });
 registerList('sales.invoices', () => invoices, (rows) => { invoices = rows; });
-registerList('sales.payments', () => payments, (rows) => { payments = rows; });
 registerList('sales.returns', () => returns, (rows) => { returns = rows; });
 registerList('sales.creditNotes', () => creditNotes, (rows) => { creditNotes = rows; });
 registerList('sales.recurringInvoices', () => recurring, (rows) => { recurring = rows; });

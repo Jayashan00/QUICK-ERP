@@ -9,17 +9,18 @@ import { tenantSettingsService } from '@/features/settings/finance/services/tena
 import { assertOpenAccountingPeriod, registerPeriodCloseHandler } from '@/features/settings/finance/accountingPeriodEnforcement';
 import { auditEventService } from '@/core/audit';
 import { registerList, registerMap, replaceArray } from '@/core/persistence/stateRegistry';
+import { settlementStore, type Settlement } from './settlementStore';
 
 export type AccountingScope = { tenantId: string; branchId: string; permittedBranchIds: string[] };
 export type Actor = { id: string; name: string };
 export type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
 export type JournalStatus = 'draft' | 'pending_approval' | 'approved' | 'posted' | 'rejected' | 'reversed';
 export type ScopedRecord = { id: string; tenantId: string; branchId: string; date: string; reference: string };
-export type Account = { id: string; tenantId: string; code: string; name: string; type: AccountType; parentId?: string; active: boolean; cashFlowCategory?: 'operating' | 'investing' | 'financing' };
+export type Account = { id: string; tenantId: string; code: string; name: string; type: AccountType; parentId?: string; active: boolean; cashKind?: 'cash' | 'bank'; cashFlowCategory?: 'operating' | 'investing' | 'financing' };
 export type JournalLine = { accountId: string; debit: number; credit: number; costCenterId?: string };
 export type AuditEvent = { id: string; tenantId: string; branchId: string; actorId: string; actorName: string; action: string; reference: string; at: string; remarks?: string };
 export type Journal = ScopedRecord & { status: JournalStatus; notes: string; lines: JournalLine[]; attachments: { name: string; size: number }[]; history: AuditEvent[]; source?: string; sourceReference?: string };
-export type Settlement = ScopedRecord & { kind: 'receipt' | 'payment'; documentId: string; party: string; amount: number; accountId: string };
+export type { Settlement } from './settlementStore';
 export type Expense = ScopedRecord & { category: string; amount: number; accountId: string; costCenterId?: string; notes: string; status: 'submitted' | 'approved' | 'rejected' | 'paid'; attachment?: string; history: AuditEvent[] };
 export type BankLine = ScopedRecord & { accountId: string; description: string; amount: number; matchedSettlementId?: string; status: 'unmatched' | 'matched' | 'finalized' };
 export type OpeningBalance = ScopedRecord & { accountId: string; partyId?: string; amount: number; side: 'debit' | 'credit'; history: AuditEvent[] };
@@ -40,13 +41,13 @@ let accounts: Account[] = [
   ['1000', 'Assets', 'asset'], ['1100', 'Cash on Hand', 'asset'], ['1200', 'Operating Bank', 'asset'],
   ['1300', 'Accounts Receivable', 'asset'], ['1400', 'Inventory', 'asset'], ['1500', 'Fixed Assets', 'asset'], ['2000', 'Liabilities', 'liability'],
   ['2100', 'Accounts Payable', 'liability'], ['2200', 'VAT Payable', 'liability'], ['3000', 'Owner Equity', 'equity'],
+  ['2300', 'Customer Credits', 'liability'],
   ['4000', 'Sales Revenue', 'revenue'], ['5000', 'Cost of Sales', 'expense'], ['6100', 'Office Expenses', 'expense'],
-].map(([code, name, type]) => ({ id: `acct-${code}`, tenantId: tenant, code, name, type: type as AccountType, active: true, cashFlowCategory: code === '1500' ? 'investing' as const : code === '3000' ? 'financing' as const : undefined }));
+].map(([code, name, type]) => ({ id: `acct-${code}`, tenantId: tenant, code, name, type: type as AccountType, active: true, cashKind: code === '1100' ? 'cash' as const : code === '1200' ? 'bank' as const : undefined, cashFlowCategory: code === '1500' ? 'investing' as const : code === '3000' ? 'financing' as const : undefined }));
 let journals: Journal[] = [
   { id: 'jn-001', tenantId: tenant, branchId: 'branch-001', date: '2026-09-25', reference: 'JV-2026-0001', status: 'posted', notes: 'Opening bank funding', lines: [{ accountId: 'acct-1200', debit: 50000, credit: 0 }, { accountId: 'acct-3000', debit: 0, credit: 50000 }], attachments: [], history: [], source: 'manual' },
   { id: 'jn-002', tenantId: tenant, branchId: 'branch-001', date: '2026-09-26', reference: 'JV-2026-0002', status: 'pending_approval', notes: 'Office supplies', lines: [{ accountId: 'acct-6100', debit: 480, credit: 0 }, { accountId: 'acct-1200', debit: 0, credit: 480 }], attachments: [], history: [], source: 'manual' },
 ];
-const settlements: Settlement[] = [];
 const expenses: Expense[] = [{ id: 'exp-001', tenantId: tenant, branchId: 'branch-001', date: '2026-09-26', reference: 'EXP-2026-0001', category: 'Office supplies', amount: 480, accountId: 'acct-6100', notes: 'Stationery and paper', status: 'submitted', history: [] }];
 const bankLines: BankLine[] = [
   { id: 'bank-001', tenantId: tenant, branchId: 'branch-001', date: '2026-09-25', reference: 'STMT-001', accountId: 'acct-1200', description: 'Owner transfer', amount: 50000, status: 'unmatched' },
@@ -90,22 +91,150 @@ function validateLines(lines: JournalLine[], tenantId: string) {
   if (totals.debit === 0 || totals.debit !== totals.credit) throw new Error('Journal debits and credits must balance.');
 }
 const payableRows = (scope: AccountingScope, filters: Filters = {}) => visible(purchasingStore.invoices(), scope, filters).filter((invoice) => (!filters.from || invoice.invoiceDate >= filters.from) && (!filters.to || invoice.invoiceDate <= filters.to)).map((invoice) => {
-  const paid = settlements.filter((item) => item.tenantId === scope.tenantId && item.kind === 'payment' && item.documentId === invoice.id).reduce((sum, item) => sum + item.amount, invoice.paidAmount);
-  return { id: invoice.id, branchId: invoice.branchId, reference: invoice.referenceNumber, party: invoice.supplierId, date: invoice.invoiceDate, dueDate: invoice.dueDate, total: invoice.totalAmount, paid: round(paid), outstanding: round(Math.max(0, invoice.totalAmount - paid)), status: invoice.status };
+  const paid = settlementStore.records().filter((item) => item.tenantId === scope.tenantId && item.kind === 'payment' && item.documentId === invoice.id).reduce((sum, item) => sum + (item.documentAmount ?? item.amount), invoice.paidAmount);
+  return { id: invoice.id, branchId: invoice.branchId, reference: invoice.referenceNumber, party: invoice.supplierId, currency: invoice.currency, date: invoice.invoiceDate, dueDate: invoice.dueDate, total: invoice.totalAmount, paid: round(paid), outstanding: round(Math.max(0, invoice.totalAmount - paid)), status: invoice.status };
 });
-const receivableRows = (scope: AccountingScope, filters: Filters = {}) => visible(salesStore.invoices(), scope, filters).filter((invoice) => (!filters.from || invoice.invoiceDate >= filters.from) && (!filters.to || invoice.invoiceDate <= filters.to)).map((invoice) => {
-  const paid = settlements.filter((item) => item.tenantId === scope.tenantId && item.kind === 'receipt' && item.documentId === invoice.id).reduce((sum, item) => sum + item.amount, invoice.paidAmount);
-  return { id: invoice.id, branchId: invoice.branchId, reference: invoice.referenceNumber, party: invoice.customerName ?? invoice.customerId, date: invoice.invoiceDate, dueDate: invoice.dueDate, total: invoice.totalAmount, paid: round(paid), outstanding: round(Math.max(0, invoice.totalAmount - paid)), status: invoice.status };
+const postedInvoiceStatuses = ['posted', 'sent', 'partially_paid', 'paid', 'overdue'];
+const receivableRows = (scope: AccountingScope, filters: Filters = {}) => visible(salesStore.invoices(), scope, filters).filter((invoice) => postedInvoiceStatuses.includes(invoice.status) && (!filters.from || invoice.invoiceDate >= filters.from) && (!filters.to || invoice.invoiceDate <= filters.to)).map((invoice) => {
+  const paid = invoice.paidAmount;
+  return { id: invoice.id, branchId: invoice.branchId, reference: invoice.referenceNumber, party: invoice.customerName ?? invoice.customerId, currency: invoice.currency, date: invoice.invoiceDate, dueDate: invoice.dueDate, total: invoice.totalAmount, paid: round(paid), outstanding: round(Math.max(0, invoice.outstandingAmount)), status: invoice.status };
 });
 
 export const accountingService = {
+  postSalesInvoice(scope: AccountingScope, actor: Actor, invoiceId: string, permissions: readonly string[] = []) {
+    if (!permissions.includes('*') && !permissions.includes('invoice.post')) throw new Error('You do not have permission to post sales invoices.');
+    const invoiceIndex = salesStore.invoices().findIndex((row) => row.id === invoiceId && row.tenantId === scope.tenantId && allowed(scope, row.branchId));
+    if (invoiceIndex < 0) throw new Error('Sales invoice not found.');
+    const invoice = salesStore.invoices()[invoiceIndex];
+    if (invoice.status !== 'approved') throw new Error('Only an approved invoice can be posted to Accounts Receivable.');
+    assertOpenAccountingPeriod(scope.tenantId, invoice.invoiceDate, 'post this sales invoice');
+    if (journals.some((row) => row.tenantId === scope.tenantId && row.source === 'Sales invoice' && row.sourceReference === invoice.referenceNumber && row.status !== 'reversed')) throw new Error('This invoice already has an accounting journal.');
+    const configured = this.postingDefaults(scope.tenantId).find((row) => row.source === 'sales');
+    const receivableAccount = configured?.debitAccountId ?? accounts.find((row) => row.tenantId === scope.tenantId && row.code === '1300' && row.active)?.id;
+    const revenueAccount = configured?.creditAccountId ?? accounts.find((row) => row.tenantId === scope.tenantId && row.code === '4000' && row.active)?.id;
+    const taxAccount = accounts.find((row) => row.tenantId === scope.tenantId && row.code === '2200' && row.active)?.id;
+    if (!receivableAccount || !revenueAccount || (invoice.taxAmount > 0 && !taxAccount)) throw new Error('Configure active Accounts Receivable, Sales Revenue and Output Tax accounts before posting.');
+    const revenueAmount = round(invoice.totalAmount - invoice.taxAmount);
+    const lines: JournalLine[] = [
+      { accountId: receivableAccount, debit: invoice.totalAmount, credit: 0 },
+      { accountId: revenueAccount, debit: 0, credit: revenueAmount },
+      ...(invoice.taxAmount > 0 && taxAccount ? [{ accountId: taxAccount, debit: 0, credit: invoice.taxAmount }] : []),
+    ];
+    validateLines(lines, scope.tenantId);
+    const now = new Date().toISOString();
+    const journal: Journal = {
+      id: id('sales-posting'), tenantId: invoice.tenantId, branchId: invoice.branchId,
+      date: invoice.invoiceDate, reference: `AR-${invoice.referenceNumber}`,
+      status: 'posted', notes: `Automatic posting for sales invoice ${invoice.referenceNumber}.`,
+      lines, attachments: [], history: [], source: 'Sales invoice', sourceReference: invoice.referenceNumber,
+    };
+    journals.unshift(journal);
+    salesStore.replaceInvoice(invoiceIndex, {
+      ...invoice,
+      status: 'posted',
+      deliveryStatus: invoice.deliveryStatus ?? 'not_sent',
+      collectionStatus: invoice.outstandingAmount > 0 ? 'open' : 'paid',
+      auditEntries: [...invoice.auditEntries, {
+        id: id('audit'), actorId: actor.id, actorName: actor.name, action: 'Posted to Accounts Receivable and General Ledger',
+        entityType: 'Sales Document', entityId: invoice.id, reference: invoice.referenceNumber,
+        timestamp: now, tenantId: invoice.tenantId, branchId: invoice.branchId,
+      }],
+      updatedAt: now,
+    });
+    audit({ ...scope, branchId: invoice.branchId }, actor, 'Sales invoice posted', invoice.referenceNumber, journal.reference);
+    return { invoice: salesStore.invoices()[invoiceIndex], journal };
+  },
+  postCreditNote(scope: AccountingScope, actor: Actor, creditNoteId: string, permissions: readonly string[] = []) {
+    if (!permissions.includes('*') && !permissions.includes('creditNote.post')) throw new Error('You do not have permission to post customer credit notes.');
+    const creditIndex = salesStore.creditNotes().findIndex((row) => row.id === creditNoteId && row.tenantId === scope.tenantId && allowed(scope, row.branchId));
+    if (creditIndex < 0) throw new Error('Customer credit note not found.');
+    const credit = salesStore.creditNotes()[creditIndex];
+    if (credit.status !== 'approved') throw new Error('Only an approved customer credit note can be posted.');
+    assertOpenAccountingPeriod(scope.tenantId, credit.issueDate, 'post this customer credit note');
+    if (journals.some((row) => row.tenantId === scope.tenantId && row.source === 'Customer credit note' && row.sourceReference === credit.referenceNumber && row.status !== 'reversed')) throw new Error('This credit note already has an accounting journal.');
+    const invoiceIndex = credit.invoiceId ? salesStore.invoices().findIndex((row) => row.id === credit.invoiceId && row.tenantId === scope.tenantId && row.branchId === credit.branchId) : -1;
+    const invoice = invoiceIndex >= 0 ? salesStore.invoices()[invoiceIndex] : undefined;
+    const appliedAmount = round(Math.min(credit.amount, invoice?.outstandingAmount ?? 0));
+    const unappliedAmount = round(credit.amount - appliedAmount);
+    const receivableAccount = accounts.find((row) => row.tenantId === scope.tenantId && row.code === '1300' && row.active)?.id;
+    const customerCreditAccount = accounts.find((row) => row.tenantId === scope.tenantId && row.code === '2300' && row.active)?.id;
+    const revenueAccount = accounts.find((row) => row.tenantId === scope.tenantId && row.code === '4000' && row.active)?.id;
+    const taxAccount = accounts.find((row) => row.tenantId === scope.tenantId && row.code === '2200' && row.active)?.id;
+    const taxAmount = round(credit.items.reduce((sum, line) => sum + line.taxAmount, 0));
+    const revenueAmount = round(credit.amount - taxAmount);
+    if (!revenueAccount || (taxAmount > 0 && !taxAccount) || (appliedAmount > 0 && !receivableAccount) || (unappliedAmount > 0 && !customerCreditAccount)) throw new Error('Configure active Sales Revenue, Output Tax, Accounts Receivable and Customer Credits accounts before posting.');
+    const lines: JournalLine[] = [
+      { accountId: revenueAccount, debit: revenueAmount, credit: 0 },
+      ...(taxAmount > 0 && taxAccount ? [{ accountId: taxAccount, debit: taxAmount, credit: 0 }] : []),
+      ...(appliedAmount > 0 && receivableAccount ? [{ accountId: receivableAccount, debit: 0, credit: appliedAmount }] : []),
+      ...(unappliedAmount > 0 && customerCreditAccount ? [{ accountId: customerCreditAccount, debit: 0, credit: unappliedAmount }] : []),
+    ];
+    validateLines(lines, scope.tenantId);
+    const now = new Date().toISOString();
+    const journal: Journal = { id: id('credit-posting'), tenantId: credit.tenantId, branchId: credit.branchId, date: credit.issueDate, reference: `AR-${credit.referenceNumber}`, status: 'posted', notes: `Automatic posting for customer credit note ${credit.referenceNumber}.`, lines, attachments: [], history: [], source: 'Customer credit note', sourceReference: credit.referenceNumber };
+    journals.unshift(journal);
+    if (invoice && invoiceIndex >= 0 && appliedAmount > 0) {
+      const outstandingAmount = round(Math.max(0, invoice.outstandingAmount - appliedAmount));
+      salesStore.replaceInvoice(invoiceIndex, { ...invoice, outstandingAmount, collectionStatus: outstandingAmount === 0 ? 'paid' : invoice.collectionStatus, status: outstandingAmount === 0 ? 'paid' : invoice.status, auditEntries: [...invoice.auditEntries, { id: id('audit'), actorId: actor.id, actorName: actor.name, action: 'Customer credit note applied', entityType: 'Sales Document', entityId: invoice.id, reference: invoice.referenceNumber, timestamp: now, remarks: `${credit.referenceNumber} · ${appliedAmount}`, tenantId: invoice.tenantId, branchId: invoice.branchId }], updatedAt: now });
+    }
+    salesStore.replaceCreditNote(creditIndex, { ...credit, status: 'posted', accountingStatus: 'posted', appliedAmount, unappliedAmount, postedAt: now, postedBy: actor.name, journalReference: journal.reference, approval: credit.approval, auditEntries: [...credit.auditEntries, { id: id('audit'), actorId: actor.id, actorName: actor.name, action: unappliedAmount > 0 ? 'Posted; unapplied customer credit created' : 'Posted and applied to invoice', entityType: 'Sales Document', entityId: credit.id, reference: credit.referenceNumber, timestamp: now, remarks: journal.reference, tenantId: credit.tenantId, branchId: credit.branchId }], updatedAt: now });
+    audit({ ...scope, branchId: credit.branchId }, actor, 'Customer credit note posted', credit.referenceNumber, journal.reference);
+    return { creditNote: salesStore.creditNotes()[creditIndex], journal };
+  },
+  refundCustomerCredit(scope: AccountingScope, actor: Actor, creditNoteId: string, accountId: string, permissions: readonly string[] = []) {
+    if (!permissions.includes('*') && !permissions.includes('creditNote.refund')) throw new Error('You do not have permission to refund customer credits.');
+    const creditIndex = salesStore.creditNotes().findIndex((row) => row.id === creditNoteId && row.tenantId === scope.tenantId && allowed(scope, row.branchId));
+    if (creditIndex < 0) throw new Error('Customer credit note not found.');
+    const credit = salesStore.creditNotes()[creditIndex];
+    if (credit.status !== 'posted' || credit.unappliedAmount <= 0) throw new Error('This credit note has no refundable customer credit.');
+    const cashAccount = accounts.find((row) => row.id === accountId && row.tenantId === scope.tenantId && row.active && Boolean(row.cashKind));
+    const customerCreditAccount = accounts.find((row) => row.tenantId === scope.tenantId && row.code === '2300' && row.active)?.id;
+    if (!cashAccount || !customerCreditAccount) throw new Error('Select an active company cash or bank account.');
+    const date = new Date().toISOString().slice(0, 10);
+    assertOpenAccountingPeriod(scope.tenantId, date, 'refund this customer credit');
+    const amount = credit.unappliedAmount;
+    const lines: JournalLine[] = [{ accountId: customerCreditAccount, debit: amount, credit: 0 }, { accountId: cashAccount.id, debit: 0, credit: amount }];
+    validateLines(lines, scope.tenantId);
+    const reference = `REF-${credit.referenceNumber}`;
+    journals.unshift({ id: id('credit-refund'), tenantId: credit.tenantId, branchId: credit.branchId, date, reference, status: 'posted', notes: `Refund of customer credit ${credit.referenceNumber}.`, lines, attachments: [], history: [], source: 'Customer credit refund', sourceReference: credit.referenceNumber });
+    const now = new Date().toISOString();
+    salesStore.replaceCreditNote(creditIndex, { ...credit, refundedAmount: round((credit.refundedAmount ?? 0) + amount), unappliedAmount: 0, auditEntries: [...credit.auditEntries, { id: id('audit'), actorId: actor.id, actorName: actor.name, action: 'Customer credit refunded', entityType: 'Sales Document', entityId: credit.id, reference: credit.referenceNumber, timestamp: now, remarks: `${reference} · ${amount}`, tenantId: credit.tenantId, branchId: credit.branchId }], updatedAt: now });
+    audit({ ...scope, branchId: credit.branchId }, actor, 'Customer credit refunded', credit.referenceNumber, reference);
+    return salesStore.creditNotes()[creditIndex];
+  },
+  reverseCreditNote(scope: AccountingScope, actor: Actor, creditNoteId: string, reason: string, permissions: readonly string[] = []) {
+    if (!permissions.includes('*') && !permissions.includes('creditNote.void')) throw new Error('You do not have permission to reverse customer credit notes.');
+    if (!reason.trim()) throw new Error('A reversal reason is required.');
+    const creditIndex = salesStore.creditNotes().findIndex((row) => row.id === creditNoteId && row.tenantId === scope.tenantId && allowed(scope, row.branchId));
+    if (creditIndex < 0) throw new Error('Customer credit note not found.');
+    const credit = salesStore.creditNotes()[creditIndex];
+    if (credit.status !== 'posted') throw new Error('Only a posted customer credit note can be reversed.');
+    if ((credit.refundedAmount ?? 0) > 0) throw new Error('Reverse the customer refund before reversing this credit note.');
+    const source = journals.find((row) => row.tenantId === scope.tenantId && row.source === 'Customer credit note' && row.sourceReference === credit.referenceNumber && row.status === 'posted');
+    if (!source) throw new Error('The posted credit-note journal is unavailable.');
+    const date = new Date().toISOString().slice(0, 10);
+    assertOpenAccountingPeriod(scope.tenantId, date, 'reverse this customer credit note');
+    const reversal: Journal = { ...source, id: id('credit-reversal'), date, reference: `${source.reference}-REV`, status: 'posted', source: 'Customer credit note reversal', notes: `Reversal of ${credit.referenceNumber}: ${reason.trim()}`, lines: source.lines.map((line) => ({ ...line, debit: line.credit, credit: line.debit })), attachments: [], history: [] };
+    journals.unshift(reversal);
+    source.status = 'reversed';
+    const invoiceIndex = credit.invoiceId ? salesStore.invoices().findIndex((row) => row.id === credit.invoiceId && row.tenantId === scope.tenantId && row.branchId === credit.branchId) : -1;
+    if (invoiceIndex >= 0 && credit.appliedAmount > 0) {
+      const invoice = salesStore.invoices()[invoiceIndex];
+      const outstandingAmount = round(Math.min(invoice.totalAmount - invoice.paidAmount, invoice.outstandingAmount + credit.appliedAmount));
+      salesStore.replaceInvoice(invoiceIndex, { ...invoice, outstandingAmount, status: invoice.paidAmount > 0 ? 'partially_paid' : 'posted', collectionStatus: invoice.paidAmount > 0 ? 'partially_paid' : 'open', updatedAt: new Date().toISOString() });
+    }
+    const now = new Date().toISOString();
+    salesStore.replaceCreditNote(creditIndex, { ...credit, status: 'void', accountingStatus: 'reversed', appliedAmount: 0, unappliedAmount: 0, auditEntries: [...credit.auditEntries, { id: id('audit'), actorId: actor.id, actorName: actor.name, action: 'Posted customer credit note reversed', entityType: 'Sales Document', entityId: credit.id, reference: credit.referenceNumber, timestamp: now, remarks: reason.trim(), tenantId: credit.tenantId, branchId: credit.branchId }], updatedAt: now });
+    audit({ ...scope, branchId: credit.branchId }, actor, 'Customer credit note reversed', credit.referenceNumber, reversal.reference);
+    return { creditNote: salesStore.creditNotes()[creditIndex], journal: reversal };
+  },
   vatReturns: (scope: AccountingScope, filters: Filters = {}) => vatReturns.filter((row) => row.tenantId === scope.tenantId && allowed(scope, row.branchId) && (!filters.branchId || row.branchId === filters.branchId) && (!filters.from || row.to >= filters.from) && (!filters.to || row.from <= filters.to)),
   prepareVatReturn(scope: AccountingScope, actor: Actor, input: { branchId: string; from: string; to: string }) {
     assertScope(scope, input.branchId);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.from) || !/^\d{4}-\d{2}-\d{2}$/.test(input.to) || Number.isNaN(Date.parse(input.from)) || Number.isNaN(Date.parse(input.to)) || input.from > input.to) throw new Error('Choose a valid return date range.');
     if (vatReturns.some((row) => row.tenantId === scope.tenantId && row.branchId === input.branchId && row.from === input.from && row.to === input.to)) throw new Error('A VAT return draft already exists for this branch and period.');
     const sources = this.taxPreview({ ...scope, branchId: input.branchId }, { branchId: input.branchId, from: input.from, to: input.to });
-    const outputTax = round(sources.filter((row) => row.source === 'Sales invoice').reduce((sum, row) => sum + row.taxAmount, 0));
+    const outputTax = round(sources.filter((row) => row.source === 'Sales invoice' || row.source === 'Customer credit note').reduce((sum, row) => sum + row.taxAmount, 0));
     const inputTax = round(sources.filter((row) => row.source === 'Purchase invoice').reduce((sum, row) => sum + row.taxAmount, 0));
     const row: VatReturnDraft = { id: id('vat'), tenantId: scope.tenantId, branchId: input.branchId, from: input.from, to: input.to, outputTax, inputTax, netTax: round(outputTax - inputTax), sourceCount: sources.length, status: 'draft', preparedAt: new Date().toISOString(), preparedBy: actor.name };
     vatReturns.unshift(row);
@@ -143,7 +272,7 @@ export const accountingService = {
     audit(scope, actor, 'Posting default prepared', input.source);
   },
   cashFlow(scope: AccountingScope, filters: Filters = {}) {
-    const cashAccounts = new Set(this.accounts(scope.tenantId).filter((row) => row.type === 'asset' && /cash|bank/i.test(row.name)).map((row) => row.id));
+    const cashAccounts = new Set(this.accounts(scope.tenantId).filter((row) => row.active && Boolean(row.cashKind)).map((row) => row.id));
     const lines = this.ledger(scope, filters).filter((row) => cashAccounts.has(row.accountId) && row.source !== 'Opening balance');
     const groups = { operating: 0, investing: 0, financing: 0, unclassified: 0 };
     const rows = lines.map((line) => {
@@ -158,11 +287,47 @@ export const accountingService = {
     return { rows, groups, net: round(rows.reduce((sum, row) => sum + row.amount, 0)) };
   },
   accounts: (tenantId: string) => accounts.filter((item) => item.tenantId === tenantId).sort((a, b) => a.code.localeCompare(b.code)),
+  cashBankAccounts: (tenantId: string) => accounts.filter((item) => item.tenantId === tenantId && item.active && Boolean(item.cashKind)).sort((a, b) => a.code.localeCompare(b.code)),
+  ensureSettlementBankAccount(tenantId: string, bankName: string, linkedAccountId?: string) {
+    const linked = accounts.find((item) => item.id === linkedAccountId && item.tenantId === tenantId && item.type === 'asset');
+    if (linked) {
+      linked.active = true;
+      linked.cashKind = 'bank';
+      linked.cashFlowCategory = linked.cashFlowCategory ?? 'operating';
+      return linked;
+    }
+    const existing = accounts.find((item) => item.tenantId === tenantId && item.type === 'asset' && item.cashKind === 'bank')
+      ?? accounts.find((item) => item.tenantId === tenantId && item.type === 'asset' && item.code === '1200');
+    if (existing) {
+      existing.active = true;
+      existing.cashKind = 'bank';
+      existing.cashFlowCategory = existing.cashFlowCategory ?? 'operating';
+      return existing;
+    }
+    const usedCodes = new Set(accounts.filter((item) => item.tenantId === tenantId).map((item) => item.code));
+    let sequence = 1200;
+    while (usedCodes.has(String(sequence))) sequence += 1;
+    const item: Account = { id: id('acct-bank'), tenantId, code: String(sequence), name: `${bankName.trim()} - Main Bank`, type: 'asset', active: true, cashKind: 'bank', cashFlowCategory: 'operating' };
+    accounts.unshift(item);
+    return item;
+  },
   saveAccount(scope: AccountingScope, actor: Actor, input: Omit<Account, 'id' | 'tenantId'> & { id?: string }) {
     assertScope(scope, scope.branchId);
     if (!input.code.trim() || !input.name.trim()) throw new Error('Account code and name are required.');
     if (accounts.some((item) => item.tenantId === scope.tenantId && item.code === input.code && item.id !== input.id)) throw new Error('Account code already exists.');
     if (input.parentId && !accounts.some((item) => item.id === input.parentId && item.tenantId === scope.tenantId)) throw new Error('Parent account is unavailable.');
+    if (input.cashKind && input.type !== 'asset') throw new Error('Only asset accounts can be classified as cash or bank accounts.');
+    const previous = accounts.find((item) => item.id === input.id && item.tenantId === scope.tenantId);
+    if (previous?.active && !input.active) {
+      const used = journals.some((row) => row.tenantId === scope.tenantId && row.lines.some((line) => line.accountId === previous.id))
+        || openingBalances.some((row) => row.tenantId === scope.tenantId && row.accountId === previous.id)
+        || settlementStore.records().some((row) => row.tenantId === scope.tenantId && row.accountId === previous.id)
+        || expenses.some((row) => row.tenantId === scope.tenantId && row.accountId === previous.id)
+        || bankLines.some((row) => row.tenantId === scope.tenantId && row.accountId === previous.id)
+        || referenceRecords.some((row) => row.tenantId === scope.tenantId && row.accountId === previous.id)
+        || [...(postingDefaults.get(scope.tenantId) ?? [])].some((row) => row.debitAccountId === previous.id || row.creditAccountId === previous.id);
+      if (used) throw new Error('This account has transactions or posting mappings and cannot be deactivated.');
+    }
     const item = { ...input, id: input.id ?? id('acct'), tenantId: scope.tenantId };
     accounts = [item, ...accounts.filter((existing) => existing.id !== item.id)];
     audit(scope, actor, input.id ? 'Account edited' : 'Account created', item.code);
@@ -222,7 +387,7 @@ export const accountingService = {
   },
   receivables: receivableRows,
   payables: payableRows,
-  settlements: (scope: AccountingScope, filters: Filters = {}) => visible(settlements, scope, filters),
+  settlements: (scope: AccountingScope, filters: Filters = {}) => visible(settlementStore.records(), scope, filters),
   createSettlement(scope: AccountingScope, actor: Actor, input: Omit<Settlement, 'id' | 'tenantId' | 'reference'> & { reference?: string }) {
     assertScope(scope, input.branchId);
     assertOpenAccountingPeriod(scope.tenantId, input.date, 'record this settlement');
@@ -230,11 +395,53 @@ export const accountingService = {
     if (!document) throw new Error('Select a visible invoice.');
     if (input.kind === 'payment' && !['approved', 'partially_paid', 'overdue'].includes(document.status)) throw new Error('Only approved supplier invoices can be paid.');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || Number.isNaN(Date.parse(input.date))) throw new Error('Enter a valid payment date.');
-    if (!Number.isFinite(input.amount) || input.amount <= 0 || input.amount > document.outstanding) throw new Error('Amount must be positive and cannot exceed the outstanding balance.');
-    if (!accounts.some((row) => row.id === input.accountId && row.tenantId === scope.tenantId && row.type === 'asset' && row.active)) throw new Error('Select an active cash or bank account.');
+    const documentAmount = input.documentAmount ?? input.amount;
+    if (!Number.isFinite(input.amount) || input.amount <= 0 || !Number.isFinite(documentAmount) || documentAmount <= 0 || documentAmount > document.outstanding) throw new Error('Amount must be positive and cannot exceed the outstanding balance.');
+    if (!accounts.some((row) => row.id === input.accountId && row.tenantId === scope.tenantId && row.type === 'asset' && row.active && Boolean(row.cashKind))) throw new Error('Select an active cash or bank account linked to Finance settings.');
+    if (input.kind === 'receipt') {
+      if (!salesStore.invoices().some((row) => row.id === input.documentId && row.tenantId === scope.tenantId && row.branchId === input.branchId)) throw new Error('The customer invoice is unavailable.');
+      const receivableAccount = accounts.find((row) => row.tenantId === scope.tenantId && row.code === '1300' && row.active)?.id;
+      if (!receivableAccount) throw new Error('Configure an active Accounts Receivable account before recording receipts.');
+      validateLines([{ accountId: input.accountId, debit: input.amount, credit: 0 }, { accountId: receivableAccount, debit: 0, credit: input.amount }], scope.tenantId);
+    }
     const reference = tenantSettingsService.nextDocumentNumber(scope.tenantId, input.kind);
     const item = { ...input, reference, id: id(input.kind), tenantId: scope.tenantId };
-    settlements.unshift(item);
+    settlementStore.insert(item);
+    if (input.kind === 'receipt') {
+      const invoiceIndex = salesStore.invoices().findIndex((row) => row.id === input.documentId && row.tenantId === scope.tenantId && row.branchId === input.branchId);
+      if (invoiceIndex < 0) throw new Error('The customer invoice is unavailable.');
+      const invoice = salesStore.invoices()[invoiceIndex];
+      const paidAmount = round(invoice.paidAmount + documentAmount);
+      const outstandingAmount = round(Math.max(0, invoice.outstandingAmount - documentAmount));
+      const now = new Date().toISOString();
+      salesStore.replaceInvoice(invoiceIndex, {
+        ...invoice,
+        paidAmount,
+        outstandingAmount,
+        status: outstandingAmount === 0 ? 'paid' : 'partially_paid',
+        collectionStatus: outstandingAmount === 0 ? 'paid' : 'partially_paid',
+        auditEntries: [...invoice.auditEntries, {
+          id: id('audit'), actorId: actor.id, actorName: actor.name,
+          action: outstandingAmount === 0 ? 'Paid in full' : 'Partial customer receipt allocated',
+          entityType: 'Sales Document', entityId: invoice.id, reference: invoice.referenceNumber,
+          timestamp: now, remarks: reference, tenantId: invoice.tenantId, branchId: invoice.branchId,
+        }],
+        updatedAt: now,
+      });
+      const receivableAccount = accounts.find((row) => row.tenantId === scope.tenantId && row.code === '1300' && row.active)?.id;
+      if (!receivableAccount) throw new Error('Configure an active Accounts Receivable account before recording receipts.');
+      const lines: JournalLine[] = [
+        { accountId: input.accountId, debit: input.amount, credit: 0 },
+        { accountId: receivableAccount, debit: 0, credit: input.amount },
+      ];
+      validateLines(lines, scope.tenantId);
+      journals.unshift({
+        id: id('receipt-posting'), tenantId: scope.tenantId, branchId: input.branchId,
+        date: input.date, reference: `GL-${reference}`, status: 'posted',
+        notes: `Automatic customer receipt posting for ${invoice.referenceNumber}.`, lines,
+        attachments: [], history: [], source: 'Customer receipt', sourceReference: reference,
+      });
+    }
     audit(scope, actor, input.kind === 'receipt' ? 'Customer receipt recorded' : 'Supplier payment recorded', reference);
     return item;
   },
@@ -260,7 +467,7 @@ export const accountingService = {
   bankLines: (scope: AccountingScope, filters: Filters = {}) => visible(bankLines, scope, filters),
   matchBankLine(scope: AccountingScope, actor: Actor, lineId: string, settlementId: string) {
     const line = bankLines.find((row) => row.id === lineId && row.tenantId === scope.tenantId && allowed(scope, row.branchId));
-    const settlement = settlements.find((row) => row.id === settlementId && row.tenantId === scope.tenantId && row.branchId === line?.branchId);
+    const settlement = settlementStore.records().find((row) => row.id === settlementId && row.tenantId === scope.tenantId && row.branchId === line?.branchId);
     if (!line || line.status !== 'unmatched' || !settlement || settlement.accountId !== line.accountId || round(line.amount) !== round(settlement.kind === 'receipt' ? settlement.amount : -settlement.amount)) throw new Error('Match requires the same branch, bank account and amount.');
     if (bankLines.some((row) => row.matchedSettlementId === settlementId)) throw new Error('This ERP transaction is already matched.');
     line.matchedSettlementId = settlementId;
@@ -289,7 +496,7 @@ export const accountingService = {
   dashboard(scope: AccountingScope, filters: Filters = {}) {
     const ar = receivableRows(scope, filters), ap = payableRows(scope, filters), trial = this.trialBalance(scope, filters);
     const total = (values: number[]) => round(values.reduce((sum, value) => sum + value, 0));
-    return { receivables: total(ar.map((row) => row.outstanding)), payables: total(ap.map((row) => row.outstanding)), overdue: ar.filter((row) => row.outstanding > 0 && row.dueDate < new Date().toISOString().slice(0, 10)).length, cashBank: total(trial.filter((row) => ['acct-1100', 'acct-1200'].includes(row.account.id)).map((row) => row.debit - row.credit)), expenses: total(visible(expenses, scope, filters).map((row) => row.amount)), pendingApprovals: visible(journals, scope, filters).filter((row) => row.status === 'pending_approval').length + visible(expenses, scope, filters).filter((row) => row.status === 'submitted').length };
+    return { receivables: total(ar.map((row) => row.outstanding)), payables: total(ap.map((row) => row.outstanding)), overdue: ar.filter((row) => row.outstanding > 0 && row.dueDate < new Date().toISOString().slice(0, 10)).length, cashBank: total(trial.filter((row) => Boolean(row.account.cashKind)).map((row) => row.debit - row.credit)), expenses: total(visible(expenses, scope, filters).map((row) => row.amount)), pendingApprovals: visible(journals, scope, filters).filter((row) => row.status === 'pending_approval').length + visible(expenses, scope, filters).filter((row) => row.status === 'submitted').length + visible(salesStore.creditNotes(), scope, filters).filter((row) => row.status === 'pending_approval').length };
   },
   referenceRecords: (scope: AccountingScope, category: string, filters: Filters = {}) => visible(referenceRecords, scope, filters).filter((row) => row.category === category),
   saveReferenceRecord(scope: AccountingScope, actor: Actor, input: Omit<ReferenceRecord, 'id' | 'tenantId'> & { id?: string }) {
@@ -306,9 +513,9 @@ export const accountingService = {
     const purchaseInvoices = visible(purchasingStore.invoices(), scope).map((row) => ({ source: 'Purchase invoice', reference: row.referenceNumber, branchId: row.branchId, amount: row.totalAmount, status: 'Pending mapping' }));
     const grns = visible(purchasingStore.receipts(), scope).map((row) => ({ source: 'GRN', reference: row.referenceNumber, branchId: row.branchId, amount: 0, status: 'Pending mapping' }));
     const inventory = stockAccountingService.previews(scope.tenantId, scope.permittedBranchIds).map((row) => ({ source: 'Stock movement', reference: row.reference, sourceKey: row.movementId, branchId: row.branchId, amount: row.amount ?? 0, status: row.review, stock: row }));
-    const sales = visible(salesStore.invoices(), scope).map((row) => ({ source: 'Sales invoice', reference: row.referenceNumber, branchId: row.branchId, amount: row.totalAmount, status: 'Pending mapping' }));
+    const sales = visible(salesStore.invoices(), scope).filter((row) => postedInvoiceStatuses.includes(row.status) && !journals.some((journal) => journal.tenantId === row.tenantId && journal.branchId === row.branchId && journal.source === 'Sales invoice' && journal.sourceReference === row.referenceNumber && journal.status === 'posted')).map((row) => ({ source: 'Sales invoice', reference: row.referenceNumber, branchId: row.branchId, amount: row.totalAmount, status: 'Pending mapping' }));
     const pos = scope.permittedBranchIds.flatMap((branchId) => posSalesHandoff.accounting({ tenantId: scope.tenantId, branchId }).map((row) => ({ source: 'POS sale', reference: row.saleId, branchId, amount: row.salesAmount + row.taxAmount, status: 'Pending mapping' })));
-    const payments = visible(settlements, scope).map((row) => ({ source: row.kind === 'receipt' ? 'Customer receipt' : 'Supplier payment', reference: row.reference, branchId: row.branchId, amount: row.amount, status: 'Pending journal mapping' }));
+    const payments = visible(settlementStore.records(), scope).filter((row) => !journals.some((journal) => journal.tenantId === row.tenantId && journal.branchId === row.branchId && journal.source === (row.kind === 'receipt' ? 'Customer receipt' : 'Supplier payment') && journal.sourceReference === row.reference && journal.status === 'posted')).map((row) => ({ source: row.kind === 'receipt' ? 'Customer receipt' : 'Supplier payment', reference: row.reference, branchId: row.branchId, amount: row.amount, status: 'Pending journal mapping' }));
     const approvedExpenses = visible(expenses, scope).filter((row) => row.status === 'approved' || row.status === 'paid').map((row) => ({ source: 'Expense', reference: row.reference, branchId: row.branchId, amount: row.amount, status: 'Pending journal mapping' }));
     const payroll = hrService.payrollHandoffs(scope).map((row) => ({ source: 'Payroll', reference: row.reference, branchId: row.branchId, amount: row.totalEmployerCost, status: 'Approved payroll financials awaiting journal review' }));
     const projectExpenses = projectService.expenseHandoffs(scope).map((row) => ({ source: 'Project expense', reference: row.id, branchId: row.branchId, amount: row.amount, status: 'Pending expense mapping' }));
@@ -339,9 +546,10 @@ export const accountingService = {
     });
   },
   taxPreview(scope: AccountingScope, filters: Filters = {}) {
-    const sales = visible(salesStore.invoices(), scope, filters).filter((row) => (!filters.from || row.invoiceDate >= filters.from) && (!filters.to || row.invoiceDate <= filters.to)).map((row) => ({ id: row.id, date: row.invoiceDate, reference: row.referenceNumber, source: 'Sales invoice', taxAmount: row.taxAmount }));
+    const sales = visible(salesStore.invoices(), scope, filters).filter((row) => postedInvoiceStatuses.includes(row.status) && (!filters.from || row.invoiceDate >= filters.from) && (!filters.to || row.invoiceDate <= filters.to)).map((row) => ({ id: row.id, date: row.invoiceDate, reference: row.referenceNumber, source: 'Sales invoice', taxAmount: row.taxAmount }));
+    const credits = visible(salesStore.creditNotes(), scope, filters).filter((row) => row.accountingStatus === 'posted' && (!filters.from || row.issueDate >= filters.from) && (!filters.to || row.issueDate <= filters.to)).map((row) => ({ id: row.id, date: row.issueDate, reference: row.referenceNumber, source: 'Customer credit note', taxAmount: -round(row.items.reduce((sum, line) => sum + line.taxAmount, 0)) }));
     const purchases = visible(purchasingStore.invoices(), scope, filters).filter((row) => (!filters.from || row.invoiceDate >= filters.from) && (!filters.to || row.invoiceDate <= filters.to)).map((row) => ({ id: row.id, date: row.invoiceDate, reference: row.referenceNumber, source: 'Purchase invoice', taxAmount: row.taxAmount }));
-    return [...sales, ...purchases];
+    return [...sales, ...credits, ...purchases];
   },
 };
 
@@ -352,13 +560,15 @@ registerPeriodCloseHandler('general-ledger', {
     const postedSource = (source: string, sourceReference: string) => journals.some(row => row.tenantId === tenantId && row.source === source && row.sourceReference === sourceReference && ['posted', 'reversed'].includes(row.status));
     const unmappedSales = salesStore.invoices().filter(row => row.tenantId === tenantId && row.invoiceDate >= period.startDate && row.invoiceDate <= period.endDate && !['draft', 'rejected', 'void'].includes(row.status) && !postedSource('Sales invoice', row.referenceNumber));
     const unmappedPurchases = purchasingStore.invoices().filter(row => row.tenantId === tenantId && row.invoiceDate >= period.startDate && row.invoiceDate <= period.endDate && !['draft', 'rejected', 'cancelled'].includes(row.status) && !postedSource('Purchase invoice', row.referenceNumber));
-    const unmappedSettlements = settlements.filter(row => row.tenantId === tenantId && row.date >= period.startDate && row.date <= period.endDate && !postedSource(row.kind === 'receipt' ? 'Customer receipt' : 'Supplier payment', row.reference));
+    const unmappedSettlements = settlementStore.records().filter(row => row.tenantId === tenantId && row.date >= period.startDate && row.date <= period.endDate && !postedSource(row.kind === 'receipt' ? 'Customer receipt' : 'Supplier payment', row.reference));
+    const pendingCredits = salesStore.creditNotes().filter(row => row.tenantId === tenantId && row.issueDate >= period.startDate && row.issueDate <= period.endDate && !['posted', 'void'].includes(row.status));
     const problems: string[] = [];
     if (unposted.length) problems.push(`${unposted.length} journal(s) are not posted or reversed.`);
     if (pendingExpenses.length) problems.push(`${pendingExpenses.length} expense(s) are not paid or rejected.`);
     if (unmappedSales.length) problems.push(`${unmappedSales.length} sales invoice(s) have no posted accounting journal.`);
     if (unmappedPurchases.length) problems.push(`${unmappedPurchases.length} purchase invoice(s) have no posted accounting journal.`);
     if (unmappedSettlements.length) problems.push(`${unmappedSettlements.length} settlement(s) have no posted accounting journal.`);
+    if (pendingCredits.length) problems.push(`${pendingCredits.length} customer credit note(s) are not posted or void.`);
     return problems;
   },
   close(tenantId, period, yearEnd, fiscalRange) {
@@ -407,9 +617,8 @@ registerPeriodCloseHandler('general-ledger', {
 registerMap('accounting.postingDefaults', postingDefaults);
 registerList('accounting.vatReturns', () => vatReturns, (rows) => replaceArray(vatReturns, rows));
 registerList('accounting.withholding', () => withholdingRecords, (rows) => replaceArray(withholdingRecords, rows));
-registerList('accounting.accounts', () => accounts, (rows) => { accounts = rows; });
+registerList('accounting.accounts', () => accounts, (rows) => { accounts = rows.map((account) => ({ ...account, cashKind: account.cashKind ?? (account.code === '1100' ? 'cash' as const : account.code === '1200' ? 'bank' as const : undefined) })); });
 registerList('accounting.journals', () => journals, (rows) => { journals = rows; });
-registerList('accounting.settlements', () => settlements, (rows) => replaceArray(settlements, rows));
 registerList('accounting.expenses', () => expenses, (rows) => replaceArray(expenses, rows));
 registerList('accounting.bankLines', () => bankLines, (rows) => replaceArray(bankLines, rows));
 registerList('accounting.openingBalances', () => openingBalances, (rows) => replaceArray(openingBalances, rows));
