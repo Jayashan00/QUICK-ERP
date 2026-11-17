@@ -1,4 +1,5 @@
 import { accountingService } from './accountingService';
+import { salesStore } from '@/features/sales/services/salesStore';
 import type { ModuleDashboardContext } from '@/features/dashboard/types/moduleDashboard';
 import { addList, group, recordLink, sum, timeSeries } from '@/features/dashboard/utils/moduleAnalytics';
 
@@ -24,6 +25,8 @@ export async function aggregateAccountingDashboard(context: ModuleDashboardConte
     const bucket = (due: string) => { const days = Math.floor((Date.parse(today) - Date.parse(due)) / 86400000); return days <= 0 ? 'Current' : days <= 30 ? '1-30 days' : days <= 60 ? '31-60 days' : days <= 90 ? '61-90 days' : '90+ days'; };
     output.charts.push({ id: 'ageing', title: 'Invoice Ageing', subtitle: 'Current outstanding receivables by days overdue', currency: true, data: group(rows.filter(row => row.outstanding > 0), row => bucket(row.dueDate), row => row.outstanding), to: '/finance/receivables', emptyMessage: 'No outstanding invoices.' });
     addList(context, 'Overdue Customer Invoices', overdue.sort((a, b) => a.dueDate.localeCompare(b.dueDate)).map(row => ({ id: row.id, title: row.reference, description: row.party, date: row.dueDate, amount: row.outstanding, status: 'overdue', to: recordLink('/finance/receivables', row.id) })), { to: '/finance/receivables', emptyMessage: 'No overdue customer invoices.' });
+    const credits = salesStore.creditNotes().filter(row => row.tenantId === scope.tenantId && row.branchId === scope.branchId && row.status === 'pending_approval');
+    addList(context, 'Pending Customer Credit Notes', credits.map(row => ({ id: row.id, title: row.referenceNumber, description: row.reason, date: row.issueDate, amount: row.amount, status: row.status, to: '/finance/credit-memos' })), { to: '/finance/credit-memos', emptyMessage: 'No customer credit notes are waiting for review.' });
   }
   if (can('finance.payables.view')) {
     const rows = accountingService.payables(scope, { branchId: scope.branchId });
