@@ -8,6 +8,7 @@ import { customerService } from "@/features/customers/services/customerService";
 import { opportunityService } from "@/features/crm/opportunities/services/opportunityService";
 import { productStore } from "@/features/products/services/productStore";
 import { masterDataStore } from "@/features/products/services/masterDataStore";
+import type { ProductType } from "@/features/products/types/product";
 import { warehouseService } from "@/features/inventory/services/warehouseService";
 import { inventoryWorkflowService } from "@/features/inventory/services/inventoryWorkflowService";
 import { tenantSettingsService } from "@/features/settings/finance/services/tenantSettingsService";
@@ -17,15 +18,14 @@ import type { AuditEntry } from "@/shared/types/audit";
 import type { DocumentRecord } from "@/shared/types/document-record";
 import { formatDateTime } from "@/shared/utils/formatters";
 import { documentService } from "@/features/documents/documentService";
+import { settlementStore } from '@/features/accounting/settlementStore';
 import {
-  customerPaymentSchema,
   deliverySchema,
   recurringInvoiceSchema,
   salesInvoiceSchema,
   salesOrderSchema,
   salesQuotationSchema,
   salesReturnSchema,
-  type CustomerPaymentFormValues,
   type DeliveryFormValues,
   type RecurringInvoiceFormValues,
   type SalesInvoiceFormValues,
@@ -37,7 +37,6 @@ import { salesStore } from "./salesStore";
 import type {
   CommissionSummary,
   CreditNote,
-  CustomerPayment,
   DeliveryNote,
   RecurringInvoice,
   SalesActor,
@@ -55,10 +54,15 @@ export type SalesKind =
   | "orders"
   | "deliveries"
   | "invoices"
-  | "payments"
   | "returns"
   | "creditNotes"
   | "recurring";
+export type InvoiceWorkflowAction =
+  | "submit"
+  | "approve"
+  | "return"
+  | "send"
+  | "void";
 export interface SalesListParams {
   search?: string;
   customerId?: string;
@@ -96,10 +100,26 @@ export interface SalesCustomerOption {
   deliveryAddress: string;
   email: string;
 }
-interface QuotationPdfResponse {
+interface SalesPdfResponse {
   fileName: string;
   contentType: "application/pdf";
   base64: string;
+}
+export interface PdfCurrencyOptions {
+  currency: string;
+  multiplier: number;
+}
+const pdfCurrencyQuery = ({ currency, multiplier }: PdfCurrencyOptions) => {
+  if (!/^[A-Z]{3}$/.test(currency) || !Number.isFinite(multiplier) || multiplier <= 0) {
+    throw new Error("The system currency conversion rate is unavailable.");
+  }
+  return new URLSearchParams({ currency, multiplier: String(multiplier) }).toString();
+};
+interface InvoiceDeliveryResponse {
+  reference: string;
+  recipientEmail: string;
+  fileName: string;
+  sentAt: string;
 }
 export interface SalespersonOption {
   id: string;
@@ -110,12 +130,14 @@ export interface SalesProductOption {
   id: string;
   name: string;
   sku: string;
+  type: ProductType;
   sellingPrice: number;
   taxCode?: string;
   pricesIncludeTax: boolean;
   trackInventory: boolean;
   trackByBatch: boolean;
   trackBySerialNumber: boolean;
+  trackExpiry: boolean;
   uomCode: string;
   uomName: string;
   quantityDecimalPlaces: number;
@@ -409,23 +431,30 @@ export const salesService = {
   async listInvoices(scope: TenantBranchScope, params: SalesListParams) {
     requireScope(scope, params.permittedBranchIds);
     await wait();
+    const today = new Date().toISOString().slice(0, 10);
+    const invoices = salesStore.invoices().map((item) => {
+      const collectionStatus = item.outstandingAmount <= 0
+        ? "paid" as const
+        : item.dueDate < today
+          ? "overdue" as const
+          : item.paidAmount > 0
+            ? "partially_paid" as const
+            : "open" as const;
+      return {
+        ...item,
+        collectionStatus,
+        status: collectionStatus === "overdue" && ["posted", "sent", "partially_paid", "overdue"].includes(item.status)
+          ? "overdue" as const
+          : item.status,
+      };
+    });
     return list(
-      salesStore.invoices(),
+      invoices,
       scope,
       params,
       (item) => item.customerId,
       () => undefined,
       (item) => item.salespersonId,
-    );
-  },
-  async listPayments(scope: TenantBranchScope, params: SalesListParams) {
-    requireScope(scope, params.permittedBranchIds);
-    await wait();
-    return list(
-      salesStore.payments(),
-      scope,
-      params,
-      (item) => item.customerId,
     );
   },
   async listReturns(scope: TenantBranchScope, params: SalesListParams) {
@@ -531,12 +560,14 @@ export const salesService = {
             id: item.id,
             name: item.name,
             sku: item.sku,
+            type: item.type,
             sellingPrice: item.sellingPrice,
             taxCode: item.taxCode,
             pricesIncludeTax: item.pricesIncludeTax,
             trackInventory: item.trackInventory,
             trackByBatch: item.trackByBatch,
             trackBySerialNumber: item.trackBySerialNumber,
+            trackExpiry: item.trackExpiry,
             uomCode: uom?.code ?? "",
             uomName: uom?.name ?? "Unit",
             quantityDecimalPlaces: uom?.decimalPlaces ?? 2,
@@ -826,6 +857,7 @@ export const salesService = {
     scope: TenantBranchScope,
     permitted: string[],
     id: string,
+    pdfCurrency: PdfCurrencyOptions,
   ): Promise<SalesQuotation> {
     requireScope(scope, permitted);
     const index = salesStore
@@ -846,7 +878,7 @@ export const salesService = {
       );
     }
     const { data } = await apiClient.post<SalesQuotation>(
-      `/sales/quotations/${encodeURIComponent(id)}/email`,
+      `/sales/quotations/${encodeURIComponent(id)}/email?${pdfCurrencyQuery(pdfCurrency)}`,
     );
     if (
       data.id !== id ||
@@ -865,6 +897,7 @@ export const salesService = {
     scope: TenantBranchScope,
     permitted: string[],
     id: string,
+    pdfCurrency: PdfCurrencyOptions,
   ): Promise<{ fileName: string; blob: Blob }> {
     requireScope(scope, permitted);
     const quotation = salesStore
@@ -879,8 +912,8 @@ export const salesService = {
     if (!isBackendEnabled()) {
       throw new Error("Real quotation PDF printing requires backend mode.");
     }
-    const { data } = await apiClient.get<QuotationPdfResponse>(
-      `/sales/quotations/${encodeURIComponent(id)}/pdf`,
+    const { data } = await apiClient.get<SalesPdfResponse>(
+      `/sales/quotations/${encodeURIComponent(id)}/pdf?${pdfCurrencyQuery(pdfCurrency)}`,
     );
     if (!data.fileName || data.contentType !== "application/pdf" || !data.base64) {
       throw new Error("The server returned an invalid quotation PDF.");
@@ -891,6 +924,176 @@ export const salesService = {
       fileName: data.fileName,
       blob: new Blob([bytes], { type: data.contentType }),
     };
+  },
+
+  async orderPdf(
+    scope: TenantBranchScope,
+    permitted: string[],
+    id: string,
+    pdfCurrency: PdfCurrencyOptions,
+  ): Promise<{ fileName: string; blob: Blob }> {
+    requireScope(scope, permitted);
+    const order = salesStore
+      .orders()
+      .find(
+        (item) =>
+          item.id === id &&
+          item.tenantId === scope.tenantId &&
+          permitted.includes(item.branchId),
+      );
+    if (!order) throw new Error("Sales order not found.");
+    if (!isBackendEnabled()) {
+      throw new Error("Real sales order PDF printing requires backend mode.");
+    }
+    const { data } = await apiClient.get<SalesPdfResponse>(
+      `/sales/orders/${encodeURIComponent(id)}/pdf?${pdfCurrencyQuery(pdfCurrency)}`,
+    );
+    if (!data.fileName || data.contentType !== "application/pdf" || !data.base64) {
+      throw new Error("The server returned an invalid sales order PDF.");
+    }
+    const binary = globalThis.atob(data.base64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return {
+      fileName: data.fileName,
+      blob: new Blob([bytes], { type: data.contentType }),
+    };
+  },
+
+  async deliveryPdf(
+    scope: TenantBranchScope,
+    permitted: string[],
+    id: string,
+  ): Promise<{ fileName: string; blob: Blob }> {
+    requireScope(scope, permitted);
+    const delivery = salesStore
+      .deliveries()
+      .find(
+        (item) =>
+          item.id === id &&
+          item.tenantId === scope.tenantId &&
+          permitted.includes(item.branchId),
+      );
+    if (!delivery) throw new Error("Delivery note not found.");
+    if (!isBackendEnabled()) {
+      throw new Error("Real delivery-note PDF printing requires backend mode.");
+    }
+    const { data } = await apiClient.get<SalesPdfResponse>(
+      `/sales/deliveries/${encodeURIComponent(id)}/pdf`,
+    );
+    if (!data.fileName || data.contentType !== "application/pdf" || !data.base64) {
+      throw new Error("The server returned an invalid delivery-note PDF.");
+    }
+    const binary = globalThis.atob(data.base64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return {
+      fileName: data.fileName,
+      blob: new Blob([bytes], { type: data.contentType }),
+    };
+  },
+
+  async invoicePdf(
+    scope: TenantBranchScope,
+    permitted: string[],
+    id: string,
+    pdfCurrency: PdfCurrencyOptions,
+  ): Promise<{ fileName: string; blob: Blob }> {
+    requireScope(scope, permitted);
+    const invoice = salesStore
+      .invoices()
+      .find(
+        (item) =>
+          item.id === id &&
+          item.tenantId === scope.tenantId &&
+          permitted.includes(item.branchId),
+      );
+    if (!invoice) throw new Error("Invoice not found.");
+    if (!isBackendEnabled()) {
+      throw new Error("Real invoice PDF viewing requires backend mode.");
+    }
+    const { data } = await apiClient.get<SalesPdfResponse>(
+      `/sales/invoices/${encodeURIComponent(id)}/pdf?${pdfCurrencyQuery(pdfCurrency)}`,
+    );
+    if (!data.fileName || data.contentType !== "application/pdf" || !data.base64) {
+      throw new Error("The server returned an invalid invoice PDF.");
+    }
+    const binary = globalThis.atob(data.base64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return {
+      fileName: data.fileName,
+      blob: new Blob([bytes], { type: data.contentType }),
+    };
+  },
+
+  async creditNotePdf(
+    scope: TenantBranchScope,
+    permitted: string[],
+    id: string,
+    pdfCurrency: PdfCurrencyOptions,
+  ): Promise<{ fileName: string; blob: Blob }> {
+    requireScope(scope, permitted);
+    const credit = salesStore.creditNotes().find((item) =>
+      item.id === id && item.tenantId === scope.tenantId && permitted.includes(item.branchId));
+    if (!credit) throw new Error("Customer credit note not found.");
+    if (!isBackendEnabled()) throw new Error("Real credit note PDF viewing requires backend mode.");
+    const { data } = await apiClient.get<SalesPdfResponse>(
+      `/sales/credit-notes/${encodeURIComponent(id)}/pdf?${pdfCurrencyQuery(pdfCurrency)}`,
+    );
+    if (!data.fileName || data.contentType !== "application/pdf" || !data.base64)
+      throw new Error("The server returned an invalid credit note PDF.");
+    const binary = globalThis.atob(data.base64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return { fileName: data.fileName, blob: new Blob([bytes], { type: data.contentType }) };
+  },
+
+  async emailInvoice(
+    scope: TenantBranchScope,
+    permitted: string[],
+    id: string,
+    actor: SalesActor,
+    pdfCurrency: PdfCurrencyOptions,
+  ): Promise<SalesInvoice> {
+    requireScope(scope, permitted);
+    const index = salesStore.invoices().findIndex(
+      (item) => item.id === id && item.tenantId === scope.tenantId && permitted.includes(item.branchId),
+    );
+    if (index < 0) throw new Error("Invoice not found.");
+    const current = salesStore.invoices()[index];
+    if (!["posted", "sent", "partially_paid", "paid", "overdue"].includes(current.status))
+      throw new Error("Only a posted invoice can be emailed to the customer.");
+    if (!isBackendEnabled())
+      throw new Error("Real invoice email delivery requires backend mode and configured SMTP settings.");
+    let data: InvoiceDeliveryResponse;
+    try {
+      ({ data } = await apiClient.post<InvoiceDeliveryResponse>(
+        `/sales/invoices/${encodeURIComponent(id)}/email?${pdfCurrencyQuery(pdfCurrency)}`,
+      ));
+    } catch (error) {
+      const failedAt = new Date().toISOString();
+      salesStore.replaceInvoice(index, {
+        ...current,
+        deliveryStatus: "failed",
+        auditEntries: [...current.auditEntries, audit(current, "Invoice email delivery failed", actor)],
+        updatedAt: failedAt,
+      });
+      throw error;
+    }
+    if (data.reference !== current.referenceNumber || !data.recipientEmail || !data.sentAt)
+      throw new Error("The server returned an invalid invoice delivery result.");
+    const delivered: SalesInvoice = {
+      ...current,
+      status: current.status === "posted" ? "sent" : current.status,
+      deliveryStatus: "sent",
+      sentAt: data.sentAt,
+      sentBy: actor.name,
+      sentTo: data.recipientEmail,
+      auditEntries: [
+        ...current.auditEntries,
+        audit(current, "Invoice emailed to customer", actor, data.recipientEmail),
+      ],
+      updatedAt: data.sentAt,
+    };
+    salesStore.replaceInvoice(index, delivered);
+    return delivered;
   },
 
   async createOrder(
@@ -908,15 +1111,19 @@ export const salesService = {
       scope.tenantId,
       data.salespersonId,
     );
-    await validateWarehouse(
-      scope.tenantId,
-      permitted,
-      data.branchId,
-      data.warehouseId,
-    );
-    data.items.forEach((item) =>
+    const products = data.items.map((item) =>
       requireProduct(scope.tenantId, item.productId),
     );
+    if (products.some((product) => product.type !== "service")) {
+      if (!data.warehouseId)
+        throw new Error("A warehouse is required when the order contains products.");
+      await validateWarehouse(
+        scope.tenantId,
+        permitted,
+        data.branchId,
+        data.warehouseId,
+      );
+    }
 
     const existingSourceOrder = sourceQuotationId
       ? salesStore
@@ -982,14 +1189,14 @@ export const salesService = {
           item.tenantId === scope.tenantId &&
           permitted.includes(item.branchId),
       );
-    if (!quotation || quotation.status !== "accepted")
-      throw new Error("Only accepted quotations can be converted to an order.");
+    if (!quotation || !["sent", "accepted"].includes(quotation.status))
+      throw new Error("Only sent or accepted quotations can be converted to an order.");
     const customer = await validateCustomer(
       scope,
       quotation.branchId,
       quotation.customerId,
     );
-    return this.createOrder(
+    const order = await this.createOrder(
       scope,
       permitted,
       {
@@ -1019,6 +1226,17 @@ export const salesService = {
       actor,
       quotation.id,
     );
+    if (quotation.status === "sent") {
+      await this.transitionQuotation(
+        scope,
+        permitted,
+        quotation.id,
+        "accept",
+        actor,
+        `Accepted while converting to ${order.referenceNumber}.`,
+      );
+    }
+    return order;
   },
   async updateOrder(
     scope: TenantBranchScope,
@@ -1038,20 +1256,27 @@ export const salesService = {
       );
     if (index < 0) throw new Error("Sales order not found.");
     const current = salesStore.orders()[index];
-    if (current.status !== "draft")
-      throw new Error("Only draft sales orders can be edited.");
+    if (!["draft", "returned_to_sales"].includes(current.status))
+      throw new Error("Only draft or inventory-returned sales orders can be edited.");
     assertBranch(permitted, data.branchId);
     await validateCustomer(scope, data.branchId, data.customerId);
     const salesperson = await validateSalesperson(
       scope.tenantId,
       data.salespersonId,
     );
-    await validateWarehouse(
-      scope.tenantId,
-      permitted,
-      data.branchId,
-      data.warehouseId,
+    const products = data.items.map((item) =>
+      requireProduct(scope.tenantId, item.productId),
     );
+    if (products.some((product) => product.type !== "service")) {
+      if (!data.warehouseId)
+        throw new Error("A warehouse is required when the order contains products.");
+      await validateWarehouse(
+        scope.tenantId,
+        permitted,
+        data.branchId,
+        data.warehouseId,
+      );
+    }
     const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.orderDate });
     const next: SalesOrder = {
       ...current,
@@ -1074,9 +1299,23 @@ export const salesService = {
     scope: TenantBranchScope,
     permitted: string[],
     id: string,
-    action: "confirm" | "process" | "cancel",
+    action: "confirm" | "process" | "return_to_sales" | "resubmit" | "cancel",
     actor: SalesActor,
+    permissions: readonly string[] = [],
+    remarks?: string,
   ) {
+    const requiredPermission =
+      action === "confirm" || action === "resubmit"
+        ? "salesOrder.confirm"
+        : action === "process" || action === "return_to_sales"
+          ? "salesOrder.process"
+          : undefined;
+    if (
+      requiredPermission &&
+      !permissions.includes("*") &&
+      !permissions.includes(requiredPermission)
+    )
+      throw new Error(`You do not have permission to ${action} sales orders.`);
     const index = salesStore
       .orders()
       .findIndex(
@@ -1090,23 +1329,53 @@ export const salesService = {
     const expected = {
       confirm: "draft",
       process: "confirmed",
+      return_to_sales: ["confirmed", "processing"],
+      resubmit: "returned_to_sales",
       cancel: "draft",
     } as const;
-    if (current.status !== expected[action])
+    const expectedStatus = expected[action];
+    if (Array.isArray(expectedStatus) ? !expectedStatus.includes(current.status as "confirmed" | "processing") : current.status !== expectedStatus)
       throw new Error("Invalid sales order status transition.");
+    const returnReason = remarks?.trim();
+    if (action === "return_to_sales" && (!returnReason || returnReason.length < 5))
+      throw new Error("Enter a return reason of at least 5 characters for Sales.");
     const status = {
       confirm: "confirmed",
       process: "processing",
+      return_to_sales: "returned_to_sales",
+      resubmit: "confirmed",
       cancel: "cancelled",
     } as const;
+    const now = new Date().toISOString();
     const next: SalesOrder = {
       ...current,
       status: status[action],
+      ...(action === "return_to_sales"
+        ? {
+            fulfilmentReturn: {
+              reason: returnReason!,
+              returnedAt: now,
+              returnedBy: actor.id,
+              returnedByName: actor.name,
+              previousStatus: current.status as "confirmed" | "processing",
+            },
+          }
+        : {}),
       auditEntries: [
         ...current.auditEntries,
-        audit(current, status[action], actor),
+        audit(
+          current,
+          action === "return_to_sales"
+            ? "Returned to Sales by Inventory"
+            : action === "resubmit"
+              ? "Resubmitted to Inventory"
+              : status[action],
+          actor,
+          returnReason,
+          [{ field: "status", before: current.status, after: status[action] }],
+        ),
       ],
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     };
     salesStore.replaceOrder(index, next);
     return next;
@@ -1117,7 +1386,13 @@ export const salesService = {
     permitted: string[],
     values: DeliveryFormValues,
     actor: SalesActor,
+    permissions: readonly string[] = [],
   ) {
+    if (
+      !permissions.includes("*") &&
+      !permissions.includes("delivery.create")
+    )
+      throw new Error("You do not have permission to complete deliveries.");
     requireScope(scope, permitted);
     const data = deliverySchema.parse(values);
     const orderIndex = salesStore
@@ -1199,6 +1474,7 @@ export const salesService = {
         locationId: data.locationId,
         batchReference: item.batchReference,
         serialReferences: item.serialReferences,
+        expiryDate: item.expiryDate,
       })),
     });
     const delivery: DeliveryNote = {
@@ -1288,6 +1564,21 @@ export const salesService = {
         throw new Error(
           "The selected order does not match the customer and branch.",
         );
+      const serviceOnly = Boolean(order.items.length) && order.items.every(
+        (item) => requireProduct(scope.tenantId, item.productId).type === "service",
+      );
+      if (order.status !== "delivered" && !(order.status === "confirmed" && serviceOnly))
+        throw new Error(
+          "Only delivered sales orders or confirmed service-only orders can be converted to an invoice.",
+        );
+      if (
+        salesStore
+          .invoices()
+          .some((item) => item.salesOrderId === order.id && item.status !== "void")
+      )
+        throw new Error(
+          `Invoice already exists for sales order ${order.referenceNumber}.`,
+        );
       if (
         data.deliveryNoteId &&
         !salesStore
@@ -1320,6 +1611,8 @@ export const salesService = {
       notes: data.notes || undefined,
       salespersonName: salesperson.name,
       status: "draft",
+      deliveryStatus: "not_sent",
+      collectionStatus: "open",
       items,
       ...amount,
       paidAmount: 0,
@@ -1344,12 +1637,152 @@ export const salesService = {
     salesStore.insertInvoice(invoice);
     return invoice;
   },
+  async updateInvoice(
+    scope: TenantBranchScope,
+    permitted: string[],
+    id: string,
+    values: SalesInvoiceFormValues,
+    actor: SalesActor,
+    permissions: string[],
+  ) {
+    requireScope(scope, permitted);
+    if (!permissions.includes("*") && !permissions.includes("invoice.edit"))
+      throw new Error("You do not have permission to edit returned invoices.");
+    const index = salesStore
+      .invoices()
+      .findIndex(
+        (item) =>
+          item.id === id &&
+          item.tenantId === scope.tenantId &&
+          permitted.includes(item.branchId),
+      );
+    if (index < 0) throw new Error("Sales invoice not found.");
+    const current = salesStore.invoices()[index];
+    if (current.status !== "returned")
+      throw new Error("Only an invoice returned by Finance can be edited.");
+    const data = salesInvoiceSchema.parse({
+      ...values,
+      paymentTerms:
+        values.paymentTerms ||
+        tenantSettingsService.requirePaymentTerm(scope.tenantId).code,
+    });
+    if (
+      data.customerId !== current.customerId ||
+      data.branchId !== current.branchId ||
+      data.salespersonId !== current.salespersonId ||
+      (data.salesOrderId || undefined) !== current.salesOrderId ||
+      (data.deliveryNoteId || undefined) !== current.deliveryNoteId ||
+      data.currency !== current.currency
+    )
+      throw new Error(
+        "The source order, delivery, customer, branch, salesperson and currency cannot be changed on a returned invoice.",
+      );
+    assertOpenAccountingPeriod(
+      scope.tenantId,
+      data.invoiceDate,
+      "edit this sales invoice",
+    );
+    await validateCustomer(scope, current.branchId, current.customerId);
+    await validateSalesperson(scope.tenantId, current.salespersonId);
+    data.items.forEach((item) =>
+      requireProduct(scope.tenantId, item.productId),
+    );
+    const items = lineItems(data.items, {
+        tenantId: scope.tenantId,
+        date: data.invoiceDate,
+      }),
+      amount = totals(items),
+      payment = tenantSettingsService.calculatePaymentDueDate(
+        scope.tenantId,
+        data.invoiceDate,
+        data.paymentTerms,
+      ),
+      now = new Date().toISOString();
+    const updated: SalesInvoice = {
+      ...current,
+      ...data,
+      salesOrderId: current.salesOrderId,
+      deliveryNoteId: current.deliveryNoteId,
+      notes: data.notes || undefined,
+      paymentTerms: payment.term.code,
+      dueDate: payment.dueDate,
+      status: "returned",
+      items,
+      ...amount,
+      outstandingAmount: amount.totalAmount,
+      auditEntries: [
+        ...current.auditEntries,
+        audit(current, "Returned invoice edited", actor),
+      ],
+      updatedAt: now,
+    };
+    salesStore.replaceInvoice(index, updated);
+    return updated;
+  },
+  async createInvoiceFromOrder(
+    scope: TenantBranchScope,
+    permitted: string[],
+    orderId: string,
+    actor: SalesActor,
+  ) {
+    requireScope(scope, permitted);
+    const order = salesStore
+      .orders()
+      .find(
+        (item) =>
+          item.id === orderId &&
+          item.tenantId === scope.tenantId &&
+          permitted.includes(item.branchId),
+      );
+    if (!order) throw new Error("Sales order not found.");
+    const completedDeliveries = salesStore
+      .deliveries()
+      .filter(
+        (item) =>
+          item.salesOrderId === order.id &&
+          item.tenantId === scope.tenantId &&
+          item.status === "completed",
+      );
+    const invoiceDate = new Date().toISOString().slice(0, 10);
+    return this.createInvoice(
+      scope,
+      permitted,
+      {
+        customerId: order.customerId,
+        branchId: order.branchId,
+        salespersonId: order.salespersonId,
+        salesOrderId: order.id,
+        deliveryNoteId:
+          completedDeliveries.length === 1
+            ? completedDeliveries[0].id
+            : undefined,
+        invoiceDate,
+        dueDate: invoiceDate,
+        paymentTerms: order.paymentTerms,
+        currency: order.currency,
+        notes: order.notes
+          ? `Created from ${order.referenceNumber}. ${order.notes}`
+          : `Created from ${order.referenceNumber}.`,
+        items: order.items.map((item) => ({
+          productId: item.productId,
+          variantId: item.variantId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          discountPercent: item.discountPercent,
+          taxCode: item.taxCode,
+          taxPercent: item.taxPercent,
+        })),
+      },
+      actor,
+    );
+  },
   async transitionInvoice(
     scope: TenantBranchScope,
     permitted: string[],
     id: string,
-    action: "approve" | "send" | "void",
+    action: InvoiceWorkflowAction,
     actor: SalesActor,
+    permissions: string[],
     remarks?: string,
   ) {
     const index = salesStore
@@ -1362,117 +1795,81 @@ export const salesService = {
       );
     if (index < 0) throw new Error("Sales invoice not found.");
     const current = salesStore.invoices()[index];
-    const expected = {
-      approve: "draft",
-      send: "approved",
-      void: "draft",
-    } as const;
-    if (current.status !== expected[action])
+    const requiredPermission: Record<InvoiceWorkflowAction, string> = {
+      submit: "invoice.submit",
+      approve: "invoice.approve",
+      return: "invoice.return",
+      send: "invoice.send",
+      void: "invoice.void",
+    };
+    if (
+      !permissions.includes("*") &&
+      !permissions.includes(requiredPermission[action])
+    )
+      throw new Error("You do not have permission to complete this invoice action.");
+    const expected: Record<InvoiceWorkflowAction, SalesInvoice["status"][]> = {
+      submit: ["draft", "returned"],
+      approve: ["pending_approval"],
+      return: ["pending_approval"],
+      send: ["posted", "partially_paid", "paid", "overdue"],
+      void: ["draft", "returned"],
+    };
+    if (!expected[action].includes(current.status))
       throw new Error("Invalid invoice status transition.");
-    const status = { approve: "approved", send: "sent", void: "void" } as const;
+    if (["return", "void"].includes(action) && !remarks?.trim())
+      throw new Error("A reason is required for this invoice action.");
+    if (
+      action === "approve" &&
+      current.createdBy === actor.id &&
+      actor.roleName?.trim().toLowerCase() !== "administrator"
+    )
+      throw new Error("The invoice creator cannot approve their own invoice.");
+    const status: Record<InvoiceWorkflowAction, SalesInvoice["status"]> = {
+      submit: "pending_approval",
+      approve: "approved",
+      return: "returned",
+      send: "sent",
+      void: "void",
+    };
+    const approvalStatus =
+      action === "approve"
+        ? "approved"
+        : action === "return"
+          ? "rejected"
+          : "pending";
     const next: SalesInvoice = {
       ...current,
-      status: status[action],
+      status: action === "send" && current.status !== "posted" ? current.status : status[action],
+      deliveryStatus: action === "send" ? "sent" : current.deliveryStatus,
+      sentAt: action === "send" ? new Date().toISOString() : current.sentAt,
+      sentBy: action === "send" ? actor.name : current.sentBy,
       approval:
-        action === "approve"
+        ["submit", "approve", "return"].includes(action)
           ? {
               ...current.approval,
-              status: "approved",
+              status: approvalStatus,
+              submittedAt:
+                action === "submit"
+                  ? new Date().toISOString()
+                  : current.approval.submittedAt,
+              submittedBy:
+                action === "submit" ? actor.name : current.approval.submittedBy,
               history: [
                 ...current.approval.history,
-                approval("approved", actor, remarks),
+                approval(approvalStatus, actor, remarks),
               ],
             }
           : current.approval,
       outstandingAmount: action === "void" ? 0 : current.outstandingAmount,
       auditEntries: [
         ...current.auditEntries,
-        audit(current, status[action], actor, remarks),
+        audit(current, action === "send" ? "Invoice recorded as sent" : status[action], actor, remarks),
       ],
       updatedAt: new Date().toISOString(),
     };
     salesStore.replaceInvoice(index, next);
     return next;
   },
-  async receivePayment(
-    scope: TenantBranchScope,
-    permitted: string[],
-    values: CustomerPaymentFormValues,
-    actor: SalesActor,
-  ) {
-    const data = customerPaymentSchema.parse(values);
-    assertOpenAccountingPeriod(scope.tenantId, data.paymentDate, "receive this customer payment");
-    const index = salesStore
-      .invoices()
-      .findIndex(
-        (item) =>
-          item.id === data.invoiceId &&
-          item.tenantId === scope.tenantId &&
-          permitted.includes(item.branchId),
-      );
-    if (index < 0) throw new Error("Sales invoice not found.");
-    const invoice = salesStore.invoices()[index];
-    if (
-      !["approved", "sent", "partially_paid", "overdue"].includes(
-        invoice.status,
-      )
-    )
-      throw new Error("This invoice is not available for payment.");
-    if (data.amount > invoice.outstandingAmount)
-      throw new Error("Payment cannot exceed the outstanding invoice balance.");
-    const now = new Date().toISOString(),
-      remainingBalance = invoice.outstandingAmount - data.amount;
-    const payment: CustomerPayment = {
-      id: `customer-payment-${crypto.randomUUID().slice(0, 8)}`,
-      tenantId: scope.tenantId,
-      branchId: invoice.branchId,
-      referenceNumber: tenantSettingsService.nextDocumentNumber(scope.tenantId, "payment"),
-      customerId: invoice.customerId,
-      ...data,
-      invoiceId: invoice.id,
-      externalReference: data.externalReference || undefined,
-      remainingBalance,
-      accountingStatus: "prepared",
-      receivedBy: actor.id,
-      receivedByName: actor.name,
-      auditEntries: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-    payment.auditEntries = [
-      {
-        id: `audit-${crypto.randomUUID().slice(0, 8)}`,
-        actorId: actor.id,
-        actorName: actor.name,
-        action: "Payment received and accounting handoff prepared",
-        entityType: "Customer Payment",
-        entityId: payment.id,
-        reference: payment.referenceNumber,
-        timestamp: now,
-        tenantId: payment.tenantId,
-        branchId: payment.branchId,
-      },
-    ];
-    salesStore.insertPayment(payment);
-    salesStore.replaceInvoice(index, {
-      ...invoice,
-      paidAmount: invoice.paidAmount + data.amount,
-      outstandingAmount: remainingBalance,
-      status: remainingBalance === 0 ? "paid" : "partially_paid",
-      auditEntries: [
-        ...invoice.auditEntries,
-        audit(
-          invoice,
-          remainingBalance === 0 ? "Paid in full" : "Partial payment received",
-          actor,
-          payment.referenceNumber,
-        ),
-      ],
-      updatedAt: now,
-    });
-    return payment;
-  },
-
   async completeReturn(
     scope: TenantBranchScope,
     permitted: string[],
@@ -1546,9 +1943,8 @@ export const salesService = {
         );
     });
     const now = new Date().toISOString(),
-      returnReference = reference("SRET", salesStore.returns().length),
-      usable = data.items.filter((item) => item.condition === "usable");
-    if (usable.length)
+      returnReference = reference("SRET", salesStore.returns().length);
+    if (data.items.length)
       inventoryWorkflowService.apply(scope, permitted, {
         source: "return",
         referenceNumber: returnReference,
@@ -1556,7 +1952,7 @@ export const salesService = {
         userId: actor.id,
         userName: actor.name,
         notes: data.reason,
-        lines: usable.map((item) => ({
+        lines: data.items.map((item) => ({
           productId: item.productId,
           variantId: item.variantId || undefined,
           quantity: item.quantity,
@@ -1564,10 +1960,13 @@ export const salesService = {
           locationId: data.locationId,
           batchReference: item.batchReference,
           serialReferences: item.serialReferences,
-          condition: "sellable",
+          condition: item.condition === "usable" ? "sellable" : "damaged",
         })),
       });
-    const orderLines = order.items;
+    const sourceInvoice = data.invoiceId
+      ? salesStore.invoices().find((item) => item.id === data.invoiceId)
+      : undefined;
+    const orderLines = sourceInvoice?.items ?? order.items;
     const creditLines = data.items.map((item) => {
       const source = orderLines.find(
         (line) =>
@@ -1622,7 +2021,7 @@ export const salesService = {
       updatedAt: now,
     };
     salesReturn.auditEntries = [
-      audit(salesReturn, "Return completed; usable stock restored", actor),
+      audit(salesReturn, "Customer return completed; usable stock restored and damaged stock quarantined", actor),
     ];
     const credit: CreditNote = {
       id: creditId,
@@ -1637,20 +2036,27 @@ export const salesService = {
       issueDate: now.slice(0, 10),
       reason: data.reason,
       currency: order.currency,
-      status: "prepared",
+      status: "pending_approval",
       amount: creditAmount,
-      accountingStatus: "prepared",
+      accountingStatus: "pending",
+      appliedAmount: 0,
+      unappliedAmount: 0,
       items: creditLines,
       createdBy: actor.id,
       createdByName: actor.name,
-      approval: { status: "approved", history: [] },
+      approval: {
+        status: "pending",
+        submittedAt: now,
+        submittedBy: actor.name,
+        history: [approval("pending", actor, `Created from ${returnReference}`)],
+      },
       auditEntries: [],
       attachments: [],
       createdAt: now,
       updatedAt: now,
     };
     credit.auditEntries = [
-      audit(credit, "Credit note and accounting handoff prepared", actor),
+      audit(credit, "Submitted to Finance from customer return", actor),
     ];
     const returnedOrder: SalesOrder = {
       ...order,
@@ -1672,6 +2078,63 @@ export const salesService = {
     salesStore.insertCreditNote(credit);
     salesStore.replaceOrder(orderIndex, returnedOrder);
     return { salesReturn, creditNote: credit };
+  },
+
+  async transitionCreditNote(
+    scope: TenantBranchScope,
+    permitted: string[],
+    id: string,
+    action: "approve" | "return" | "resubmit" | "void",
+    actor: SalesActor,
+    permissions: string[],
+    remarks?: string,
+  ) {
+    const index = salesStore.creditNotes().findIndex((item) =>
+      item.id === id && item.tenantId === scope.tenantId && permitted.includes(item.branchId));
+    if (index < 0) throw new Error("Customer credit note not found.");
+    const current = salesStore.creditNotes()[index];
+    const required: Record<typeof action, string> = {
+      approve: "creditNote.approve",
+      return: "creditNote.return",
+      resubmit: "salesReturn.create",
+      void: "creditNote.void",
+    };
+    if (!permissions.includes("*") && !permissions.includes(required[action]))
+      throw new Error("You do not have permission to complete this credit note action.");
+    const allowed: Record<typeof action, CreditNote["status"][]> = {
+      approve: ["pending_approval"],
+      return: ["pending_approval"],
+      resubmit: ["returned"],
+      void: ["pending_approval", "returned", "approved"],
+    };
+    if (!allowed[action].includes(current.status)) throw new Error("Invalid credit note status transition.");
+    if (["return", "void"].includes(action) && !remarks?.trim()) throw new Error("A reason is required.");
+    const status: CreditNote["status"] = action === "approve" ? "approved"
+      : action === "return" ? "returned"
+        : action === "resubmit" ? "pending_approval" : "void";
+    const approvalStatus: ApprovalStatus = action === "approve" ? "approved"
+      : action === "return" ? "rejected" : "pending";
+    const now = new Date().toISOString();
+    const next: CreditNote = {
+      ...current,
+      status,
+      returnReason: action === "return" ? remarks?.trim() : action === "resubmit" ? undefined : current.returnReason,
+      approval: action === "void" ? current.approval : {
+        ...current.approval,
+        status: approvalStatus,
+        submittedAt: action === "resubmit" ? now : current.approval.submittedAt,
+        submittedBy: action === "resubmit" ? actor.name : current.approval.submittedBy,
+        history: [...current.approval.history, approval(approvalStatus, actor, remarks)],
+      },
+      auditEntries: [...current.auditEntries, audit(current,
+        action === "approve" ? "Approved by Finance"
+          : action === "return" ? "Returned to Sales"
+            : action === "resubmit" ? "Resubmitted to Finance" : "Voided before posting",
+        actor, remarks)],
+      updatedAt: now,
+    };
+    salesStore.replaceCreditNote(index, next);
+    return next;
   },
 
   async createRecurring(
@@ -1779,7 +2242,7 @@ export const salesService = {
         commissionRate,
         preparedCommission: (collectedSales * commissionRate) / 100,
         payrollStatus: (() => {
-          const payments = salesStore.payments().filter(payment => payment.tenantId === scope.tenantId && permitted.includes(payment.branchId) && rows.some(invoice => invoice.id === payment.invoiceId));
+          const payments = settlementStore.records().filter(payment => payment.kind === 'receipt' && payment.tenantId === scope.tenantId && permitted.includes(payment.branchId) && rows.some(invoice => invoice.id === payment.documentId));
           const handoffs = hrService.commissions({ tenantId: scope.tenantId, branchId: scope.branchId, permittedBranchIds: permitted }).filter(item => item.salespersonId === salespersonId);
           if (!handoffs.length) return 'not_handed_off' as const;
           if (handoffs.length < payments.length || handoffs.some(item => item.status === 'rejected')) return 'partial' as const;
@@ -1818,6 +2281,7 @@ export const salesService = {
         tenantId: string;
         branchId: string;
         referenceNumber: string;
+        status?: string;
         attachments?: DocumentRecord[];
         updatedAt: string;
       }>
@@ -1826,7 +2290,6 @@ export const salesService = {
       orders: salesStore.orders(),
       deliveries: salesStore.deliveries(),
       invoices: salesStore.invoices(),
-      payments: salesStore.payments(),
       returns: salesStore.returns(),
       creditNotes: salesStore.creditNotes(),
       recurring: salesStore.recurring(),
@@ -1839,6 +2302,8 @@ export const salesService = {
     );
     if (!item || !item.attachments)
       throw new Error("Sales document is unavailable for attachments.");
+    if (kind === "orders" && item.status !== "draft")
+      throw new Error("Documents can only be uploaded while the sales order is in draft status.");
     const document: DocumentRecord = await documentService.upload(
       { tenantId: scope.tenantId, branchId: item.branchId, permittedBranchIds: permitted }, permissions,
       { id: uploadedBy, name: uploadedBy }, file,
@@ -1858,7 +2323,6 @@ export const salesService = {
       orders: this.listOrders,
       deliveries: this.listDeliveries,
       invoices: this.listInvoices,
-      payments: this.listPayments,
       returns: this.listReturns,
       creditNotes: this.listCreditNotes,
       recurring: this.listRecurring,

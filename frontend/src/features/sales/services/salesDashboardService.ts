@@ -2,15 +2,17 @@ import { salesService } from './salesService';
 import type { ModuleDashboardContext } from '@/features/dashboard/types/moduleDashboard';
 import { addList, group, ranked, recordLink, sum, timeSeries } from '@/features/dashboard/utils/moduleAnalytics';
 import { previousRange, trend } from '@/features/dashboard/utils/period';
+import { settlementStore } from '@/features/accounting/settlementStore';
 
 export async function aggregateSalesDashboard(context: ModuleDashboardContext) {
   const { scope, params, can, output, inPeriod, today, request } = context;
   if (!can('sales.view')) return;
-  const [invoicePage, quotationPage, orderPage, deliveryPage, paymentPage] = await Promise.all([
-    salesService.listInvoices(scope, params), salesService.listQuotations(scope, params), salesService.listOrders(scope, params), salesService.listDeliveries(scope, params), salesService.listPayments(scope, params),
+  const [invoicePage, quotationPage, orderPage, deliveryPage] = await Promise.all([
+    salesService.listInvoices(scope, params), salesService.listQuotations(scope, params), salesService.listOrders(scope, params), salesService.listDeliveries(scope, params),
   ]);
-  const invoices = invoicePage.data, quotations = quotationPage.data, orders = orderPage.data, deliveries = deliveryPage.data, payments = paymentPage.data;
-  const issued = invoices.filter(row => !['draft', 'void'].includes(row.status));
+  const invoices = invoicePage.data, quotations = quotationPage.data, orders = orderPage.data, deliveries = deliveryPage.data;
+  const payments = settlementStore.records().filter(row => row.kind === 'receipt' && row.tenantId === scope.tenantId && scope.permittedBranchIds.includes(row.branchId) && (!params.branchId || row.branchId === params.branchId));
+  const issued = invoices.filter(row => ['posted', 'sent', 'partially_paid', 'paid', 'overdue'].includes(row.status));
   const selected = issued.filter(row => inPeriod(row.invoiceDate));
   const sales = sum(selected, row => row.totalAmount);
   const previous = previousRange(request.dateFrom, request.dateTo);
@@ -22,8 +24,8 @@ export async function aggregateSalesDashboard(context: ModuleDashboardContext) {
     { label: 'Outstanding amount', value: sum(issued, row => row.outstandingAmount), format: 'currency', to: '/sales/invoices', description: 'Current invoice balances' },
   ];
   output.charts.push(
-    { id: 'trend', title: 'Sales & Collections Trend', subtitle: 'Invoice value and payments received in selected period', kind: 'area', wide: true, currency: true, primaryLabel: 'Invoiced', secondaryLabel: 'Collected', data: timeSeries(context, [...issued.map(row => ({ date: row.invoiceDate, invoiced: row.totalAmount, collected: 0 })), ...payments.map(row => ({ date: row.paymentDate, invoiced: 0, collected: row.amount }))], row => row.date, row => row.invoiced, row => row.collected), to: '/sales/invoices', emptyMessage: 'No sales or payments recorded for this period.' },
-    { id: 'pipeline', title: 'Sales Pipeline', subtitle: 'Document activity in selected period; stages are not conversion cohorts', data: [{ label: 'Quotations', value: quotations.filter(row => inPeriod(row.quotationDate)).length }, { label: 'Approved quotes', value: quotations.filter(row => inPeriod(row.quotationDate) && ['approved', 'sent', 'accepted'].includes(row.status)).length }, { label: 'Orders', value: orders.filter(row => inPeriod(row.orderDate)).length }, { label: 'Deliveries', value: deliveries.filter(row => inPeriod(row.createdAt)).length }, { label: 'Invoices', value: selected.length }, { label: 'Payments', value: payments.filter(row => inPeriod(row.paymentDate)).length }] },
+    { id: 'trend', title: 'Sales & Collections Trend', subtitle: 'Invoice value and Finance receipts in selected period', kind: 'area', wide: true, currency: true, primaryLabel: 'Invoiced', secondaryLabel: 'Collected', data: timeSeries(context, [...issued.map(row => ({ date: row.invoiceDate, invoiced: row.totalAmount, collected: 0 })), ...payments.map(row => ({ date: row.date, invoiced: 0, collected: row.amount }))], row => row.date, row => row.invoiced, row => row.collected), to: '/sales/invoices', emptyMessage: 'No sales or receipts recorded for this period.' },
+    { id: 'pipeline', title: 'Sales Pipeline', subtitle: 'Document activity in selected period; stages are not conversion cohorts', data: [{ label: 'Quotations', value: quotations.filter(row => inPeriod(row.quotationDate)).length }, { label: 'Approved quotes', value: quotations.filter(row => inPeriod(row.quotationDate) && ['approved', 'sent', 'accepted'].includes(row.status)).length }, { label: 'Orders', value: orders.filter(row => inPeriod(row.orderDate)).length }, { label: 'Deliveries', value: deliveries.filter(row => inPeriod(row.createdAt)).length }, { label: 'Invoices', value: selected.length }, { label: 'Receipts', value: payments.filter(row => inPeriod(row.date)).length }] },
     { id: 'invoices', title: 'Invoice Status', subtitle: 'Invoice statuses in selected period', kind: 'donut', data: group(invoices.filter(row => inPeriod(row.invoiceDate)), row => row.status), to: '/sales/invoices' },
     { id: 'orders', title: 'Order Status', subtitle: 'Orders dated in selected period', data: group(orders.filter(row => inPeriod(row.orderDate)), row => row.status), to: '/sales/orders' },
     { id: 'customers', title: 'Top Customers', subtitle: 'Top 5 customers by invoiced value in selected period', currency: true, data: ranked(group(selected, row => row.customerName ?? row.customerId, row => row.totalAmount)), to: '/sales/invoices' },
@@ -35,6 +37,9 @@ export async function aggregateSalesDashboard(context: ModuleDashboardContext) {
     ...orders.filter(row => ['confirmed', 'processing', 'partially_delivered'].includes(row.status)).map(row => ({ id: row.id, title: row.referenceNumber, description: 'Delivery pending', status: row.status, to: recordLink('/sales/orders', row.id, row.referenceNumber) })),
   ], { emptyMessage: 'No overdue invoices, approvals, or deliveries require attention.' });
   addList(context, 'Recent Sales', [...selected].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate)).map(row => ({ id: row.id, title: row.referenceNumber, description: row.customerName ?? row.customerId, amount: row.totalAmount, date: row.invoiceDate, status: row.status, to: recordLink('/sales/invoices', row.id, row.referenceNumber) })), { subtitle: 'Latest 5 invoices in selected period', to: '/sales/invoices', wide: true, emptyMessage: 'No sales recorded for this period.' });
-  output.workflowDescription = 'Opportunity > Quotation > Approval > Order > Delivery > Invoice > Payment';
-  output.workflow = ['quotations', 'orders', 'deliveries', 'invoices', 'payments', 'credit-notes'].map(path => ({ label: path.replace('-', ' '), to: `/sales/${path}` }));
+  output.workflowDescription = 'Opportunity > Quotation > Approval > Order > Delivery > Invoice > Finance receipt';
+  output.workflow = [
+    ...['quotations', 'orders', 'deliveries', 'invoices', 'credit-notes'].map(path => ({ label: path.replace('-', ' '), to: `/sales/${path}` })),
+    { label: 'accounts receivable', to: '/finance/accounts-receivable' },
+  ];
 }
