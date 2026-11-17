@@ -44,6 +44,11 @@ const InventoryDashboardPage = lazyPage(() =>
     default: InventoryDashboardPage,
   })),
 );
+const SalesFulfilmentPage = lazyPage(() =>
+  import("@/features/inventory").then(({ SalesFulfilmentPage }) => ({
+    default: SalesFulfilmentPage,
+  })),
+);
 const StockBalancesPage = lazyPage(() =>
   import("@/features/inventory").then(({ StockBalancesPage }) => ({
     default: StockBalancesPage,
@@ -250,6 +255,21 @@ export const inventoryRoutes: RouteObject[] = [
     element: (
       <RequirePermission permission={PERMISSIONS.INVENTORY.VIEW}>
         <InventoryDashboardPage />
+      </RequirePermission>
+    ),
+  },
+  {
+    path: "inventory/fulfilment",
+    element: (
+      <RequirePermission
+        allOf={[
+          PERMISSIONS.INVENTORY.VIEW,
+          PERMISSIONS.SALES_WORKFLOW.FULFILLMENT_VIEW,
+          PERMISSIONS.SALES_WORKFLOW.ORDER_PROCESS,
+          PERMISSIONS.SALES_WORKFLOW.DELIVERY_CREATE,
+        ]}
+      >
+        <SalesFulfilmentPage />
       </RequirePermission>
     ),
   },

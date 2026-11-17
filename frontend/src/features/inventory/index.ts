@@ -6,6 +6,7 @@ export * from "./services/stockWorkflowService";
 export * from "./services/inventoryExportService";
 export * from "./services/inventoryWorkflowService";
 export * from "./pages/InventoryDashboardPage";
+export * from "./pages/SalesFulfilmentPage";
 export * from "./pages/StockBalancesPage";
 export * from "./pages/ProductStockDetailPage";
 export * from "./pages/BatchTrackingPage";
