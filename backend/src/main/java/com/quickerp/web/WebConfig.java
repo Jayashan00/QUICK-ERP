@@ -23,7 +23,8 @@ public class WebConfig implements WebMvcConfigurer {
                 .addPathPatterns("/auth/me", "/auth/change-password", "/auth/logout", "/auth/logout-all",
                         "/auth/mfa", "/auth/mfa/setup", "/auth/mfa/enable", "/auth/mfa/disable",
                         "/state", "/state/**", "/users/**", "/platform/**", "/files", "/ai/**",
-                        "/sales/quotations/**");
+                        "/sales/quotations/**", "/sales/orders/**", "/sales/invoices/**",
+                        "/sales/deliveries/**", "/sales/credit-notes/**");
     }
 
     @Override

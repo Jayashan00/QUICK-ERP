@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -48,14 +47,15 @@ public final class QuotationDeliveryService {
     }
 
     /** Builds the same tenant-scoped PDF used by email delivery without changing quotation state. */
-    public PdfDocument pdf(Principal principal, String quotationId) {
+    public PdfDocument pdf(Principal principal, String quotationId, String systemCurrency, BigDecimal multiplier) {
         if (principal.superAdmin()) throw ApiException.forbidden("Super administrators cannot print tenant quotations.");
         if (quotationId == null || quotationId.isBlank()) throw ApiException.badRequest("A quotation is required.");
         PreparedDelivery prepared = db.tx(connection -> preparePdf(connection, principal, quotationId.trim()));
-        return new PdfDocument(safeFileName(prepared.reference()) + ".pdf", createPdf(prepared));
+        PdfCurrencyDisplay display = PdfCurrencyDisplay.resolve(systemCurrency, multiplier, prepared.currency());
+        return new PdfDocument(safeFileName(prepared.reference()) + ".pdf", createPdf(prepared, display));
     }
 
-    public JsonNode deliver(Principal principal, String quotationId) {
+    public JsonNode deliver(Principal principal, String quotationId, String systemCurrency, BigDecimal multiplier) {
         if (principal.superAdmin()) throw ApiException.forbidden("Super administrators cannot send tenant quotations.");
         if (quotationId == null || quotationId.isBlank()) throw ApiException.badRequest("A quotation is required.");
         if (!mailer.configured()) {
@@ -68,7 +68,8 @@ public final class QuotationDeliveryService {
         String fileName = safeFileName(prepared.reference()) + ".pdf";
 
         try {
-            byte[] pdf = createPdf(prepared);
+            PdfCurrencyDisplay display = PdfCurrencyDisplay.resolve(systemCurrency, multiplier, prepared.currency());
+            byte[] pdf = createPdf(prepared, display);
             String subject = "Quotation " + prepared.reference() + " from " + prepared.companyName();
             String body = "Hello " + prepared.customerName() + ",\n\n"
                     + "Please find quotation " + prepared.reference() + " attached as a PDF.\n"
@@ -342,7 +343,7 @@ public final class QuotationDeliveryService {
                 principal.tenantId(), AUDIT_EVENTS, eventId, json, principal.userId(), "quotation-email");
     }
 
-    private byte[] createPdf(PreparedDelivery quote) {
+    private byte[] createPdf(PreparedDelivery quote, PdfCurrencyDisplay display) {
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PdfWriter writer = new PdfWriter(document);
             writer.heading(quote.companyName());
@@ -357,13 +358,13 @@ public final class QuotationDeliveryService {
             writer.line(String.format(Locale.ROOT, "%-34s %8s %14s %14s", "Description", "Qty", "Unit price", "Total"));
             for (QuoteLine line : quote.lines()) {
                 writer.line(String.format(Locale.ROOT, "%-34s %8s %14s %14s", truncate(line.name(), 34),
-                        decimal(line.quantity()), money(line.unitPrice(), quote.currency()), money(line.total(), quote.currency())));
+                        decimal(line.quantity()), display.money(line.unitPrice()), display.money(line.total())));
             }
             writer.space();
-            writer.line("Subtotal: " + money(quote.subtotal(), quote.currency()));
-            writer.line("Discount: " + money(quote.discount(), quote.currency()));
-            writer.line("Tax: " + money(quote.tax(), quote.currency()));
-            writer.bold("Total: " + money(quote.total(), quote.currency()));
+            writer.line("Subtotal: " + display.money(quote.subtotal()));
+            writer.line("Discount: " + display.money(quote.discount()));
+            writer.line("Tax: " + display.money(quote.tax()));
+            writer.bold("Total: " + display.money(quote.total()));
             if (quote.terms() != null && !quote.terms().isBlank()) {
                 writer.space();
                 writer.bold("Terms");
@@ -394,9 +395,6 @@ public final class QuotationDeliveryService {
         return value.isNumber() ? value.decimalValue() : BigDecimal.ZERO;
     }
 
-    private static String money(BigDecimal value, String currency) {
-        return value.setScale(2, RoundingMode.HALF_UP).toPlainString() + (currency.isBlank() ? "" : " " + currency);
-    }
 
     private static String decimal(BigDecimal value) {
         return value.stripTrailingZeros().toPlainString();
