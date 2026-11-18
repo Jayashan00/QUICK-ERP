@@ -11,7 +11,7 @@ const departmentMap: Record<string, { id: string; name: string }> = {
   Sales: { id: 'dept-002', name: 'Sales & Business Development' },
   Finance: { id: 'dept-004', name: 'Finance & Accounting' },
   'Human Resources': { id: 'dept-005', name: 'Human Resources' },
-  Operations: { id: 'dept-006', name: 'Supply Chain & Logistics' },
+  Operations: { id: 'dept-003', name: 'Administration & Operations' },
 };
 const designationMap: Record<string, string> = {
   'System Administrator': 'des-001',

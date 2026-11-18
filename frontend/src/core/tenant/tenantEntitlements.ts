@@ -80,7 +80,7 @@ export const tenantEntitlementService = {
 const permissionModuleAliases: Record<string, TenantModule> = {
   hr: 'hr', payroll: 'hr', employees: 'hr', inventory: 'inventory', stock: 'stock', warehouses: 'inventory',
   crm: 'crm', leads: 'crm', opportunities: 'crm', customers: 'customers', suppliers: 'suppliers',
-  products: 'products', sales: 'sales', quotation: 'sales', salesOrder: 'sales', delivery: 'sales', invoice: 'sales', payment: 'sales', salesReturn: 'sales',
+  products: 'products', sales: 'sales', quotation: 'sales', salesOrder: 'sales', delivery: 'sales', invoice: 'sales', payment: 'sales', salesReturn: 'sales', creditNote: 'sales',
   pos: 'pos', purchases: 'purchases', purchasing: 'purchases', purchase: 'purchases', rfq: 'purchases', grn: 'purchases', purchaseInvoice: 'purchases',
   finance: 'finance', accounting: 'finance', projects: 'projects', storefront: 'web_store', reports: 'reports',
   documents: 'documents', notifications: 'notifications', notices: 'notifications', notificationPreferences: 'notifications',
@@ -143,7 +143,7 @@ export function moduleForPath(path: string): TenantModule | null {
     ['/hr', 'hr'], ['/inventory', 'inventory'], ['/stock', 'stock'], ['/crm', 'crm'], ['/customers', 'customers'],
     ['/suppliers', 'suppliers'], ['/products', 'products'], ['/sales', 'sales'], ['/purchases', 'purchases'],
     ['/accounting', 'finance'], ['/finance', 'finance'], ['/projects', 'projects'], ['/pos', 'pos'], ['/storefront', 'web_store'],
-    ['/reports', 'reports'], ['/documents', 'documents'], ['/notifications', 'notifications'], ['/settings', 'settings'],
+    ['/documents', 'documents'], ['/notifications', 'notifications'], ['/settings', 'settings'],
   ];
   return mappings.find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`))?.[1] ?? null;
 }
