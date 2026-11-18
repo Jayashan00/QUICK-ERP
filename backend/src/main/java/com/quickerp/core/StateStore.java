@@ -310,6 +310,16 @@ public final class StateStore {
     private Set<String> allowedBranches(Connection connection, Principal principal) throws SQLException {
         if (principal.superAdmin()) return Set.of();
         Set<String> result = new LinkedHashSet<>();
+        if (isTenantAdministrator(principal)) {
+            try (PreparedStatement statement = Sql.prepare(connection,
+                    "SELECT record_id FROM erp_records WHERE tenant_id = ? AND collection = 'core.branches' "
+                            + "AND NOT deleted AND COALESCE(data->>'isActive', 'true') = 'true'",
+                    principal.tenantId());
+                 ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) result.add(rows.getString(1));
+            }
+            if (!result.isEmpty()) return result;
+        }
         try (PreparedStatement statement = Sql.prepare(connection,
                 "SELECT profile FROM app_users WHERE id = ? AND tenant_id = ?", principal.userId(), principal.tenantId());
              ResultSet rows = statement.executeQuery()) {
@@ -693,6 +703,11 @@ public final class StateStore {
             }
 
             @Override
+            public List<JsonNode> orders() {
+                return new ArrayList<>(load.apply(WEB_ORDERS).values());
+            }
+
+            @Override
             public List<JsonNode> taxes() {
                 return new ArrayList<>(load.apply("settings.taxes").values());
             }
@@ -947,6 +962,12 @@ public final class StateStore {
         }
         if (tenantScope && RecordGuards.CREDIT_NOTES.equals(change.collection()) && !principal.superAdmin()) {
             guardCreditNote(connection, permissions, tenant, change);
+        }
+        if (tenantScope && RecordGuards.FLASH_SALES.equals(change.collection()) && !principal.superAdmin()) {
+            guardFlashSale(connection, principal, permissions, tenant, change);
+        }
+        if (tenantScope && RecordGuards.PURCHASE_REQUESTS.equals(change.collection()) && !principal.superAdmin()) {
+            guardPurchaseRequest(connection, principal, permissions, tenant, change);
         }
         if (tenantScope && change.collection().startsWith("notifications.")) {
             guardNotificationChange(connection, principal, permissions, tenant, change);
@@ -1233,6 +1254,30 @@ public final class StateStore {
     private void guardCreditNote(Connection connection, Permissions permissions, String tenant, Change change) throws SQLException {
         JsonNode stored = storedData(connection, tenant, RecordGuards.CREDIT_NOTES, change.recordId());
         RecordGuards.checkCreditNote(permissions, stored, change.isDelete() ? null : change.data());
+    }
+
+    private void guardFlashSale(Connection connection, Principal principal, Permissions permissions, String tenant, Change change) throws SQLException {
+        String recordId = change.recordId();
+        if (ORDER_RECORD.equals(recordId)) return;
+        if (isReserved(recordId)) throw ApiException.badRequest("Flash sales must be saved one by one.");
+        JsonNode incoming = change.isDelete() ? null : change.data();
+        if (incoming != null && !recordId.equals(Sql.text(incoming, "id"))) throw ApiException.badRequest("The flash sale id does not match its content.");
+        if (incoming != null && !allowedBranches(connection, principal).contains(Sql.text(incoming, "branchId"))) throw ApiException.forbidden("The flash sale branch is not permitted.");
+        JsonNode product = incoming == null ? null : storedData(connection, tenant, RecordGuards.PRODUCTS, Sql.text(incoming, "productId"));
+        JsonNode stored = storedData(connection, tenant, RecordGuards.FLASH_SALES, recordId);
+        RecordGuards.checkFlashSale(permissions, principal, tenant, product, stored, incoming, collectionRecords(connection, tenant, RecordGuards.FLASH_SALES).values());
+    }
+
+    private void guardPurchaseRequest(Connection connection, Principal principal, Permissions permissions, String tenant, Change change) throws SQLException {
+        String recordId = change.recordId();
+        if (ORDER_RECORD.equals(recordId)) return;
+        if (isReserved(recordId)) throw ApiException.badRequest("Purchase requests must be saved one by one.");
+        JsonNode incoming = change.isDelete() ? null : change.data();
+        if (incoming != null && !recordId.equals(Sql.text(incoming, "id"))) throw ApiException.badRequest("The purchase request id does not match its content.");
+        if (incoming != null && !tenant.equals(Sql.text(incoming, "tenantId"))) throw ApiException.forbidden("The purchase request belongs to another organization.");
+        if (incoming != null && !allowedBranches(connection, principal).contains(Sql.text(incoming, "branchId"))) throw ApiException.forbidden("The purchase request branch is not permitted.");
+        JsonNode stored = storedData(connection, tenant, RecordGuards.PURCHASE_REQUESTS, recordId);
+        RecordGuards.checkPurchaseRequest(permissions, principal, stored, incoming);
     }
 
     /** Customer contact details must identify only one customer inside a tenant. */
