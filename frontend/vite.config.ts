@@ -12,6 +12,13 @@ export default defineConfig({
     },
   },
   server: {
+    proxy: {
+      '/website-api/': {
+        target: 'http://127.0.0.1:8011',
+        // Keep the browser's host so the backend can validate the request origin.
+        changeOrigin: false,
+      },
+    },
     port: 3000,
     open: false,
   },

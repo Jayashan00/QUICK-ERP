@@ -103,6 +103,7 @@ done
 curl -fs http://127.0.0.1:8000/api/v1/health >/dev/null || { echo; echo "The backend did not start. See: sudo journalctl -u quickerp-backend -n 100"; exit 1; }
 
 step "8/8 Web server${DOMAIN:+ and HTTPS for $DOMAIN}"
+bash "$PACKAGE/website-inquiries/install.sh"
 sed "s/__SERVER_NAME__/${DOMAIN:-_}/" "$HERE/nginx-quickerp.conf" > /etc/nginx/sites-available/quickerp
 ln -sf /etc/nginx/sites-available/quickerp /etc/nginx/sites-enabled/quickerp
 rm -f /etc/nginx/sites-enabled/default

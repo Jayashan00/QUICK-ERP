@@ -1,0 +1,18 @@
+[Unit]
+Description=VYRO website inquiry inbox
+After=network.target
+
+[Service]
+DynamicUser=yes
+StateDirectory=vyro-inquiries
+StateDirectoryMode=0700
+Environment=INQUIRY_DATA_DIR=/var/lib/vyro-inquiries
+ExecStart=/usr/bin/node /opt/vyro-inquiries/server.mjs
+Restart=on-failure
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

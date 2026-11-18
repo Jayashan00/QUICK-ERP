@@ -106,13 +106,18 @@ function PreviewPanel({ kind }: { kind: string }) {
 function InquiryForm() {
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  const [sending, setSending] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (sending) return;
     const form = event.currentTarget;
     const formData = new FormData(form);
     setNotice(null);
+    setSending(true);
     try {
-      saveInquiry({
+      await saveInquiry({
+        contact_check: String(formData.get('contact_check') ?? ''),
         name: String(formData.get('name') ?? ''),
         email: String(formData.get('email') ?? ''),
         company: String(formData.get('company') ?? ''),
@@ -121,15 +126,17 @@ function InquiryForm() {
         message: String(formData.get('message') ?? ''),
       });
       form.reset();
-      setNotice({ type: 'success', text: 'Saved in this browser’s preview inbox. This form hasn’t sent your inquiry to VYRO.' });
+      setNotice({ type: 'success', text: 'Thank you. Your inquiry has been sent to the VYRO team.' });
     } catch (error) {
-      setNotice({ type: 'error', text: error instanceof Error ? error.message : 'We could not save this preview inquiry.' });
+      setNotice({ type: 'error', text: error instanceof Error ? error.message : 'We could not send your inquiry. Please try again.' });
+    } finally {
+      setSending(false);
     }
   }
 
   return (
     <form className="vyro-inquiry-form" onSubmit={handleSubmit}>
-      <div className="vyro-honeypot" aria-hidden="true"><label>Leave this field empty<input name="website" tabIndex={-1} autoComplete="off" /></label></div>
+      <div className="vyro-honeypot" aria-hidden="true"><label>Leave this field empty<input name="contact_check" tabIndex={-1} autoComplete="off" /></label></div>
       <div className="vyro-form-grid">
         <label>Name <span>*</span><input autoComplete="name" name="name" required maxLength={100} /></label>
         <label>Work email <span>*</span><input autoComplete="email" name="email" type="email" required maxLength={254} /></label>
@@ -138,7 +145,7 @@ function InquiryForm() {
         <label className="vyro-form-wide">What are you interested in? <span>*</span><select name="interest" defaultValue="" required><option value="" disabled>Select a product area</option><option>Sales, POS & CRM</option><option>Products, inventory & purchasing</option><option>Finance & reports</option><option>HR, projects & documents</option><option>Multi-branch ERP</option><option>Other</option></select></label>
         <label className="vyro-form-wide">How can we help? <span>*</span><textarea name="message" rows={4} required maxLength={2000} placeholder="Tell us a little about your business and what you need." /></label>
       </div>
-      <div className="vyro-form-submit-row"><button className="vyro-primary-button" type="submit">Save preview inquiry <ChevronRight size={16} /></button><p>This preview doesn’t send your details to the VYRO team.</p></div>
+      <div className="vyro-form-submit-row"><button className="vyro-primary-button" type="submit" disabled={sending}>{sending ? 'Sending…' : 'Send inquiry'} <ChevronRight size={16} /></button></div>
       {notice && <p className={`vyro-form-notice ${notice.type}`} role="status">{notice.text}</p>}
     </form>
   );
@@ -233,7 +240,7 @@ export function WelcomePage() {
 
         <section aria-labelledby="questions-title" className="vyro-faq-section"><div className="mx-auto grid max-w-7xl gap-10 px-5 py-16 sm:px-10 sm:py-20 lg:grid-cols-[.7fr_1.3fr]"><div className="vyro-reveal"><p className="vyro-section-kicker">Common questions</p><h2 id="questions-title">A few things to know.</h2><p>This page gives an overview of VYRO and the example screens.</p></div><div className="vyro-faq-list vyro-reveal"><details><summary>What does VYRO bring together?</summary><p>VYRO covers sales, POS, purchasing, products, inventory, finance, CRM, HR, projects, documents, reports and company administration in one ERP workspace.</p></details><details><summary>How do the modules work together?</summary><p>Records can move through connected workflows. For example, a quotation can become a sales order, then a delivery, invoice and payment record.</p></details><details><summary>Can teams work across multiple branches?</summary><p>The workspace includes branch-aware records, branch switching, company-wide views and role-based access controls.</p></details><details><summary>Are the figures in the dashboard preview live?</summary><p>No. The dashboard is an illustrative product preview. Your workspace shows data available to your account.</p></details></div></div></section>
 
-        <section id="inquiry" aria-labelledby="inquiry-title" className="vyro-inquiry-section scroll-mt-6"><div className="mx-auto grid max-w-7xl gap-10 px-5 py-16 sm:px-10 sm:py-20 lg:grid-cols-[.72fr_1.28fr]"><div className="vyro-inquiry-intro vyro-reveal"><p className="vyro-section-kicker">Talk with our team</p><h2 id="inquiry-title">Tell us what your business needs.</h2><p>Share a few details and the parts of VYRO you’re interested in. We’ll help you find the right place to start.</p><div className="vyro-inquiry-points"><span><Check size={16} /> Sales and operations</span><span><Check size={16} /> Multi-branch setup</span><span><Check size={16} /> Product questions</span></div></div><div className="vyro-inquiry-card vyro-reveal"><div className="vyro-inquiry-card-head"><h3>Send an inquiry</h3><p>Frontend preview only. The form stores entries in this browser.</p></div><InquiryForm /></div></div></section>
+        <section id="inquiry" aria-labelledby="inquiry-title" className="vyro-inquiry-section scroll-mt-6"><div className="mx-auto grid max-w-7xl gap-10 px-5 py-16 sm:px-10 sm:py-20 lg:grid-cols-[.72fr_1.28fr]"><div className="vyro-inquiry-intro vyro-reveal"><p className="vyro-section-kicker">Talk with our team</p><h2 id="inquiry-title">Tell us what your business needs.</h2><p>Share a few details and the parts of VYRO you’re interested in. We’ll help you find the right place to start.</p><div className="vyro-inquiry-points"><span><Check size={16} /> Sales and operations</span><span><Check size={16} /> Multi-branch setup</span><span><Check size={16} /> Product questions</span></div></div><div className="vyro-inquiry-card vyro-reveal"><div className="vyro-inquiry-card-head"><h3>Send an inquiry</h3></div><InquiryForm /></div></div></section>
 
         <section className="vyro-final-cta vyro-reveal"><div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-5 py-12 sm:flex-row sm:items-center sm:px-10"><div><p className="text-sm font-medium text-violet-200">VYRO ERP</p><h2>Ready to get to work?</h2><p>Sign in with the account provided by your company.</p></div><Link to="/login" className="vyro-final-button">Go to login <ChevronRight size={17} /></Link></div></section>
       </main>

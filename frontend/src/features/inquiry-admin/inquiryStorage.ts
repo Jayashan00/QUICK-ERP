@@ -16,41 +16,68 @@ export interface Inquiry {
 
 export type NewInquiry = Pick<Inquiry, 'name' | 'email' | 'company' | 'phone' | 'interest' | 'message'>;
 
-export const INQUIRY_STORAGE_KEY = 'vyro.public-inquiries.preview.v1';
+const endpoint = '/website-api/inquiries';
 
-export function readInquiries(): Inquiry[] {
-  try {
-    const stored = window.localStorage.getItem(INQUIRY_STORAGE_KEY);
-    if (!stored) return [];
-    const value: unknown = JSON.parse(stored);
-    return Array.isArray(value) ? value as Inquiry[] : [];
-  } catch {
-    return [];
+export class InquiryApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
   }
 }
 
-function writeInquiries(inquiries: Inquiry[]) {
-  window.localStorage.setItem(INQUIRY_STORAGE_KEY, JSON.stringify(inquiries));
+async function request(url: string, options: RequestInit) {
+  const response = await fetch(url, {
+    ...options, credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15000),
+  });
+  if (!response.headers.get('content-type')?.includes('application/json')) {
+    throw new Error('The inquiry service is unavailable. Please try again.');
+  }
+  const data = await response.json();
+  if (!response.ok) throw new InquiryApiError(data.error || 'The inquiry request failed.', response.status);
+  return data;
 }
 
-export function saveInquiry(details: NewInquiry): Inquiry {
-  const now = new Date().toISOString();
-  const inquiry: Inquiry = {
-    ...details,
-    id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    status: 'new',
-    createdAt: now,
-    updatedAt: now,
-    updatedBy: null,
-  };
-  writeInquiries([inquiry, ...readInquiries()]);
-  return inquiry;
+export async function saveInquiry(details: NewInquiry & { contact_check: string }) {
+  const receipt = await request(endpoint, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(details),
+  });
+  if (typeof receipt?.id !== 'string' || !receipt.id) {
+    throw new Error('We could not confirm that your inquiry was saved. Please contact us by phone or email.');
+  }
+  return receipt as { id: string; createdAt: string };
 }
 
-export function changeInquiryStatus(id: string, status: InquiryStatus): Inquiry[] {
-  const inquiries = readInquiries().map((inquiry) => inquiry.id === id
-    ? { ...inquiry, status, updatedAt: new Date().toISOString(), updatedBy: 'Local preview' }
-    : inquiry);
-  writeInquiries(inquiries);
-  return inquiries;
+export function readInquiries(): Promise<Inquiry[]> {
+  return request(endpoint, {});
+}
+
+export function changeInquiryStatus(inquiry: Inquiry, status: InquiryStatus): Promise<Inquiry> {
+  return request(`${endpoint}/${inquiry.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, previous: inquiry.status }),
+  });
+}
+
+export async function loginWebsiteAdmin(email: string, password: string, remember: boolean): Promise<boolean> {
+  let adminEmail = 'website-admin@vyro.com';
+  try {
+    const response = await fetch('/website-api/auth/config', { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+    if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
+      const config = await response.json();
+      if (typeof config.email === 'string') adminEmail = config.email;
+    }
+  } catch {
+    // The ERP sign-in path remains available when the website service is offline.
+  }
+  if (email.trim().toLowerCase() !== adminEmail) return false;
+  await request('/website-api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, remember }),
+  });
+  return true;
+}
+
+export function logoutWebsiteAdmin() {
+  return request('/website-api/auth/logout', { method: 'POST' });
 }
