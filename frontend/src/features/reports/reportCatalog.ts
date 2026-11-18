@@ -33,7 +33,7 @@ export const reportCatalog: ReportDefinition[] = [
     ['available-committed', 'Available vs Committed', 'On-hand, committed and available quantities.', [...common, 'productId', 'warehouseId', 'locationId']],
     ['stock-movement', 'Stock Movement', 'Inventory movement ledger for the selected period.', [...common, 'productId', 'warehouseId', 'locationId', 'status']],
     ['stock-by-location', 'Stock by Branch / Warehouse / Location', 'Stock quantities grouped by storage location.', [...common, 'productId', 'warehouseId', 'locationId']],
-    ['low-stock', 'Low Stock & Reorder', 'Items at reorder point or out of stock.', [...common, 'productId', 'warehouseId']],
+    ['low-stock', 'Low Stock & Reorder', 'Items at low stock level or out of stock.', [...common, 'productId', 'warehouseId']],
     ['stock-valuation', 'Stock Valuation', 'Existing inventory quantities valued using product cost.', [...common, 'productId', 'warehouseId']],
     ['stock-ageing', 'Stock Ageing', 'Batch inventory grouped by age.', [...common, 'productId']],
     ['expiry', 'Expiry', 'Expired and expiring batch inventory.', [...common, 'productId']],
