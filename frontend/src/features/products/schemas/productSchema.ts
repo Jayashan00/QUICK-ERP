@@ -81,7 +81,7 @@ const productEditableFields = {
   trackExpiry: z.boolean(),
   allowNegativeStock: z.boolean(),
   minStockLevel: z.number().min(0, 'Minimum stock cannot be negative.').optional(),
-  reorderLevel: z.number().min(0, 'Reorder level cannot be negative.').optional(),
+  reorderLevel: z.number().min(0, 'Low stock level cannot be negative.').optional(),
   maxStockLevel: z.number().min(0, 'Maximum stock cannot be negative.').optional(),
 };
 
@@ -149,7 +149,7 @@ function validateStockLimits(
     context.addIssue({
       code: 'custom',
       path: ['reorderLevel'],
-      message: 'Reorder level cannot exceed maximum stock.',
+      message: 'Low stock level cannot exceed maximum stock.',
     });
   }
   if (
@@ -161,7 +161,7 @@ function validateStockLimits(
     context.addIssue({
       code: 'custom',
       path: ['reorderLevel'],
-      message: 'Reorder level cannot be below minimum stock.',
+      message: 'Low stock level cannot be below minimum stock.',
     });
   }
 

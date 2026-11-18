@@ -7,6 +7,7 @@ import { hrService } from '@/features/hr/hrService';
 import { customerService } from "@/features/customers/services/customerService";
 import { opportunityService } from "@/features/crm/opportunities/services/opportunityService";
 import { productStore } from "@/features/products/services/productStore";
+import { flashSaleService } from "./flashSaleService";
 import { masterDataStore } from "@/features/products/services/masterDataStore";
 import type { ProductType } from "@/features/products/types/product";
 import { warehouseService } from "@/features/inventory/services/warehouseService";
@@ -204,11 +205,15 @@ const lineItems = (
     taxPercent: number;
     pricesIncludeTax?: boolean;
   }>,
-  taxContext?: { tenantId: string; date: string; useMasterDataPricing?: boolean },
+  taxContext?: { tenantId: string; branchId?: string; date: string; useMasterDataPricing?: boolean },
 ): SalesLine[] =>
   values.map((value) => {
     const product = taxContext ? productStore.all().find((item) => item.tenantId === taxContext.tenantId && item.id === value.productId) : undefined;
-    const unitPrice = taxContext?.useMasterDataPricing && product ? product.sellingPrice : value.unitPrice;
+    const promotion = taxContext?.useMasterDataPricing && product && product.type === 'goods' && taxContext.branchId
+      ? flashSaleService.active({ tenantId: taxContext.tenantId, branchId: taxContext.branchId }, product.id, new Date(), 'sales_documents', value.quantity)
+      : undefined;
+    if (promotion && !promotion.allowAdditionalDiscounts && value.discountPercent > 0) throw new Error('Additional discounts are not allowed on this flash-sale item.');
+    const unitPrice = taxContext?.useMasterDataPricing && product ? promotion?.salePrice ?? product.sellingPrice : value.unitPrice;
     const subtotal = value.quantity * unitPrice;
     const discountAmount = (subtotal * value.discountPercent) / 100;
     const requestedTaxCode = taxContext?.useMasterDataPricing
@@ -225,6 +230,9 @@ const lineItems = (
       id: `sales-line-${crypto.randomUUID().slice(0, 8)}`,
       ...value,
       unitPrice,
+      regularUnitPrice: promotion ? product?.sellingPrice : undefined,
+      promotionId: promotion?.id,
+      promotionName: promotion?.name,
       taxCode: rate?.code ?? (taxContext ? undefined : value.taxCode),
       taxPercent,
       pricesIncludeTax,
@@ -692,7 +700,7 @@ export const salesService = {
         );
     }
     const localization = await tenantSettingsService.getLocalization(scope.tenantId),
-      items = lineItems(data.items, { tenantId: scope.tenantId, date: data.quotationDate, useMasterDataPricing: true }),
+      items = lineItems(data.items, { tenantId: scope.tenantId, branchId: data.branchId, date: data.quotationDate, useMasterDataPricing: true }),
       amount = totals(items),
       now = new Date().toISOString();
     assertWithinCreditLimit(customer, amount.totalAmount);
@@ -752,7 +760,7 @@ export const salesService = {
       requireValidQuantity(scope.tenantId, item.productId, item.quantity),
     );
     const localization = await tenantSettingsService.getLocalization(scope.tenantId);
-    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.quotationDate, useMasterDataPricing: true });
+    const items = lineItems(data.items, { tenantId: scope.tenantId, branchId: data.branchId, date: data.quotationDate, useMasterDataPricing: true });
     const amount = totals(items);
     assertWithinCreditLimit(customer, amount.totalAmount);
     const next: SalesQuotation = {
@@ -1140,7 +1148,7 @@ export const salesService = {
       );
     }
 
-    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.orderDate }),
+    const items = lineItems(data.items, { tenantId: scope.tenantId, branchId: data.branchId, date: data.orderDate, useMasterDataPricing: true }),
       now = new Date().toISOString();
     const order: SalesOrder = {
       id: `sales-order-${crypto.randomUUID().slice(0, 8)}`,
@@ -1172,6 +1180,7 @@ export const salesService = {
       ),
     ];
     salesStore.insertOrder(order);
+    items.forEach(item => { if (item.promotionId) flashSaleService.recordRedemption(item.promotionId, item.quantity); });
     return order;
   },
   async createOrderFromQuotation(
@@ -1277,7 +1286,7 @@ export const salesService = {
         data.warehouseId,
       );
     }
-    const items = lineItems(data.items, { tenantId: scope.tenantId, date: data.orderDate });
+    const items = lineItems(data.items, { tenantId: scope.tenantId, branchId: data.branchId, date: data.orderDate, useMasterDataPricing: true });
     const next: SalesOrder = {
       ...current,
       ...data,

@@ -45,6 +45,9 @@ export interface SalesLine {
   description?: string;
   quantity: number;
   unitPrice: number;
+  regularUnitPrice?: number;
+  promotionId?: string;
+  promotionName?: string;
   discountPercent: number;
   taxCode?: string;
   taxPercent: number;
