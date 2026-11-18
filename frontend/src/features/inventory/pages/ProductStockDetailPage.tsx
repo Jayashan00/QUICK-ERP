@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Link,
   useNavigate,
@@ -25,9 +26,17 @@ import { ErrorState } from "@/shared/components/feedback/ErrorState";
 import { LoadingSpinner } from "@/shared/components/feedback/LoadingSpinner";
 import { PageHeader } from "@/shared/components/layout/PageHeader";
 import { useProductStockDetail } from "../hooks/useInventoryTracking";
+import { PurchaseRequestFormModal } from "@/features/purchases/components/PurchasingForms";
+import { productRelationshipStore } from "@/features/products/services/productRelationshipStore";
 export function ProductStockDetailPage() {
   const { productId } = useParams();
   const [searchParams] = useSearchParams();
+  const [reorderPrefill, setReorderPrefill] = useState<{
+    balanceId: string; productId: string; variantId?: string; branchId: string;
+    warehouseId: string; locationId: string; available: number; lowStockLevel: number;
+    suggestedQuantity: number;
+    leadTimeDays?: number;
+  } | null>(null);
   const navigate = useNavigate();
   const { currentBranch, branches } = useBranch();
   const { hasPermission } = usePermissions();
@@ -82,11 +91,31 @@ export function ProductStockDetailPage() {
             <StatusBadge status={data.alertStatus} tone={alertTone} />
             {data.alertStatus !== "healthy" && (
               <Button
-                disabled
                 variant="secondary"
                 leftIcon={<ShoppingCart size={16} />}
+                onClick={() => {
+                  const balance = [...data.balances].sort((left, right) =>
+                    left.quantityAvailable - right.quantityAvailable)[0];
+                  if (!balance) return;
+                  const preferredSupplier = productRelationshipStore.suppliers()
+                    .filter((relationship) => relationship.tenantId === (data.balances[0]?.tenantId ?? "") &&
+                      relationship.productId === data.product.id && relationship.isActive)
+                    .sort((left, right) => Number(right.isPreferred) - Number(left.isPreferred))[0];
+                  setReorderPrefill({
+                    balanceId: balance.id,
+                    productId: data.product.id,
+                    variantId: data.variant?.id,
+                    branchId: balance.branchId,
+                    warehouseId: balance.warehouseId,
+                    locationId: balance.locationId,
+                    available: balance.quantityAvailable,
+                    lowStockLevel: data.product.reorderLevel ?? balance.reorderLevel,
+                    suggestedQuantity: Math.max(1, (data.product.maxStockLevel ?? (data.product.reorderLevel ?? 0) * 2) - balance.quantityAvailable),
+                    leadTimeDays: preferredSupplier?.leadTimeDays ?? 14,
+                  });
+                }}
               >
-                Prepare Reorder
+                Create Purchase Request
               </Button>
             )}
           </div>
@@ -106,7 +135,7 @@ export function ProductStockDetailPage() {
           </div>
           <div>
             <div className="text-xs text-slate-500">
-              Minimum / Reorder / Maximum
+              Minimum / Low Stock / Maximum
             </div>
             <div className="font-semibold">
               {data.product.minStockLevel ?? 0} /{" "}
@@ -280,6 +309,11 @@ export function ProductStockDetailPage() {
           </div>
         )}
       </SummaryCard>
+      <PurchaseRequestFormModal
+        isOpen={Boolean(reorderPrefill)}
+        initialReorder={reorderPrefill ?? undefined}
+        onClose={() => setReorderPrefill(null)}
+      />
     </div>
   );
 }

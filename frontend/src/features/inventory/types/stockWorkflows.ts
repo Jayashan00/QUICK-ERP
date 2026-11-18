@@ -138,6 +138,19 @@ export interface ReorderWorkflowItem {
   reorderLevel: number;
   maxStockLevel?: number;
   suggestedQuantity: number;
+  openPurchaseQuantity: number;
+  projectedAvailable: number;
+  quantityInTransit: number;
+  leadTimeDays: number;
+  transferSuggestion?: {
+    branchId: EntityId;
+    branchName: string;
+    warehouseId: EntityId;
+    warehouseName: string;
+    locationId: EntityId;
+    locationName: string;
+    available: number;
+  };
   handoffStatus: "ready" | "prepared";
 }
 

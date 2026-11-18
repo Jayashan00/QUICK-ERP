@@ -15,7 +15,7 @@ const code = z
 
 export const warehouseSchema = z.object({
   name: requiredText("Warehouse name"),
-  code,
+  code: code.optional(),
   branchId: requiredText("Branch"),
   address: requiredText("Address", 240),
   managerId: z.string().optional(),
