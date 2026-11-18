@@ -10,6 +10,7 @@ const alignmentClasses = {
 export interface Column<T> {
   key: string;
   header: string;
+  title?: string;
   sortable?: boolean;
   align?: 'left' | 'center' | 'right';
   width?: string | number;
@@ -61,14 +62,10 @@ export function TableHeader<T>({
             className={cn(
               'whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600',
               alignmentClasses[col.align || 'left'],
-              col.sortable && onSort && 'cursor-pointer select-none hover:text-slate-900',
+              col.sortable && onSort && 'select-none',
             )}
             style={{ width: col.width }}
-            onClick={() => {
-              if (col.sortable && onSort) {
-                onSort(col.key);
-              }
-            }}
+            title={col.title}
           >
             <div className={cn('inline-flex items-center gap-1', col.align === 'right' && 'justify-end', col.align === 'center' && 'justify-center')}>
               <span>{col.header}</span>

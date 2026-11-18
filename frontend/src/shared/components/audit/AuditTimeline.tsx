@@ -2,11 +2,12 @@ import { Activity } from 'lucide-react';
 import { EmptyState } from '@/shared/components/feedback/EmptyState';
 import type { AuditEntry } from '@/shared/types/audit';
 
-export function AuditTimeline({ entries }: { entries: AuditEntry[] }) {
-  if (!entries.length) return <EmptyState title="No audit activity" message="Recorded changes will appear here." />;
+export function AuditTimeline({ entries }: { entries?: AuditEntry[] }) {
+  const auditEntries = Array.isArray(entries) ? entries : [];
+  if (!auditEntries.length) return <EmptyState title="No audit activity" message="Recorded changes will appear here." />;
   return (
     <ol className="space-y-4">
-      {[...entries].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).map((entry) => (
+      {[...auditEntries].sort((a, b) => String(b.timestamp ?? '').localeCompare(String(a.timestamp ?? ''))).map((entry) => (
         <li key={entry.id} className="flex gap-3">
           <div className="mt-0.5 rounded-full bg-blue-50 p-2 text-blue-600"><Activity size={15} /></div>
           <div className="min-w-0 flex-1 border-b border-slate-100 pb-4">
