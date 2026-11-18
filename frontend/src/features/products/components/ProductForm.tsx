@@ -526,7 +526,7 @@ export function ProductForm({
                 <FormField label="Minimum stock" error={errors.minStockLevel?.message}>
                   <Controller name="minStockLevel" control={control} render={({ field }) => <NumberInput min={0} value={field.value ?? ''} onChange={(value) => field.onChange(value === '' ? undefined : value)} />} />
                 </FormField>
-                <FormField label="Reorder level" error={errors.reorderLevel?.message}>
+                <FormField label="Low stock level" error={errors.reorderLevel?.message}>
                   <Controller name="reorderLevel" control={control} render={({ field }) => <NumberInput min={0} value={field.value ?? ''} onChange={(value) => field.onChange(value === '' ? undefined : value)} />} />
                 </FormField>
                 <FormField label="Maximum stock" error={errors.maxStockLevel?.message}>

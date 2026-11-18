@@ -14,6 +14,7 @@ export type Ticket = Base & { employeeId: string; category: string; priority: 'l
 export type Asset = Base & { employeeId: string; name: string; issuedOn: string; returnedOn?: string; condition: string; status: 'issued' | 'returned' };
 export type Exit = Base & { employeeId: string; type: 'resignation' | 'termination'; lastDay: string; reason: string; clearance: { label: string; done: boolean }[]; status: 'open' | 'complete' };
 export type AdvancedAudit = Base & { actor: string; action: string; reference: string; before?: string; after?: string };
+export type CalendarEvent = Base & { title: string; date: string; description?: string };
 
 const now = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
@@ -31,6 +32,7 @@ const tickets: Ticket[] = [];
 const assets: Asset[] = [];
 const exits: Exit[] = [];
 const logs: AdvancedAudit[] = [];
+const calendarEvents: CalendarEvent[] = [];
 function branch(scope: HrScope, branchId: string) { if (!scope.tenantId || !scope.permittedBranchIds.includes(branchId)) throw new Error('Branch access is not permitted.'); }
 function worker(scope: HrScope, employeeId: string) { return hrService.employee(scope, employeeId); }
 function rows<T extends Base>(data: T[], scope: HrScope, branchId?: string) { return data.filter((row) => row.tenantId === scope.tenantId && scope.permittedBranchIds.includes(row.branchId) && (!branchId || row.branchId === branchId)); }
@@ -41,6 +43,12 @@ function transition<T extends Base>(data: T[], scope: HrScope, actor: HrActor, i
 
 export const advancedHrService = {
   jobs: (scope: HrScope, branchId?: string) => rows(jobs, scope, branchId), candidates: (scope: HrScope, branchId?: string) => rows(candidates, scope, branchId),
+  calendarEvents: (scope: HrScope, branchId?: string) => rows(calendarEvents, scope, branchId),
+  addCalendarEvent(scope: HrScope, actor: HrActor, input: { branchId: string; title: string; date: string; description?: string }) {
+    if (!input.title.trim()) throw new Error('Event title is required.');
+    if (!validDate(input.date)) throw new Error('Enter a valid event date.');
+    return create(calendarEvents, scope, actor, 'calendar-event', 'Calendar event added', { ...input, title: input.title.trim(), description: input.description?.trim() || undefined }, input.title);
+  },
   onboardings: (scope: HrScope, branchId?: string) => rows(onboarding, scope, branchId), trainings: (scope: HrScope, branchId?: string) => rows(training, scope, branchId),
   reviews: (scope: HrScope, branchId?: string) => rows(reviews, scope, branchId), okrs: (scope: HrScope, branchId?: string) => rows(okrs, scope, branchId), feedback: (scope: HrScope, branchId?: string) => rows(feedback, scope, branchId),
   policies: (scope: HrScope, branchId?: string) => rows(policies, scope, branchId), tickets: (scope: HrScope, branchId?: string) => rows(tickets, scope, branchId), assets: (scope: HrScope, branchId?: string) => rows(assets, scope, branchId), exits: (scope: HrScope, branchId?: string) => rows(exits, scope, branchId), audit: (scope: HrScope) => rows(logs, scope),
@@ -86,3 +94,4 @@ registerList('hr.advanced.tickets', () => tickets, (rows) => replaceArray(ticket
 registerList('hr.advanced.assets', () => assets, (rows) => replaceArray(assets, rows));
 registerList('hr.advanced.exits', () => exits, (rows) => replaceArray(exits, rows));
 registerList('hr.advanced.logs', () => logs, (rows) => replaceArray(logs, rows));
+registerList('hr.advanced.calendarEvents', () => calendarEvents, (rows) => replaceArray(calendarEvents, rows));

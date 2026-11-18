@@ -82,6 +82,92 @@ class RecordGuardsTest {
     }
 
     @Test
+    void flashSalesAreProductOnlyAndUseMakerCheckerApproval() throws Exception {
+        Principal creator = new Principal("usr-sales", "tenant-001", false, "role-sales", "sales@test");
+        Principal approver = new Principal("usr-manager", "tenant-001", false, "role-manager", "manager@test");
+        Permissions creatorPermissions = Permissions.of(List.of(
+                "sales.flash_sales.create", "sales.flash_sales.edit", "sales.flash_sales.submit"));
+        Permissions approvalPermissions = Permissions.of(List.of("sales.flash_sales.approve"));
+        JsonNode product = mapper.readTree("{\"id\":\"prod-1\",\"type\":\"goods\",\"status\":\"active\","
+                + "\"isSellable\":true,\"sellingPrice\":100,\"costPrice\":60}");
+        JsonNode service = mapper.readTree("{\"id\":\"svc-1\",\"type\":\"service\",\"status\":\"active\","
+                + "\"isSellable\":true,\"sellingPrice\":100,\"costPrice\":0}");
+        JsonNode draft = mapper.readTree("{\"id\":\"flash-1\",\"tenantId\":\"tenant-001\",\"branchId\":\"branch-1\","
+                + "\"name\":\"Weekend deal\",\"productId\":\"prod-1\",\"salePrice\":80,"
+                + "\"startsAt\":\"2026-12-01T00:00:00Z\",\"endsAt\":\"2026-12-02T00:00:00Z\","
+                + "\"channels\":[\"pos\",\"storefront\"],\"minimumQuantity\":1,"
+                + "\"allowAdditionalDiscounts\":false,\"status\":\"draft\",\"enabled\":false,"
+                + "\"createdBy\":\"usr-sales\",\"consumedQuantity\":0}");
+
+        assertDoesNotThrow(() -> RecordGuards.checkFlashSale(
+                creatorPermissions, creator, "tenant-001", product, null, draft, List.of()));
+        assertThrows(ApiException.class, () -> RecordGuards.checkFlashSale(
+                creatorPermissions, creator, "tenant-001", service, null, draft, List.of()));
+
+        JsonNode belowCost = draft.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) belowCost).put("salePrice", 50);
+        assertThrows(ApiException.class, () -> RecordGuards.checkFlashSale(
+                creatorPermissions, creator, "tenant-001", product, null, belowCost, List.of()));
+
+        JsonNode pending = draft.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) pending).put("status", "pending_approval");
+        assertDoesNotThrow(() -> RecordGuards.checkFlashSale(
+                creatorPermissions, creator, "tenant-001", product, draft, pending, List.of()));
+
+        JsonNode approved = pending.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) approved).put("status", "approved").put("enabled", true);
+        assertThrows(ApiException.class, () -> RecordGuards.checkFlashSale(
+                approvalPermissions, creator, "tenant-001", product, pending, approved, List.of()));
+        assertDoesNotThrow(() -> RecordGuards.checkFlashSale(
+                approvalPermissions, approver, "tenant-001", product, pending, approved, List.of()));
+
+        JsonNode overlapping = draft.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) overlapping).put("id", "flash-2");
+        assertThrows(ApiException.class, () -> RecordGuards.checkFlashSale(
+                creatorPermissions, creator, "tenant-001", product, null, overlapping, List.of(approved)));
+    }
+
+    @Test
+    void purchaseRequestsUseMakerCheckerAndReturnForCorrection() throws Exception {
+        Principal requester = new Principal("usr-requester", "tenant-001", false, "role-requester", "requester@test");
+        Principal approver = new Principal("usr-approver", "tenant-001", false, "role-approver", "approver@test");
+        Permissions requesterPermissions = Permissions.of(List.of(
+                "purchases.requests.create", "purchases.requests.edit", "purchases.requests.submit", "purchases.requests.cancel"));
+        Permissions approverPermissions = Permissions.of(List.of("purchases.requests.approve", "purchases.requests.return"));
+        JsonNode draft = mapper.readTree("{\"id\":\"pr-1\",\"tenantId\":\"tenant-001\",\"branchId\":\"branch-1\","+
+                "\"warehouseId\":\"wh-1\",\"departmentId\":\"dept-operations\",\"departmentName\":\"Operations\","+
+                "\"costCenterId\":\"cc-ops-hq\",\"costCenterName\":\"OPS-HQ\",\"priority\":\"normal\","+
+                "\"requiredDate\":\"2026-12-01\",\"reason\":\"Replenish stock\",\"estimatedTotal\":250,"+
+                "\"items\":[{\"productId\":\"prod-1\",\"quantity\":5}],\"status\":\"draft\","+
+                "\"requesterId\":\"usr-requester\",\"createdBy\":\"usr-requester\"}");
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(requesterPermissions, requester, null, draft));
+
+        JsonNode submitted = draft.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) submitted).put("status", "submitted");
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(requesterPermissions, requester, draft, submitted));
+
+        JsonNode approved = submitted.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) approved).put("status", "approved");
+        assertThrows(ApiException.class, () -> RecordGuards.checkPurchaseRequest(approverPermissions, requester, submitted, approved));
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(Permissions.everything(), requester, submitted, approved));
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(approverPermissions, approver, submitted, approved));
+
+        JsonNode returnedWithoutReason = submitted.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) returnedWithoutReason).put("status", "returned");
+        assertThrows(ApiException.class, () -> RecordGuards.checkPurchaseRequest(approverPermissions, approver, submitted, returnedWithoutReason));
+        JsonNode returned = returnedWithoutReason.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) returned).put("returnReason", "Clarify the required quantity.");
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(approverPermissions, approver, submitted, returned));
+
+        JsonNode corrected = returned.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) corrected).put("reason", "Replenish verified stock shortage");
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(requesterPermissions, requester, returned, corrected));
+        JsonNode resubmitted = corrected.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) resubmitted).put("status", "submitted").remove("returnReason");
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(requesterPermissions, requester, corrected, resubmitted));
+    }
+
+    @Test
     void customerCreditNotesFollowFinanceWorkflowAndLockAfterPosting() throws Exception {
         JsonNode pending = mapper.readTree("{\"id\":\"cn-1\",\"status\":\"pending_approval\",\"amount\":100,\"auditEntries\":[]}");
         JsonNode approved = mapper.readTree("{\"id\":\"cn-1\",\"status\":\"approved\",\"amount\":100,\"auditEntries\":[]}");

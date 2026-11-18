@@ -9,6 +9,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 
 /**
  * Business rules the server enforces on records saved by the browser, independent
@@ -24,6 +26,8 @@ public final class RecordGuards {
     public static final String CREDIT_NOTES = "sales.creditNotes";
     public static final String PRODUCTS = "products.records";
     public static final String UOMS = "products.uoms";
+    public static final String FLASH_SALES = "sales.flashSales";
+    public static final String PURCHASE_REQUESTS = "purchases.requests";
 
     private static final Map<String, Set<String>> JOURNAL_TRANSITIONS = Map.of(
             "draft", Set.of("pending_approval"),
@@ -40,6 +44,159 @@ public final class RecordGuards {
 
     private RecordGuards() {
     }
+
+    /** Enforces purchase-request maker/checker, correction, and sourcing lifecycle rules. */
+    public static void checkPurchaseRequest(Permissions permissions, Principal principal, JsonNode stored, JsonNode incoming) {
+        if (incoming == null) throw ApiException.forbidden("Purchase requests are retained for audit. Cancel them instead of deleting them.");
+        if (!incoming.isObject()) throw ApiException.badRequest("A purchase request must be an object.");
+        String next = Sql.text(incoming, "status");
+        if (!Set.of("draft", "submitted", "returned", "approved", "sourcing", "converted", "cancelled", "rejected").contains(next)) {
+            throw ApiException.badRequest("The purchase request status is not valid.");
+        }
+        if (stored == null) {
+            if (!"draft".equals(next) || !permissions.matches("purchases.requests.create")) {
+                throw ApiException.forbidden("A new purchase request must be created as a draft.");
+            }
+            if (!principal.userId().equals(Sql.text(incoming, "createdBy")) || !principal.userId().equals(Sql.text(incoming, "requesterId"))) {
+                throw ApiException.forbidden("The request creator must be the signed-in user.");
+            }
+            requirePurchaseRequestDetails(incoming);
+            return;
+        }
+        String previous = Sql.text(stored, "status");
+        if (Objects.equals(previous, next)) {
+            if (Set.of("draft", "returned").contains(next)) {
+                if (!permissions.matches("purchases.requests.edit")) throw ApiException.forbidden("You cannot edit purchase request drafts.");
+                if (!principal.userId().equals(Sql.text(stored, "createdBy")) && !permissions.isAll()) throw ApiException.forbidden("Only the requester can correct this purchase request.");
+                requirePurchaseRequestDetails(incoming);
+                if ("returned".equals(next) && !Objects.equals(stored.get("returnReason"), incoming.get("returnReason"))) {
+                    throw ApiException.forbidden("The approver's return reason cannot be changed.");
+                }
+                return;
+            }
+            if (!equalIgnoring(stored, incoming, Set.of("updatedAt"))) throw ApiException.forbidden("Submitted purchase request details are locked.");
+            return;
+        }
+        String required = switch (previous + "->" + next) {
+            case "draft->submitted", "returned->submitted" -> "purchases.requests.submit";
+            case "submitted->approved" -> "purchases.requests.approve";
+            case "submitted->returned" -> "purchases.requests.return";
+            case "draft->cancelled", "returned->cancelled" -> "purchases.requests.cancel";
+            case "approved->sourcing" -> "rfq.create";
+            case "sourcing->converted" -> "purchase.create";
+            default -> null;
+        };
+        if (required == null) throw ApiException.badRequest("This purchase request status change is not allowed.");
+        if (!permissions.matches(required)) throw ApiException.forbidden("You do not have permission to complete this purchase request action.");
+        if ("approved".equals(next) && principal.userId().equals(Sql.text(stored, "createdBy")) && !permissions.isAll()) {
+            throw ApiException.forbidden("The request creator cannot approve their own purchase request.");
+        }
+        if ("returned".equals(next)) {
+            String reason = Sql.text(incoming, "returnReason");
+            if (reason == null || reason.trim().length() < 5 || reason.length() > 1000) {
+                throw ApiException.validation("returnReason", "A correction reason between 5 and 1000 characters is required.");
+            }
+        }
+        if (!equalIgnoring(stored, incoming, Set.of("status", "returnReason", "approval", "auditEntries", "updatedAt"))) {
+            throw ApiException.forbidden("Purchase request details cannot be changed during a workflow action.");
+        }
+    }
+
+    private static void requirePurchaseRequestDetails(JsonNode request) {
+        for (String field : List.of("branchId", "warehouseId", "requiredDate", "reason")) {
+            String value = Sql.text(request, field);
+            if (value == null || value.trim().isEmpty()) throw ApiException.validation(field, field + " is required.");
+        }
+        String priority = Sql.text(request, "priority");
+        if (!Set.of("low", "normal", "high", "urgent").contains(priority)) throw ApiException.validation("priority", "Select a valid priority.");
+        JsonNode items = request.get("items");
+        if (items == null || !items.isArray() || items.isEmpty()) throw ApiException.validation("items", "Add at least one requested product.");
+        JsonNode total = request.get("estimatedTotal");
+        if (total == null || !total.isNumber() || total.asDouble() < 0 || !Double.isFinite(total.asDouble())) {
+            throw ApiException.validation("estimatedTotal", "The estimated request total is not valid.");
+        }
+    }
+
+    /** Enforces product-only promotion data and its maker/checker lifecycle. */
+    public static void checkFlashSale(Permissions permissions, Principal principal, String tenantId, JsonNode product,
+                                      JsonNode stored, JsonNode incoming, Iterable<JsonNode> existingSales) {
+        if (incoming == null) throw ApiException.forbidden("Flash sales are retained for audit. Disable them instead of deleting them.");
+        if (!incoming.isObject()) throw ApiException.badRequest("A flash sale must be an object.");
+        if (!tenantId.equals(Sql.text(incoming, "tenantId"))) throw ApiException.forbidden("The flash sale belongs to another organization.");
+        String status = Sql.text(incoming, "status");
+        if (!Set.of("draft", "pending_approval", "returned", "approved", "disabled").contains(status)) throw ApiException.badRequest("The flash sale status is not valid.");
+        String name = Sql.text(incoming, "name");
+        if (name == null || name.trim().length() < 2 || name.length() > 120) throw ApiException.validation("name", "Enter a flash sale name between 2 and 120 characters.");
+        if (product == null || !product.isObject() || !"goods".equals(Sql.text(product, "type")) || !"active".equals(Sql.text(product, "status")) || !product.path("isSellable").asBoolean(false)) {
+            throw ApiException.validation("productId", "Flash sales can only use active sellable products, not services or composite items.");
+        }
+        double price = finitePositive(incoming, "salePrice");
+        double sellingPrice = finitePositive(product, "sellingPrice");
+        double costPrice = nonNegative(product, "costPrice");
+        if (price >= sellingPrice) throw ApiException.validation("salePrice", "Flash sale price must be below the current selling price.");
+        if (price < costPrice) throw ApiException.validation("salePrice", "Flash sale price cannot be below the product cost price.");
+        Instant start = instantField(incoming, "startsAt");
+        Instant end = instantField(incoming, "endsAt");
+        if (!end.isAfter(start)) throw ApiException.validation("endsAt", "End time must be after start time.");
+        JsonNode channels = incoming.get("channels");
+        if (channels == null || !channels.isArray() || channels.isEmpty()) throw ApiException.validation("channels", "Select at least one sales channel.");
+        for (JsonNode channel : channels) if (!Set.of("pos", "storefront", "sales_documents").contains(channel.asText())) throw ApiException.validation("channels", "A sales channel is not valid.");
+        int minimum = positiveWhole(incoming, "minimumQuantity", 1);
+        int maximum = positiveWhole(incoming, "maximumQuantity", Integer.MAX_VALUE);
+        if (maximum < minimum) throw ApiException.validation("maximumQuantity", "Maximum quantity must be at least the minimum quantity.");
+        positiveWhole(incoming, "promotionQuantityLimit", Integer.MAX_VALUE);
+        String id = Sql.text(incoming, "id");
+        String productId = Sql.text(incoming, "productId");
+        String branchId = Sql.text(incoming, "branchId");
+        for (JsonNode sale : existingSales) {
+            if (Objects.equals(id, Sql.text(sale, "id")) || !Objects.equals(productId, Sql.text(sale, "productId")) || !Objects.equals(branchId, Sql.text(sale, "branchId"))) continue;
+            String otherStatus = Sql.text(sale, "status");
+            if (Set.of("disabled", "returned").contains(otherStatus)) continue;
+            Instant otherStart = instantField(sale, "startsAt"); Instant otherEnd = instantField(sale, "endsAt");
+            if (start.isBefore(otherEnd) && otherStart.isBefore(end)) throw ApiException.validation("startsAt", "This product already has a flash sale in that time period.");
+        }
+        String previous = Sql.text(stored, "status");
+        if (stored == null) {
+            if (!"draft".equals(status) || !permissions.matches("sales.flash_sales.create")) throw ApiException.forbidden("A new flash sale must start as a draft.");
+            if (!principal.userId().equals(Sql.text(incoming, "createdBy"))) throw ApiException.forbidden("The flash sale creator must be the signed-in user.");
+            return;
+        }
+        if (Objects.equals(previous, status)) {
+            if (Set.of("draft", "returned").contains(status) && !permissions.matches("sales.flash_sales.edit")) throw ApiException.forbidden("You cannot edit flash sale drafts.");
+            if (!Set.of("draft", "returned").contains(status)) {
+                if (!equalIgnoring(stored, incoming, Set.of("updatedAt", "consumedQuantity"))) throw ApiException.forbidden("Approved workflow details are locked.");
+                int previousConsumed = stored.path("consumedQuantity").asInt(0);
+                JsonNode consumedNode = incoming.get("consumedQuantity");
+                if (consumedNode == null || !consumedNode.canConvertToInt() || consumedNode.asDouble() != consumedNode.asInt()
+                        || consumedNode.asInt() < previousConsumed) {
+                    throw ApiException.validation("consumedQuantity", "Flash sale usage can only increase by a whole quantity.");
+                }
+                JsonNode limit = incoming.get("promotionQuantityLimit");
+                if (limit != null && limit.isNumber() && consumedNode.asInt() > limit.asInt()) {
+                    throw ApiException.validation("consumedQuantity", "Flash sale usage cannot exceed its promotion quantity limit.");
+                }
+            }
+            return;
+        }
+        String required = switch (previous + "->" + status) {
+            case "draft->pending_approval", "returned->pending_approval" -> "sales.flash_sales.submit";
+            case "pending_approval->approved", "pending_approval->returned" -> "sales.flash_sales.approve";
+            case "approved->disabled" -> "sales.flash_sales.disable";
+            default -> null;
+        };
+        if (required == null) throw ApiException.badRequest("This flash sale status change is not allowed.");
+        if (!permissions.matches(required)) throw ApiException.forbidden("You do not have permission to complete this flash sale action.");
+        if ("approved".equals(status) && principal.userId().equals(Sql.text(incoming, "createdBy")) && !permissions.isAll()) throw ApiException.forbidden("The creator cannot approve their own flash sale.");
+        if ("returned".equals(status)) {
+            String reason = Sql.text(incoming, "returnReason");
+            if (reason == null || reason.trim().length() < 5) throw ApiException.validation("returnReason", "A return reason of at least 5 characters is required.");
+        }
+    }
+
+    private static double finitePositive(JsonNode node, String field) { double value = nonNegative(node, field); if (value <= 0) throw ApiException.validation(field, field + " must be greater than zero."); return value; }
+    private static double nonNegative(JsonNode node, String field) { JsonNode value = node == null ? null : node.get(field); if (value == null || !value.isNumber() || !Double.isFinite(value.asDouble()) || value.asDouble() < 0) throw ApiException.validation(field, field + " is not valid."); return value.asDouble(); }
+    private static int positiveWhole(JsonNode node, String field, int fallback) { JsonNode value = node.get(field); if (value == null || value.isNull()) return fallback; if (!value.canConvertToInt() || value.asDouble() != value.asInt() || value.asInt() <= 0) throw ApiException.validation(field, field + " must be a positive whole number."); return value.asInt(); }
+    private static Instant instantField(JsonNode node, String field) { try { String value = Sql.text(node, field); if (value == null) throw new DateTimeParseException("missing", "", 0); return Instant.parse(value); } catch (DateTimeParseException error) { throw ApiException.validation(field, field + " must be a valid date and time."); } }
 
     static String normalizeCustomerEmail(String email) {
         return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);

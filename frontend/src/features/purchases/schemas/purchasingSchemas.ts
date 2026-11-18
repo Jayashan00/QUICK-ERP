@@ -20,13 +20,33 @@ const uniqueLines = z.array(productLine).min(1, "Add at least one item.").superR
   });
 });
 
-export const purchaseRequestSchema = z.object({ branchId: required("Branch"), requiredDate: date("Required date"), reason: required("Reason").max(240), notes: z.string().trim().max(1000).optional(), items: uniqueLines });
+export const purchaseRequestSchema = z.object({
+  branchId: required("Branch"),
+  warehouseId: required("Receiving warehouse"),
+  departmentId: z.string().trim().optional(),
+  costCenterId: z.string().trim().optional(),
+  priority: z.enum(["low", "normal", "high", "urgent"]),
+  budgetReference: z.string().trim().max(100).optional(),
+  requiredDate: date("Required date"),
+  reason: required("Business reason").max(240),
+  notes: z.string().trim().max(1000).optional(),
+  items: uniqueLines,
+  sourceReorder: z.object({
+    balanceId: required("Stock balance"),
+    branchId: required("Branch"),
+    warehouseId: required("Warehouse"),
+    locationId: required("Location"),
+    available: z.number().nonnegative(),
+    lowStockLevel: z.number().nonnegative(),
+    suggestedQuantity: z.number().positive(),
+  }).optional(),
+});
 export const rfqSchema = z.object({ purchaseRequestId: required("Purchase request"), supplierIds: z.array(z.string()).min(1, "Select at least one supplier."), requiredDeliveryDate: date("Required delivery date"), notes: z.string().trim().max(1000).optional() });
 export const supplierQuotationSchema = z.object({ rfqId: required("RFQ"), supplierId: required("Supplier"), quotationNumber: required("Supplier quotation number"), quotationDate: date("Quotation date"), validityDate: date("Validity date"), deliveryDays: z.number().int().positive(), paymentTerms: required("Payment terms"), currency: required("Currency"), notes: z.string().trim().max(1000).optional(), items: uniqueLines }).refine((value) => Date.parse(value.validityDate) >= Date.parse(value.quotationDate), { path: ["validityDate"], message: "Validity date cannot be before quotation date." });
-export const purchaseOrderSchema = z.object({ supplierId: required("Supplier"), branchId: required("Branch"), warehouseId: required("Warehouse"), orderDate: date("Order date"), expectedDeliveryDate: date("Expected delivery date"), paymentTerms: required("Payment terms"), currency: required("Currency"), notes: z.string().trim().max(1000).optional(), items: uniqueLines }).refine((value) => Date.parse(value.expectedDeliveryDate) >= Date.parse(value.orderDate), { path: ["expectedDeliveryDate"], message: "Delivery date cannot be before order date." });
+export const purchaseOrderSchema = z.object({ supplierId: required("Supplier"), branchId: required("Branch"), warehouseId: required("Warehouse"), orderDate: date("Order date"), expectedDeliveryDate: date("Expected delivery date"), paymentTerms: required("Payment terms"), currency: required("Currency"), directPurchaseReason: z.string().trim().max(500).optional(), notes: z.string().trim().max(1000).optional(), items: uniqueLines }).refine((value) => Date.parse(value.expectedDeliveryDate) >= Date.parse(value.orderDate), { path: ["expectedDeliveryDate"], message: "Delivery date cannot be before order date." });
 const receiptLine = z.object({ purchaseOrderLineId: required("PO line"), productId: required("Product"), variantId: z.string().optional(), receivedQuantity: z.number().nonnegative(), damagedQuantity: z.number().nonnegative(), rejectedQuantity: z.number().nonnegative(), batchNumber: z.string().trim().optional(), serialNumbers: z.array(z.string()), manufacturedDate: z.string().optional(), expiryDate: z.string().optional() }).refine((line) => line.receivedQuantity + line.damagedQuantity + line.rejectedQuantity > 0, { message: "Enter a received, damaged, or rejected quantity." });
 export const grnSchema = z.object({ purchaseOrderId: required("Purchase order"), warehouseId: required("Warehouse"), locationId: required("Location"), receivedDate: date("Received date"), notes: z.string().trim().max(1000).optional(), items: z.array(receiptLine).min(1) });
-export const purchaseInvoiceSchema = z.object({ purchaseOrderId: required("Purchase order"), grnId: z.string().optional(), supplierInvoiceNumber: required("Supplier invoice number"), invoiceDate: date("Invoice date"), dueDate: date("Due date"), paymentTerms: required("Payment terms"), notes: z.string().trim().max(1000).optional(), items: uniqueLines }).refine((value) => Date.parse(value.dueDate) >= Date.parse(value.invoiceDate), { path: ["dueDate"], message: "Due date cannot be before invoice date." });
+export const purchaseInvoiceSchema = z.object({ purchaseOrderId: required("Purchase order"), grnId: z.string().optional(), supplierInvoiceNumber: required("Supplier invoice number"), invoiceDate: date("Invoice date"), dueDate: date("Due date"), paymentTerms: required("Payment terms"), currency: z.string().trim().optional(), notes: z.string().trim().max(1000).optional(), items: uniqueLines }).refine((value) => Date.parse(value.dueDate) >= Date.parse(value.invoiceDate), { path: ["dueDate"], message: "Due date cannot be before invoice date." });
 export const purchaseReturnSchema = z.object({ purchaseOrderId: required("Purchase order"), grnId: required("GRN"), warehouseId: required("Warehouse"), locationId: required("Location"), reason: required("Reason").max(240), notes: z.string().trim().max(1000).optional(), items: z.array(z.object({ productId: required("Product"), variantId: z.string().optional(), quantity: z.number().positive(), batchReference: z.string().optional(), serialReferences: z.array(z.string()) })).min(1) });
 
 export type PurchaseRequestFormValues = z.infer<typeof purchaseRequestSchema>;

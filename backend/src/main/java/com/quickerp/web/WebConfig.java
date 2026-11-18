@@ -24,7 +24,7 @@ public class WebConfig implements WebMvcConfigurer {
                         "/auth/mfa", "/auth/mfa/setup", "/auth/mfa/enable", "/auth/mfa/disable",
                         "/state", "/state/**", "/users/**", "/platform/**", "/files", "/ai/**",
                         "/sales/quotations/**", "/sales/orders/**", "/sales/invoices/**",
-                        "/sales/deliveries/**", "/sales/credit-notes/**");
+                        "/sales/deliveries/**", "/sales/credit-notes/**", "/purchases/rfqs/**");
     }
 
     @Override

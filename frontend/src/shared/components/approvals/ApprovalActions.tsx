@@ -20,9 +20,11 @@ interface ApprovalActionsProps {
   canApprove?: boolean;
   canReject?: boolean;
   onDecision: (status: Extract<ApprovalStatus, 'approved' | 'rejected'>, remarks?: string) => Promise<void>;
+  rejectLabel?: string;
+  requireRejectRemarks?: boolean;
 }
 
-export function ApprovalActions({ status, canApprove = false, canReject = false, onDecision }: ApprovalActionsProps) {
+export function ApprovalActions({ status, canApprove = false, canReject = false, onDecision, rejectLabel = 'Reject', requireRejectRemarks = false }: ApprovalActionsProps) {
   const [decision, setDecision] = useState<Extract<ApprovalStatus, 'approved' | 'rejected'> | null>(null);
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<DecisionValues>({
     resolver: zodResolver(decisionSchema),
@@ -38,9 +40,13 @@ export function ApprovalActions({ status, canApprove = false, canReject = false,
 
   const submit = async ({ remarks }: DecisionValues) => {
     if (!decision) return;
+    if (decision === 'rejected' && requireRejectRemarks && remarks.trim().length < 5) {
+      appToast.error('Enter a correction reason of at least 5 characters.');
+      return;
+    }
     try {
       await onDecision(decision, remarks || undefined);
-      appToast.success(decision === 'approved' ? 'Request approved.' : 'Request rejected.');
+      appToast.success(decision === 'approved' ? 'Request approved.' : `Request ${rejectLabel.toLowerCase()}.`);
       close();
     } catch (error) {
       appToast.error(getErrorMessage(error, 'Unable to record the approval decision.'));
@@ -50,18 +56,18 @@ export function ApprovalActions({ status, canApprove = false, canReject = false,
   return (
     <>
       <div className="flex flex-wrap gap-2">
-        {canReject && <Button variant="danger" size="sm" leftIcon={<XCircle size={15} />} onClick={() => setDecision('rejected')}>Reject</Button>}
+        {canReject && <Button variant="danger" size="sm" leftIcon={<XCircle size={15} />} onClick={() => setDecision('rejected')}>{rejectLabel}</Button>}
         {canApprove && <Button size="sm" leftIcon={<CheckCircle2 size={15} />} onClick={() => setDecision('approved')}>Approve</Button>}
       </div>
       <Modal
         isOpen={Boolean(decision)}
         onClose={isSubmitting ? () => undefined : close}
-        title={decision === 'approved' ? 'Approve Request' : 'Reject Request'}
+        title={decision === 'approved' ? 'Approve Request' : `${rejectLabel} Request`}
         maxWidth="520px"
         footer={<div className="flex w-full justify-end gap-2"><Button variant="secondary" onClick={close}>Cancel</Button><Button variant={decision === 'rejected' ? 'danger' : 'primary'} type="submit" form="approval-decision-form" isLoading={isSubmitting}>Confirm</Button></div>}
       >
         <form id="approval-decision-form" onSubmit={handleSubmit(submit)} noValidate>
-          <FormField label="Remarks" error={errors.remarks?.message} hint="Optional context retained in approval history.">
+          <FormField label={decision === 'rejected' && requireRejectRemarks ? 'Correction reason' : 'Remarks'} required={decision === 'rejected' && requireRejectRemarks} error={errors.remarks?.message} hint={decision === 'rejected' && requireRejectRemarks ? 'Sales or the requester will see this before correcting and resubmitting.' : 'Optional context retained in approval history.'}>
             <Textarea rows={4} placeholder="Add decision remarks..." error={Boolean(errors.remarks)} {...register('remarks')} />
           </FormField>
         </form>

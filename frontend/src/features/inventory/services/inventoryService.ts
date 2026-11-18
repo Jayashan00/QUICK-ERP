@@ -37,9 +37,10 @@ export type StockSortField =
   | "locationName"
   | "quantityOnHand"
   | "quantityAvailable"
+  | "quantityCommitted"
   | "quantityReserved"
   | "quantityInTransit"
-  | "status"
+  | "alertStatus"
   | "stockValue";
 export type StockGroupMode = "branch" | "warehouse" | "location";
 export interface StockLevelsParams extends StockBalanceFilters {

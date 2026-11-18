@@ -3,18 +3,22 @@ import { ArrowRight } from 'lucide-react';
 import { PageHeader } from '@/shared/components/layout/PageHeader';
 import { Card } from '@/shared/components/common/Card';
 import { EmptyState } from '@/shared/components/feedback/EmptyState';
+import { useAuth } from '@/core/auth/auth-context';
 import { usePermissions } from '@/core/permissions/permission-context';
 import { SETTINGS_NAV_GROUPS } from '@/features/settings/config/settingsNavConfig';
 import { useTenantRoute } from '@/core/routing';
 
 export function SettingsLandingPage() {
   const { hasPermission } = usePermissions();
+  const { user } = useAuth();
   const { toTenantPath } = useTenantRoute();
+  const isTenantAdministrator = user?.roleId === 'role-001' && !user.isSuperAdmin;
 
   const allowedGroups = SETTINGS_NAV_GROUPS.map((group) => ({
     ...group,
     items: group.items.filter((item) =>
-      item.permission ? hasPermission(item.permission) : true,
+      (!item.tenantAdminOnly || isTenantAdministrator) &&
+      (item.permission ? hasPermission(item.permission) : true),
     ),
   })).filter((group) => group.items.length > 0);
 

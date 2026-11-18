@@ -58,7 +58,7 @@ Authentication composition is `AuthProvider -> TenantProvider -> PermissionProvi
 | Products and Services | Categories/brands/UOM/attributes, variants, identifiers, images/documents/specifications, supplier links, bundles, related products, imports/exports, price lists and quantity tiers |
 | Sales | Quotation approvals, orders, deliveries, invoices, payments, returns/credit notes, recurring invoices, commissions, flash sales, review moderation and abandoned carts |
 | Purchasing | Requests/approval, RFQ, supplier quotation comparison/selection, PO approval/send, GRN, invoice matching, returns, supplier payment handoff |
-| Inventory and Stock | Branch/location balances, warehouses, locations, batches/serials/expiry, movement ledger, adjustments/transfers/requests, counts/mobile counts, returns/wastage, reorder, velocity, valuation/planning reports and settings |
+| Inventory and Stock | Branch/location balances, warehouses, locations, batches/serials/expiry, movement ledger, adjustments/transfers/requests, counts, returns/wastage, reorder, velocity, valuation/planning reports and settings |
 | POS and Storefront | Shifts/cash drawer, scanning/cart/checkout/split payments, refunds, receipts/reports/customer display, kitchen/web orders; public catalog/cart/checkout/tracking/reviews |
 | Accounting | Accounts/openings, journals/approval/posting, ledger/trial balance/statements, receivables/payables/settlements, expenses, bank matching, reports, tax/FX preparation, budgets/assets and source handoffs |
 | HR and Payroll | Employees/organization, shifts/attendance/corrections, leave/overtime, salaries/loans/commissions/payroll/payslips, biometric import; recruitment, onboarding, training, reviews/OKRs, feedback, policies, HR tickets, assets and exit |

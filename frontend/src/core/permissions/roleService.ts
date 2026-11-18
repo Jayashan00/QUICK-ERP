@@ -14,7 +14,25 @@ function normalizeAtomicModulePermissions(role: Role): Role {
     ? [...new Set([...role.permissions, ...fullPosPermissions])]
     : [...role.permissions];
   if (role.isSystem && role.code === 'sales_manager') {
-    permissions = [...new Set([...permissions.filter((permission) => permission !== 'invoice.approve'), 'invoice.edit', 'invoice.submit', 'invoice.send'])];
+    permissions = [...new Set([
+      ...permissions.filter((permission) => permission !== 'invoice.approve'),
+      'invoice.edit', 'invoice.submit', 'invoice.send',
+      TENANT_PERMISSIONS.SALES_WORKFLOW.FLASH_SALES_VIEW,
+      TENANT_PERMISSIONS.SALES_WORKFLOW.FLASH_SALES_CREATE,
+      TENANT_PERMISSIONS.SALES_WORKFLOW.FLASH_SALES_EDIT,
+      TENANT_PERMISSIONS.SALES_WORKFLOW.FLASH_SALES_SUBMIT,
+      TENANT_PERMISSIONS.SALES_WORKFLOW.FLASH_SALES_APPROVE,
+      TENANT_PERMISSIONS.SALES_WORKFLOW.FLASH_SALES_DISABLE,
+    ])];
+  }
+  if (role.isSystem && role.code === 'sales_executive') {
+    permissions = [...new Set([
+      ...permissions,
+      TENANT_PERMISSIONS.SALES_WORKFLOW.FLASH_SALES_VIEW,
+      TENANT_PERMISSIONS.SALES_WORKFLOW.FLASH_SALES_CREATE,
+      TENANT_PERMISSIONS.SALES_WORKFLOW.FLASH_SALES_EDIT,
+      TENANT_PERMISSIONS.SALES_WORKFLOW.FLASH_SALES_SUBMIT,
+    ])];
   }
   if (role.isSystem && role.code === 'accountant') {
     permissions = [...new Set([...permissions, 'invoice.approve', 'invoice.post', 'invoice.return', 'invoice.void', 'creditNote.approve', 'creditNote.post', 'creditNote.return', 'creditNote.void', 'creditNote.refund'])];

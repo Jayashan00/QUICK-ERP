@@ -137,7 +137,7 @@ export function ProductOverview({ product, branchName }: ProductOverviewProps) {
           </div>
           <dl className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
             <DetailItem label="Minimum stock" value={product.minStockLevel ?? 'Not set'} />
-            <DetailItem label="Reorder level" value={product.reorderLevel ?? 'Not set'} />
+            <DetailItem label="Low stock level" value={product.reorderLevel ?? 'Not set'} />
             <DetailItem label="Maximum stock" value={product.maxStockLevel ?? 'Not set'} />
           </dl>
         </Card>

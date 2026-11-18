@@ -37,9 +37,6 @@ export async function aggregateSalesDashboard(context: ModuleDashboardContext) {
     ...orders.filter(row => ['confirmed', 'processing', 'partially_delivered'].includes(row.status)).map(row => ({ id: row.id, title: row.referenceNumber, description: 'Delivery pending', status: row.status, to: recordLink('/sales/orders', row.id, row.referenceNumber) })),
   ], { emptyMessage: 'No overdue invoices, approvals, or deliveries require attention.' });
   addList(context, 'Recent Sales', [...selected].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate)).map(row => ({ id: row.id, title: row.referenceNumber, description: row.customerName ?? row.customerId, amount: row.totalAmount, date: row.invoiceDate, status: row.status, to: recordLink('/sales/invoices', row.id, row.referenceNumber) })), { subtitle: 'Latest 5 invoices in selected period', to: '/sales/invoices', wide: true, emptyMessage: 'No sales recorded for this period.' });
-  output.workflowDescription = 'Opportunity > Quotation > Approval > Order > Delivery > Invoice > Finance receipt';
-  output.workflow = [
-    ...['quotations', 'orders', 'deliveries', 'invoices', 'credit-notes'].map(path => ({ label: path.replace('-', ' '), to: `/sales/${path}` })),
-    { label: 'accounts receivable', to: '/finance/accounts-receivable' },
-  ];
+  output.workflowDescription = undefined;
+  output.workflow = [];
 }

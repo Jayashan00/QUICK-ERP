@@ -17,6 +17,7 @@ class WebShopValidatorTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private final Instant now = Instant.parse("2026-10-19T10:00:00Z");
     private final List<JsonNode> flash = new ArrayList<>();
+    private final List<JsonNode> webOrders = new ArrayList<>();
 
     private final WebShopValidator.Catalog catalog = new WebShopValidator.Catalog() {
         @Override
@@ -36,6 +37,11 @@ class WebShopValidatorTest {
         @Override
         public List<JsonNode> flashSales() {
             return flash;
+        }
+
+        @Override
+        public List<JsonNode> orders() {
+            return webOrders;
         }
 
         @Override
@@ -100,6 +106,18 @@ class WebShopValidatorTest {
                 + "\"startsAt\":\"2026-10-19T09:00:00Z\",\"endsAt\":\"2026-10-19T12:00:00Z\"}"));
         assertDoesNotThrow(() -> WebShopValidator.checkOrder("t1", order("p1", 1, 50, 9, 59), catalog, now));
         assertThrows(ApiException.class, () -> WebShopValidator.checkOrder("t1", order("p1", 1, 50, 9, 59), catalog, Instant.parse("2026-10-20T10:00:00Z")));
+    }
+
+    @Test
+    void storefrontOrdersCountTowardsThePromotionQuantityLimit() throws Exception {
+        flash.add(mapper.readTree("{\"id\":\"flash-1\",\"productId\":\"p1\",\"branchId\":\"b1\",\"enabled\":true,"
+                + "\"status\":\"approved\",\"channels\":[\"storefront\"],\"salePrice\":50,\"minimumQuantity\":1,"
+                + "\"promotionQuantityLimit\":2,\"consumedQuantity\":0,"
+                + "\"startsAt\":\"2026-10-19T09:00:00Z\",\"endsAt\":\"2026-10-19T12:00:00Z\"}"));
+        webOrders.add(mapper.readTree("{\"status\":\"new\",\"items\":[{\"promotionId\":\"flash-1\",\"quantity\":1}]}"));
+
+        assertDoesNotThrow(() -> WebShopValidator.checkOrder("t1", order("p1", 1, 50, 9, 59), catalog, now));
+        assertThrows(ApiException.class, () -> WebShopValidator.checkOrder("t1", order("p1", 2, 50, 18, 118), catalog, now));
     }
 
     @Test

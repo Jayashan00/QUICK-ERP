@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
+import { TenantLink } from "@/core/routing";
 import { ArrowRight, ClipboardCheck, Plus, ShoppingCart } from "lucide-react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { useBranch } from "@/core/branch/branch-context";
@@ -32,6 +33,7 @@ import {
   StockTransferCreateModal,
 } from "../components/StockWorkflowCreateModals";
 import { useInventoryProductOptions } from "../hooks/useInventoryTracking";
+import { PurchaseRequestFormModal } from "@/features/purchases/components/PurchasingForms";
 import {
   useBranchStockRequests,
   useReorderWorkflow,
@@ -129,7 +131,53 @@ export function StockReturnsWastagePage() {
   return <><WorkflowPage {...filters} query={query} title="Returns & Wastage" description="Record usable or damaged returns and approved wastage without bypassing the stock ledger." createLabel="New Return / Wastage" canCreate={canCreate} onCreate={() => setCreate(true)} statuses={["pending_approval", "rejected", "completed"]} location={(row: StockReturnWastage) => `${branches.find((branch) => branch.id === row.branchId)?.name ?? row.branchId} · ${row.workflowType}`} actions={(row) => <ApprovalCell approval={row.approval} canApprove={canApprove} onDecision={(status, remarks) => mutations.decideReturnWastage(row.id, status, remarks).then(() => undefined)} />} /><StockReturnWastageCreateModal isOpen={create} onClose={() => setCreate(false)} /></>;
 }
 export function ReorderWorkflowPage() {
-  const query = useReorderWorkflow(); const mutations = useStockWorkflowMutations(); const canRequest = usePermission(PERMISSIONS.INVENTORY.STOCK_REQUEST); const [search, setSearch] = useState(""); const rows = useMemo(() => (query.data ?? []).filter((row) => `${row.productName} ${row.sku} ${row.branchName}`.toLowerCase().includes(search.toLowerCase())), [query.data, search]);
-  const columns: Column<ReorderWorkflowItem>[] = [{ key: "productName", header: "Product", render: (row) => <div><div className="font-semibold text-slate-800">{row.productName}</div><div className="text-xs text-slate-500">{row.sku}</div></div> }, { key: "branchName", header: "Branch / Location", render: (row) => <div><div>{row.branchName}</div><div className="text-xs text-slate-500">{row.warehouseName} / {row.locationName}</div></div> }, { key: "available", header: "Available", align: "right" }, { key: "reorderLevel", header: "Reorder Level", align: "right" }, { key: "suggestedQuantity", header: "Suggested Qty", align: "right" }, { key: "handoffStatus", header: "Status", render: (row) => <StatusBadge status={row.handoffStatus} /> }, { key: "action", header: "Purchase Handoff", render: (row) => canRequest && row.handoffStatus === "ready" ? <Button size="sm" variant="secondary" leftIcon={<ShoppingCart size={14} />} onClick={async () => { try { await mutations.prepareReorder(row.balanceId); appToast.success("Reorder prepared for a future Purchase Request / PO."); } catch (error) { appToast.error(getErrorMessage(error, "Unable to prepare reorder.")); } }}>Prepare</Button> : <span className="text-xs text-slate-500">{row.handoffStatus === "prepared" ? "Prepared" : "No permission"}</span> }];
-  return <PageContainer><PageHeader title="Reorder Workflow" description="Turn stock thresholds into a purchase-ready handoff without creating Purchasing documents yet." />{query.error ? <ErrorState title="Unable to load reorder alerts" message="Reorder data could not be calculated for this branch scope." onRetry={() => void query.refetch()} /> : <DataTable columns={columns} data={rows} keyField="balanceId" isLoading={query.isLoading} emptyTitle={search ? "No reorder alerts match your search" : "No reorder alerts"} emptyMessage="Stock at or below its configured threshold will appear here." toolbar={<TableToolbar searchValue={search} onSearchChange={setSearch} searchPlaceholder="Search product, SKU or branch..." actions={<div className="flex items-center gap-2 text-xs text-slate-500"><ClipboardCheck size={15} /> Future Purchasing handoff</div>} />} />}</PageContainer>;
+  const query = useReorderWorkflow();
+  const canRequest = usePermission(PERMISSIONS.INVENTORY.STOCK_REQUEST);
+  const [search, setSearch] = useState("");
+  const [reorderPrefill, setReorderPrefill] = useState<{
+    balanceId: string; productId: string; variantId?: string; branchId: string;
+    warehouseId: string; locationId: string; available: number; lowStockLevel: number;
+    suggestedQuantity: number;
+    leadTimeDays?: number;
+  } | null>(null);
+  const rows = useMemo(() => (query.data ?? []).filter((row) =>
+    `${row.productName} ${row.sku} ${row.branchName}`.toLowerCase().includes(search.toLowerCase())),
+  [query.data, search]);
+  const columns: Column<ReorderWorkflowItem>[] = [
+    { key: "productName", header: "Product", render: (row) => <div><div className="font-semibold text-slate-800">{row.productName}</div><div className="text-xs text-slate-500">{row.sku}</div></div> },
+    { key: "branchName", header: "Branch / Location", render: (row) => <div><div>{row.branchName}</div><div className="text-xs text-slate-500">{row.warehouseName} / {row.locationName}</div></div> },
+    { key: "available", header: "Available", align: "right" },
+    { key: "openPurchaseQuantity", header: "Open PO / In Transit", align: "right", render: (row) => `${row.openPurchaseQuantity} / ${row.quantityInTransit ?? 0}` },
+    { key: "projectedAvailable", header: "Projected Available", align: "right" },
+    { key: "reorderLevel", header: "Low Stock Level", align: "right" },
+    { key: "suggestedQuantity", header: "Suggested Qty", align: "right" },
+    { key: "transferSuggestion", header: "Transfer Suggestion", render: (row) => row.transferSuggestion
+      ? <div>
+          <div className="font-medium">{row.transferSuggestion.branchName}</div>
+          <div className="text-xs text-slate-500">{row.transferSuggestion.available} available · {row.transferSuggestion.warehouseName}</div>
+          <TenantLink className="mt-1 inline-block text-xs font-semibold text-blue-700 hover:underline" to="/inventory/transfers">Create Transfer</TenantLink>
+        </div>
+      : <span className="text-slate-500">None</span> },
+    { key: "handoffStatus", header: "Status", render: (row) => <StatusBadge status={row.handoffStatus} /> },
+    { key: "action", header: "Action", render: (row) => canRequest
+      ? <Button size="sm" leftIcon={<ShoppingCart size={14} />} onClick={() => setReorderPrefill({
+          balanceId: row.balanceId, productId: row.productId, variantId: row.variantId,
+          branchId: row.branchId, warehouseId: row.warehouseId, locationId: row.locationId,
+          available: row.available, lowStockLevel: row.reorderLevel, suggestedQuantity: row.suggestedQuantity,
+          leadTimeDays: row.leadTimeDays,
+        })}>Create Draft Request</Button>
+      : <span className="text-xs text-slate-500">No permission</span> },
+  ];
+  return <>
+    <PageContainer>
+      <PageHeader title="Reorder Workflow" description="Review projected availability, transfer options, and create approved replenishment requests." />
+      {query.error
+        ? <ErrorState title="Unable to load reorder alerts" message="Reorder data could not be calculated for this branch scope." onRetry={() => void query.refetch()} />
+        : <DataTable columns={columns} data={rows} keyField="balanceId" isLoading={query.isLoading}
+            emptyTitle={search ? "No reorder alerts match your search" : "No reorder alerts"}
+            emptyMessage="Stock at or below its configured threshold will appear here."
+            toolbar={<TableToolbar searchValue={search} onSearchChange={setSearch} searchPlaceholder="Search product, SKU or branch..." actions={<div className="flex items-center gap-2 text-xs text-slate-500"><ClipboardCheck size={15} /> Purchasing handoff</div>} />} />}
+    </PageContainer>
+    <PurchaseRequestFormModal isOpen={Boolean(reorderPrefill)} initialReorder={reorderPrefill ?? undefined} onClose={() => { setReorderPrefill(null); void query.refetch(); }} />
+  </>;
 }

@@ -1,6 +1,6 @@
 import { Navigate, type RouteObject } from 'react-router-dom';
 import type { ComponentType } from 'react';
-import { RequirePermission } from '@/core/permissions/components';
+import { RequirePermission, RequireTenantAdministrator } from '@/core/permissions/components';
 import { TENANT_PERMISSIONS as PERMISSIONS } from '@/core/permissions';
 import { SettingsLayout } from '@/features/settings/components/SettingsLayout';
 import { lazyPage } from './lazyPage';
@@ -215,7 +215,7 @@ export const settingsRoutes: RouteObject[] = [
     },
     { path: 'localization', element: <RequirePermission permission={PERMISSIONS.SETTINGS.LOCALIZATION_VIEW}><LocalizationSettingsPage /></RequirePermission> },
     { path: 'financial-year', element: <RequirePermission permission={PERMISSIONS.SETTINGS.FINANCIAL_YEAR_VIEW}><FinancialSettingsPage /></RequirePermission> },
-    { path: 'taxes', element: <RequirePermission permission={PERMISSIONS.SETTINGS.TAXES_VIEW}><TaxSettingsPage /></RequirePermission> },
+    { path: 'taxes', element: <RequireTenantAdministrator message="Only your company tenant administrator can manage tax settings."><RequirePermission permission={PERMISSIONS.SETTINGS.TAXES_VIEW}><TaxSettingsPage /></RequirePermission></RequireTenantAdministrator> },
     { path: 'payment-terms', element: <RequirePermission permission={PERMISSIONS.SETTINGS.PAYMENT_TERMS_VIEW}><PaymentTermsPage /></RequirePermission> },
     { path: 'document-numbering', element: <RequirePermission permission={PERMISSIONS.SETTINGS.DOCUMENT_SETTINGS_VIEW}><DocumentNumberingPage /></RequirePermission> },
     { path: 'notification-preferences', element: <RequirePermission permission={PERMISSIONS.SETTINGS.NOTIFICATION_PREFERENCES_VIEW}><NotificationPreferencesPage /></RequirePermission> },

@@ -3,6 +3,8 @@ import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, Trash2 } from "lucide-react";
 import { useBranch } from "@/core/branch/branch-context";
+import { useTenant } from "@/core/tenant/tenant-context";
+import { flashSaleService } from "../services/flashSaleService";
 import { useWarehouseOptions } from "@/features/inventory/hooks/useWarehouseManagement";
 import { useStockLocationOptions } from "@/features/inventory/hooks/useStockLocationManagement";
 import {
@@ -129,6 +131,7 @@ function SalesLineEditor({
   formatMoney = (amount) => amount.toFixed(2),
   lockMasterData = false,
   separateProductService = false,
+  branchId = "",
 }: {
   value: EditableLine[];
   onChange: (value: EditableLine[]) => void;
@@ -137,7 +140,9 @@ function SalesLineEditor({
   formatMoney?: (amount: number) => string;
   lockMasterData?: boolean;
   separateProductService?: boolean;
+  branchId?: string;
 }) {
+  const { tenantId } = useTenant();
   const products = useSalesProductOptions();
   const taxQuery = useTaxRates();
   const taxes = taxQuery.taxes.filter((tax) => isSalesTaxApplicable(tax, taxDate));
@@ -152,9 +157,10 @@ function SalesLineEditor({
     const product = products.data?.find((item) => item.id === line.productId);
     if (!product) return line;
     const tax = taxes.find((item) => item.code === product.taxCode);
+    const promotion = product.type === 'goods' && tenantId && branchId ? flashSaleService.active({ tenantId, branchId }, product.id, new Date(), 'sales_documents', line.quantity) : undefined;
     return {
       ...line,
-      unitPrice: product.sellingPrice,
+      unitPrice: promotion?.salePrice ?? product.sellingPrice,
       taxCode: tax?.code ?? "",
       taxPercent: tax?.percentage ?? 0,
       pricesIncludeTax: product.pricesIncludeTax,
@@ -202,6 +208,7 @@ function SalesLineEditor({
           ? line.itemType ?? (selectedProduct?.type === "service" ? "service" : selectedProduct ? "product" : "")
           : "";
         const pricedLine = pricedLines[index];
+        const selectedPromotion = selectedProduct?.type === 'goods' && tenantId && branchId ? flashSaleService.active({ tenantId, branchId }, selectedProduct.id, new Date(), 'sales_documents', line.quantity) : undefined;
         const decimalPlaces = selectedProduct?.quantityDecimalPlaces ?? 2;
         const quantityStep = 10 ** -decimalPlaces;
         return (
@@ -244,7 +251,7 @@ function SalesLineEditor({
                 update(index, {
                   productId: event.target.value,
                   itemType: separateProductService ? selectionType as "product" | "service" : undefined,
-                  unitPrice: product?.sellingPrice ?? 0,
+                   unitPrice: product && product.type === 'goods' && tenantId && branchId ? flashSaleService.active({ tenantId, branchId }, product.id, new Date(), 'sales_documents', line.quantity)?.salePrice ?? product.sellingPrice : product?.sellingPrice ?? 0,
                   taxCode: tax?.code ?? "",
                   taxPercent: tax?.percentage ?? 0,
                   pricesIncludeTax: product?.pricesIncludeTax ?? false,
@@ -298,11 +305,13 @@ function SalesLineEditor({
               type="number"
               min="0"
               max="100"
+              disabled={Boolean(selectedPromotion && !selectedPromotion.allowAdditionalDiscounts)}
               value={line.discountPercent}
               onChange={(event) =>
                 update(index, { discountPercent: Number(event.target.value) })
               }
             />
+            {selectedPromotion && <p className="mt-1 text-xs text-violet-700">{selectedPromotion.name} applied{selectedPromotion.allowAdditionalDiscounts ? '' : ' · additional discount disabled'}</p>}
           </FormField>
           <FormField className={lockMasterData ? "lg:col-span-2" : undefined} label="Sales tax">
             {lockMasterData ? (
@@ -555,6 +564,7 @@ export function SalesQuotationFormModal({
               formatMoney={(amount) => tenantCurrency.formatMoneyInCurrency(amount, tenantCurrency.currencyCode)}
               lockMasterData
               separateProductService
+              branchId={form.watch("branchId")}
             />
           )}
         />
@@ -745,6 +755,7 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
               formatMoney={(amount) => tenantCurrency.formatMoneyInCurrency(amount, form.watch("currency"))}
               lockMasterData
               separateProductService
+              branchId={form.watch("branchId")}
             />
           )}
         />

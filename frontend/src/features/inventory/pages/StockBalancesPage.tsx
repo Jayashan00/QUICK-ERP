@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { TenantLink, useTenantRoute } from "@/core/routing";
 import { Boxes } from "lucide-react";
 import { PERMISSIONS } from "@/core/permissions";
 import { useBranch } from "@/core/branch/branch-context";
@@ -19,6 +20,8 @@ import { useStockLevels } from "../hooks/useInventory";
 import { useWarehouseOptions } from "../hooks/useWarehouseManagement";
 import { useStockLocationOptions } from "../hooks/useStockLocationManagement";
 import { InventoryExportActions } from "../components/InventoryExportActions";
+import { PurchaseRequestFormModal } from "@/features/purchases/components/PurchasingForms";
+import { productRelationshipStore } from "@/features/products/services/productRelationshipStore";
 import type {
   StockAlertStatus,
   StockBalanceListItem,
@@ -38,6 +41,8 @@ function requestedStatus(value: string | null): StockAlertStatus | "all" {
 }
 export function StockBalancesPage() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { toTenantPath } = useTenantRoute();
   const { currentBranch, branches } = useBranch();
   const { hasPermission } = usePermissions();
   const currency = useTenantCurrency();
@@ -62,6 +67,12 @@ export function StockBalancesPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [groupBy, setGroupBy] = useState<StockGroupMode>("branch");
+  const [reorderPrefill, setReorderPrefill] = useState<{
+    balanceId: string; productId: string; variantId?: string; branchId: string;
+    warehouseId: string; locationId: string; available: number; lowStockLevel: number;
+    suggestedQuantity: number;
+    leadTimeDays?: number;
+  } | null>(null);
   const effectiveBranchId = canViewAllBranches
     ? branchId
     : (currentBranch?.id ?? "");
@@ -123,15 +134,10 @@ export function StockBalancesPage() {
     {
       key: "productName",
       header: "Product / Variant",
-      sortable: true,
+      sortable: false,
       render: (row) => (
         <div>
-          <Link
-            className="font-semibold text-blue-700"
-            to={`/inventory/stock/${row.productId}${row.variantId ? `?variantId=${row.variantId}` : ""}`}
-          >
-            {row.productName}
-          </Link>
+          <div className="font-semibold text-slate-900">{row.productName}</div>
           <div className="text-xs text-slate-500">
             {row.sku}
             {row.variantName ? ` · ${row.variantName}` : ""}
@@ -139,45 +145,63 @@ export function StockBalancesPage() {
         </div>
       ),
     },
-    { key: "branchName", header: "Branch", sortable: true },
-    { key: "warehouseName", header: "Warehouse", sortable: true },
-    { key: "locationName", header: "Location", sortable: true },
+    {
+      key: "branchName",
+      header: "Branch",
+      sortable: false,
+      render: (row) => row.branchName,
+    },
+    {
+      key: "warehouseName",
+      header: "Warehouse",
+      sortable: false,
+      render: (row) => row.warehouseName,
+    },
+    {
+      key: "locationName",
+      header: "Location",
+      sortable: false,
+      render: (row) => row.locationName,
+    },
     {
       key: "quantityOnHand",
       header: "On hand",
       align: "right",
-      sortable: true,
+      sortable: false,
+      title: "Physical quantity currently in the warehouse location.",
     },
     {
       key: "quantityAvailable",
       header: "Available",
       align: "right",
-      sortable: true,
+      sortable: false,
+      title: "On hand less committed quantities.",
     },
     {
-      key: "quantityReserved",
-      header: "Committed / Reserved",
+      key: "quantityCommitted",
+      header: "Committed",
       align: "right",
-      sortable: true,
-      render: (row) => row.quantityCommitted,
+      sortable: false,
+      title: "Quantity allocated to approved sales orders or pending fulfilment.",
     },
     {
       key: "quantityInTransit",
       header: "In transit",
       align: "right",
-      sortable: true,
+      sortable: false,
+      title: "Quantity dispatched between locations or branches but not yet received.",
     },
     {
       key: "stockValue",
       header: "Stock value",
       align: "right",
-      sortable: true,
+      sortable: false,
       render: (row) => currency.formatMoney(row.stockValue),
     },
     {
       key: "alertStatus",
       header: "Status",
-      sortable: true,
+      sortable: false,
       render: (row) => (
         <div className="flex items-center gap-2">
           <StatusBadge
@@ -192,9 +216,31 @@ export function StockBalancesPage() {
             }
           />
           {row.alertStatus !== "healthy" && (
-            <span className="text-xs font-semibold text-amber-700">
-              Reorder
-            </span>
+            <button
+              type="button"
+              className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+              onClick={(event) => {
+                event.stopPropagation();
+                const preferredSupplier = productRelationshipStore.suppliers()
+                  .filter((relationship) => relationship.tenantId === row.tenantId &&
+                    relationship.productId === row.productId && relationship.isActive)
+                  .sort((left, right) => Number(right.isPreferred) - Number(left.isPreferred))[0];
+                setReorderPrefill({
+                  balanceId: row.id,
+                  productId: row.productId,
+                  variantId: row.variantId,
+                  branchId: row.branchId,
+                  warehouseId: row.warehouseId,
+                  locationId: row.locationId,
+                  available: row.quantityAvailable,
+                  lowStockLevel: row.reorderLevel,
+                  suggestedQuantity: Math.max(1, (row.minStockLevel ?? row.reorderLevel) + row.reorderLevel - row.quantityAvailable),
+                  leadTimeDays: preferredSupplier?.leadTimeDays ?? 14,
+                });
+              }}
+            >
+              Create Request
+            </button>
           )}
         </div>
       ),
@@ -220,12 +266,12 @@ export function StockBalancesPage() {
             <InventoryExportActions
               request={{ kind: "stock-levels", params }}
             />
-            <Link
+            <TenantLink
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               to="/inventory"
             >
               Inventory overview
-            </Link>
+            </TenantLink>
           </div>
         }
       />
@@ -282,9 +328,18 @@ export function StockBalancesPage() {
             </div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {levels.data?.groups.map((group) => (
-                <div
+                <button
                   key={group.id}
-                  className="rounded-lg border border-slate-200 p-3"
+                  type="button"
+                  className="rounded-lg border border-slate-200 p-3 text-left transition hover:border-blue-300 hover:bg-blue-50"
+                  onClick={() => {
+                    if (groupBy === "branch" && canViewAllBranches) changeBranch(group.id);
+                    if (groupBy === "warehouse") changeWarehouse(group.id);
+                    if (groupBy === "location") {
+                      setLocationId(group.id);
+                      resetPage();
+                    }
+                  }}
                 >
                   <div className="font-semibold text-slate-900">
                     {group.label}
@@ -303,7 +358,7 @@ export function StockBalancesPage() {
                     </span>
                     <span>{currency.formatMoney(group.stockValue)}</span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -312,6 +367,13 @@ export function StockBalancesPage() {
             data={levels.data?.data ?? []}
             keyField="id"
             isLoading={levels.isLoading}
+            onRowClick={(row) =>
+              navigate(
+                toTenantPath(
+                  `/inventory/stock/${row.productId}${row.variantId ? `?variantId=${row.variantId}` : ""}`,
+                ),
+              )
+            }
             emptyTitle={
               search || warehouseId || locationId || status !== "all"
                 ? "No stock balances match your filters"
@@ -431,6 +493,11 @@ export function StockBalancesPage() {
           />
         </div>
       )}
+      <PurchaseRequestFormModal
+        isOpen={Boolean(reorderPrefill)}
+        initialReorder={reorderPrefill ?? undefined}
+        onClose={() => setReorderPrefill(null)}
+      />
     </PageContainer>
   );
 }

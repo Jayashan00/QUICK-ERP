@@ -16,7 +16,7 @@ export const checkoutSchema = z.object({
 });
 export type CheckoutDetails = z.infer<typeof checkoutSchema>;
 export type CartItem = { productId: string; quantity: number };
-export type StoreOrder = { id: string; trackingToken: string; scope: TenantBranchScope; customer: CheckoutDetails; items: { productId: string; name: string; quantity: number; unitPrice: number; taxCode?: string; taxPercent: number; tax: number; total: number }[]; subtotal: number; tax: number; total: number; status: 'new' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled'; paymentStatus: 'pending' | 'paid' | 'failed'; createdAt: string; updatedAt: string; locationId?: string };
+export type StoreOrder = { id: string; trackingToken: string; scope: TenantBranchScope; customer: CheckoutDetails; items: { productId: string; name: string; quantity: number; unitPrice: number; regularUnitPrice?: number; promotionId?: string; taxCode?: string; taxPercent: number; tax: number; total: number }[]; subtotal: number; tax: number; total: number; status: 'new' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled'; paymentStatus: 'pending' | 'paid' | 'failed'; createdAt: string; updatedAt: string; locationId?: string };
 const orders: StoreOrder[] = [];
 const sameScope = (a: TenantBranchScope, b: TenantBranchScope) => a.tenantId === b.tenantId && a.branchId === b.branchId;
 const checkedScope = (scope: TenantBranchScope) => { if (!scope.tenantId || !scope.branchId || !tenantEntitlementService.isModuleEnabled(scope.tenantId, 'web_store') || !inventoryStore.locations().some(l => sameScope(l, scope) && l.isActive)) throw new Error('This store is unavailable.'); };
@@ -26,7 +26,7 @@ export const storefrontService = {
   async catalog(scope: TenantBranchScope, search = '') {
     checkedScope(scope);
     const items = await productHandoffService.getStorefrontCatalog(scope, search);
-    return items.map(item => { const product = productStore.all().find(p => p.id === item.productId && p.tenantId === scope.tenantId); const flash = flashSaleService.active(scope, item.productId); return { ...item, sellingPrice: flash?.salePrice ?? item.sellingPrice, regularPrice: flash ? item.sellingPrice : undefined, flashEndsAt: flash?.endsAt, available: product?.trackInventory ? stock(scope, item.productId) : 999, onlineEligible: Boolean(product && !product.trackByBatch && !product.trackBySerialNumber && !product.hasVariants && product.type !== 'composite') }; });
+    return items.map(item => { const product = productStore.all().find(p => p.id === item.productId && p.tenantId === scope.tenantId); const flash = flashSaleService.active(scope, item.productId, new Date(), 'storefront'); return { ...item, sellingPrice: flash?.salePrice ?? item.sellingPrice, regularPrice: flash ? item.sellingPrice : undefined, flashEndsAt: flash?.endsAt, available: product?.trackInventory ? stock(scope, item.productId) : 999, onlineEligible: Boolean(product && !product.trackByBatch && !product.trackBySerialNumber && !product.hasVariants && product.type !== 'composite') }; });
   },
   async quote(scope: TenantBranchScope, cart: CartItem[]) {
     checkedScope(scope);
@@ -40,14 +40,15 @@ export const storefrontService = {
       if (product.trackInventory && stock(scope, product.id) < line.quantity) throw new Error(`${product.name} does not have enough stock.`);
       return { product, quantity: line.quantity };
     });
-    return priceCart({ scope, lines, taxes: await getTenantTaxRates(scope.tenantId), discount: 0, giftBalance: 0, loyaltyBalance: 0 });
+    return priceCart({ scope, channel: 'storefront', lines, taxes: await getTenantTaxRates(scope.tenantId), discount: 0, giftBalance: 0, loyaltyBalance: 0 });
   },
   async place(scope: TenantBranchScope, cart: CartItem[], details: CheckoutDetails) {
     const customer = checkoutSchema.parse(details);
     const quote = await this.quote(scope, cart);
     const now = new Date().toISOString();
-    const order: StoreOrder = { id: crypto.randomUUID(), trackingToken: crypto.randomUUID(), scope: { ...scope }, customer, items: quote.lines.map(line => ({ productId: line.product.id, name: line.product.name, quantity: line.quantity, unitPrice: line.unitPrice, taxCode: line.taxCode, taxPercent: line.taxPercent, tax: line.tax, total: money(line.lineTotal + (line.product.pricesIncludeTax ? 0 : line.tax)) })), subtotal: quote.subtotal, tax: quote.tax, total: quote.total, status: 'new', paymentStatus: 'pending', createdAt: now, updatedAt: now };
+    const order: StoreOrder = { id: crypto.randomUUID(), trackingToken: crypto.randomUUID(), scope: { ...scope }, customer, items: quote.lines.map(line => ({ productId: line.product.id, name: line.product.name, quantity: line.quantity, unitPrice: line.unitPrice, regularUnitPrice: line.regularUnitPrice, promotionId: line.promotionId, taxCode: line.taxCode, taxPercent: line.taxPercent, tax: line.tax, total: money(line.lineTotal + (line.product.pricesIncludeTax ? 0 : line.tax)) })), subtotal: quote.subtotal, tax: quote.tax, total: quote.total, status: 'new', paymentStatus: 'pending', createdAt: now, updatedAt: now };
     orders.unshift(order);
+    quote.lines.forEach(line => { if (line.promotionId) flashSaleService.recordRedemption(line.promotionId, line.quantity); });
     return order;
   },
   track(scope: TenantBranchScope, id: string, token: string) { checkedScope(scope); return orders.find(o => sameScope(o.scope, scope) && o.id === id && o.trackingToken === token) ?? null; },

@@ -1,8 +1,12 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, Trash2 } from "lucide-react";
 import { useBranch } from "@/core/branch/branch-context";
+import { branchService } from "@/core/branch/branchService";
+import { usePermissions } from "@/core/permissions/permission-context";
+import { PERMISSIONS } from "@/core/permissions";
+import { useTenant } from "@/core/tenant/tenant-context";
 import { Button } from "@/shared/components/common/Button";
 import { Modal } from "@/shared/components/common/Modal";
 import { DatePicker } from "@/shared/components/forms/DatePicker";
@@ -14,11 +18,13 @@ import { TextInput } from "@/shared/components/forms/TextInput";
 import { getErrorMessage } from "@/shared/utils/errors";
 import { appToast } from "@/shared/utils/toast";
 import { usePaymentTerms, useTaxRates } from '@/features/settings/finance/hooks/useTenantSettings';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 import { PaymentTermSelect } from '@/features/settings/finance/components/PaymentTermSelect';
 import { addPaymentTermDays, matchPaymentTerm } from '@/features/settings/finance/paymentTerms';
 import { isPurchaseTaxApplicable } from '@/features/settings/finance/tax';
 import { useStockLocationOptions } from "@/features/inventory/hooks/useStockLocationManagement";
 import { useWarehouseOptions } from "@/features/inventory/hooks/useWarehouseManagement";
+import { accountingService } from "@/features/accounting/accountingService";
 import {
   grnSchema,
   purchaseInvoiceSchema,
@@ -52,6 +58,21 @@ interface Props {
 }
 interface PurchaseRequestProps extends Props {
   request?: PurchaseRequest | null;
+  initialReorder?: {
+    balanceId: string;
+    productId: string;
+    variantId?: string;
+    branchId: string;
+    warehouseId: string;
+    locationId: string;
+    available: number;
+    lowStockLevel: number;
+    suggestedQuantity: number;
+    leadTimeDays?: number;
+  };
+}
+interface RfqProps extends Props {
+  initialRequestId?: string;
 }
 interface PurchaseOrderProps extends Props {
   order?: PurchaseOrder | null;
@@ -77,6 +98,54 @@ const blankLine = (): EditableLine => ({
   taxCode: "",
   taxPercent: 0,
 });
+
+function LineQuantityInput({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(() => String(value));
+  const isEditing = useRef(false);
+
+  useEffect(() => {
+    if (!isEditing.current) setDraft(Number.isFinite(value) ? String(value) : "");
+  }, [value]);
+
+  return (
+    <TextInput
+      type="number"
+      min="0.01"
+      step="0.01"
+      value={draft}
+      onFocus={() => {
+        isEditing.current = true;
+      }}
+      onChange={(event) => {
+        const next = event.target.value;
+        setDraft(next);
+        if (next === "") {
+          onChange(0);
+          return;
+        }
+        const quantity = Number(next);
+        if (Number.isFinite(quantity)) onChange(quantity);
+      }}
+      onBlur={() => {
+        isEditing.current = false;
+        const quantity = Number(draft);
+        if (draft === "" || !Number.isFinite(quantity) || quantity <= 0) {
+          onChange(0);
+          setDraft("");
+          return;
+        }
+        setDraft(String(quantity));
+      }}
+    />
+  );
+}
+
 const option = (
   rows: Array<{
     id: string;
@@ -118,11 +187,15 @@ function PurchaseLineEditor({
   onChange,
   pricing = true,
   taxDate,
+  currencyCode = "",
+  lockMasterData = false,
 }: {
   value: EditableLine[];
   onChange: (value: EditableLine[]) => void;
   pricing?: boolean;
   taxDate: string;
+  currencyCode?: string;
+  lockMasterData?: boolean;
 }) {
   const products = usePurchasingProductOptions();
   const taxQuery = useTaxRates();
@@ -178,28 +251,27 @@ function PurchaseLineEditor({
             />
           </FormField>
           <FormField label="Quantity">
-            <TextInput
-              type="number"
-              min="0.01"
-              step="0.01"
+            <LineQuantityInput
               value={line.quantity}
-              onChange={(event) =>
-                update(index, { quantity: Number(event.target.value) })
-              }
+              onChange={(quantity) => update(index, { quantity })}
             />
           </FormField>
           {pricing && (
             <>
-              <FormField label="Unit price">
-                <TextInput
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={line.unitPrice}
-                  onChange={(event) =>
-                    update(index, { unitPrice: Number(event.target.value) })
-                  }
-                />
+              <FormField label={`Unit price${currencyCode ? ` (${currencyCode})` : ""}`}>
+                {lockMasterData ? (
+                  <TextInput type="number" value={line.unitPrice} readOnly className="bg-slate-100" />
+                ) : (
+                  <TextInput
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={line.unitPrice}
+                    onChange={(event) =>
+                      update(index, { unitPrice: Number(event.target.value) })
+                    }
+                  />
+                )}
               </FormField>
               <FormField label="Discount %">
                 <TextInput
@@ -215,14 +287,22 @@ function PurchaseLineEditor({
                 />
               </FormField>
               <FormField label="Purchase tax">
-                <Select
-                  value={line.taxCode ?? ""}
-                  onChange={(event) => {
-                    const tax = taxes.find((item) => item.code === event.target.value);
-                    update(index, { taxCode: tax?.code ?? "", taxPercent: tax?.percentage ?? 0 });
-                  }}
-                  options={[{ value: "", label: "No tax / Exempt" }, ...taxes.map((tax) => ({ value: tax.code, label: `${tax.name} (${tax.percentage}%)` }))]}
-                />
+                {lockMasterData ? (
+                  <TextInput
+                    value={line.taxCode ? `${line.taxCode} (${line.taxPercent}%)` : "No tax / Exempt"}
+                    readOnly
+                    className="bg-slate-100"
+                  />
+                ) : (
+                  <Select
+                    value={line.taxCode ?? ""}
+                    onChange={(event) => {
+                      const tax = taxes.find((item) => item.code === event.target.value);
+                      update(index, { taxCode: tax?.code ?? "", taxPercent: tax?.percentage ?? 0 });
+                    }}
+                    options={[{ value: "", label: "No tax / Exempt" }, ...taxes.map((tax) => ({ value: tax.code, label: `${tax.name} (${tax.percentage}%)` }))]}
+                  />
+                )}
               </FormField>
             </>
           )}
@@ -249,25 +329,76 @@ export function PurchaseRequestFormModal({
   isOpen,
   onClose,
   request,
+  initialReorder,
 }: PurchaseRequestProps) {
   const { branches, branchId } = useBranch();
+  const { tenantId } = useTenant();
+  const { permissions, hasPermission } = usePermissions();
+  const [branchOptions, setBranchOptions] = useState(branches);
   const mutations = usePurchasingMutations();
   const form = useForm<PurchaseRequestFormValues>({
     resolver: zodResolver(purchaseRequestSchema),
     defaultValues: {
       branchId: branchId ?? "",
+      warehouseId: "",
+      departmentId: "",
+      costCenterId: "",
+      priority: "normal",
+      budgetReference: "",
       requiredDate: future(14),
       reason: "",
       notes: "",
       items: [blankLine()],
+      sourceReorder: undefined,
     },
   });
+  const selectedBranch = form.watch("branchId");
+  const warehouses = useWarehouseOptions(selectedBranch);
+  useEffect(() => {
+    if (!tenantId) {
+      setBranchOptions(branches);
+      return;
+    }
+    const canViewAllBranches =
+      permissions.includes("*") ||
+      hasPermission(PERMISSIONS.SETTINGS.BRANCHES_VIEW);
+    if (!canViewAllBranches) {
+      setBranchOptions(branches);
+      return;
+    }
+    let active = true;
+    void branchService.getAllBranches(tenantId).then((rows) => {
+      if (active) setBranchOptions(rows.filter((row) => row.isActive));
+    }).catch(() => {
+      if (active) setBranchOptions(branches);
+    });
+    return () => { active = false; };
+  }, [branches, hasPermission, permissions, tenantId]);
+  const permittedBranchIds = useMemo(
+    () => branchOptions.map((branch) => branch.id),
+    [branchOptions],
+  );
+  const costCenters = useMemo(
+    () => tenantId && selectedBranch
+      ? accountingService.referenceRecords(
+          { tenantId, branchId: selectedBranch, permittedBranchIds },
+          "cost-centers",
+          { branchId: selectedBranch },
+        ).filter((item) => item.status === "active")
+      : [],
+    [permittedBranchIds, selectedBranch, tenantId],
+  );
   useEffect(() => {
     if (!isOpen) return;
     form.reset(
       request
         ? {
             branchId: request.branchId,
+            warehouseId: request.warehouseId ?? "",
+            departmentId: request.departmentId,
+            costCenterId: request.costCenterId ?? costCenters.find((item) => item.name === request.costCenter)?.id ?? "",
+            priority: request.priority ?? "normal",
+            budgetReference: request.budgetReference ?? "",
             requiredDate: request.requiredDate,
             reason: request.reason,
             notes: request.notes ?? "",
@@ -275,20 +406,35 @@ export function PurchaseRequestFormModal({
               productId: item.productId,
               variantId: item.variantId,
               quantity: item.quantity,
-              unitPrice: 0,
+              unitPrice: item.unitPrice,
               discountPercent: 0,
               taxPercent: 0,
             })),
+            sourceReorder: request.sourceReorder,
           }
         : {
-            branchId: branchId ?? "",
-            requiredDate: future(14),
-            reason: "",
-            notes: "",
-            items: [blankLine()],
+            branchId: initialReorder?.branchId ?? branchId ?? "",
+            warehouseId: initialReorder?.warehouseId ?? "",
+            departmentId: undefined,
+            costCenterId: "",
+            priority: initialReorder ? "high" : "normal",
+            budgetReference: "",
+            requiredDate: initialReorder ? future(initialReorder.leadTimeDays ?? 14) : future(14),
+            reason: initialReorder ? `Low stock replenishment from stock balance ${initialReorder.balanceId}.` : "",
+            notes: initialReorder ? `Available: ${initialReorder.available}; low stock level: ${initialReorder.lowStockLevel}; source location: ${initialReorder.locationId}.` : "",
+            items: initialReorder ? [{
+              productId: initialReorder.productId,
+              variantId: initialReorder.variantId,
+              quantity: initialReorder.suggestedQuantity,
+              unitPrice: 0,
+              discountPercent: 0,
+              taxCode: "",
+              taxPercent: 0,
+            }] : [blankLine()],
+            sourceReorder: initialReorder,
           },
     );
-  }, [branchId, form, isOpen, request]);
+  }, [branchId, costCenters, form, isOpen, request, initialReorder]);
   const submit = form.handleSubmit(async (values) => {
     try {
       if (request) await mutations.updateRequest(request.id, values);
@@ -334,13 +480,16 @@ export function PurchaseRequestFormModal({
         className="space-y-4"
         noValidate
       >
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FormField
             label="Branch"
             required
             error={form.formState.errors.branchId?.message}
           >
-            <Select {...form.register("branchId")} options={option(branches)} />
+            <Select {...form.register("branchId", { onChange: () => { form.setValue("warehouseId", ""); form.setValue("costCenterId", ""); } })} options={option(branchOptions)} />
+          </FormField>
+          <FormField label="Receiving warehouse" required error={form.formState.errors.warehouseId?.message}>
+            <Select {...form.register("warehouseId")} placeholder="Select warehouse" options={option(warehouses.data ?? [])} />
           </FormField>
           <FormField
             label="Required date"
@@ -348,6 +497,20 @@ export function PurchaseRequestFormModal({
             error={form.formState.errors.requiredDate?.message}
           >
             <DatePicker {...form.register("requiredDate")} />
+          </FormField>
+          <FormField label="Cost center" error={form.formState.errors.costCenterId?.message} hint="Optional. Values are maintained in Finance > Cost Centers.">
+            <Select {...form.register("costCenterId")} placeholder="No cost center" options={option(costCenters)} />
+          </FormField>
+          <FormField label="Priority" required error={form.formState.errors.priority?.message}>
+            <Select {...form.register("priority")} options={[
+              { value: "low", label: "Low" },
+              { value: "normal", label: "Normal" },
+              { value: "high", label: "High" },
+              { value: "urgent", label: "Urgent" },
+            ]} />
+          </FormField>
+          <FormField label="Budget reference" error={form.formState.errors.budgetReference?.message}>
+            <TextInput {...form.register("budgetReference")} placeholder="Optional budget or project code" />
           </FormField>
         </div>
         <Controller
@@ -377,7 +540,7 @@ export function PurchaseRequestFormModal({
   );
 }
 
-export function RfqFormModal({ isOpen, onClose }: Props) {
+export function RfqFormModal({ isOpen, onClose, initialRequestId }: RfqProps) {
   const requests = usePurchaseRequests({
     status: "approved",
     branchId: "all",
@@ -394,10 +557,18 @@ export function RfqFormModal({ isOpen, onClose }: Props) {
       notes: "",
     },
   });
+  useEffect(() => {
+    if (isOpen) form.reset({ purchaseRequestId: initialRequestId ?? "", supplierIds: [], requiredDeliveryDate: future(21), notes: "" });
+  }, [form, initialRequestId, isOpen]);
   const submit = form.handleSubmit(async (values) => {
     try {
-      await mutations.createRfq(values);
-      appToast.success("RFQ sent to selected suppliers.");
+      const rfq = await mutations.createRfq(values) as { invitations?: Array<{ supplierName?: string; emailStatus?: string }> };
+      const failed = rfq.invitations?.filter((invitation) => invitation.emailStatus === "failed") ?? [];
+      if (failed.length > 0) {
+        appToast.error(`RFQ created, but email failed for ${failed.map((invitation) => invitation.supplierName ?? "a supplier").join(", ")}.`);
+      } else {
+        appToast.success("RFQ sent to selected suppliers.");
+      }
       form.reset();
       onClose();
     } catch (error) {
@@ -466,6 +637,7 @@ export function SupplierQuotationFormModal({ isOpen, onClose }: Props) {
   const rfqs = useRfqs({ branchId: "all", pageSize: 100 });
   const suppliers = usePurchasingSupplierOptions();
   const mutations = usePurchasingMutations();
+  const tenantCurrency = useTenantCurrency();
   const form = useForm<SupplierQuotationFormValues>({
     resolver: zodResolver(supplierQuotationSchema),
     defaultValues: {
@@ -476,7 +648,7 @@ export function SupplierQuotationFormModal({ isOpen, onClose }: Props) {
       validityDate: future(30),
       deliveryDays: 7,
       paymentTerms: "",
-      currency: "USD",
+      currency: tenantCurrency.currencyCode ?? "USD",
       notes: "",
       items: [blankLine()],
     },
@@ -541,7 +713,7 @@ export function SupplierQuotationFormModal({ isOpen, onClose }: Props) {
           </FormField>
           <FormField label="Supplier">
             <Select
-              {...form.register("supplierId", { onChange: (event) => { const supplier = suppliers.data?.find((item) => item.id === event.target.value); if (supplier) { form.setValue("paymentTerms", supplier.paymentTerms); form.setValue("currency", supplier.currency); } } })}
+              {...form.register("supplierId", { onChange: (event) => { const supplier = suppliers.data?.find((item) => item.id === event.target.value); if (supplier) form.setValue("paymentTerms", supplier.paymentTerms); } })}
               placeholder="Select supplier"
               options={(suppliers.data ?? [])
                 .filter(
@@ -573,14 +745,21 @@ export function SupplierQuotationFormModal({ isOpen, onClose }: Props) {
             <Controller control={form.control} name="paymentTerms" render={({ field }) => <PaymentTermSelect value={field.value} onChange={(code) => field.onChange(code)} />} />
           </FormField>
           <FormField label="Currency">
-            <TextInput {...form.register("currency")} />
+            <TextInput {...form.register("currency")} readOnly />
           </FormField>
         </div>
         <Controller
           control={form.control}
           name="items"
           render={({ field }) => (
-            <PurchaseLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("quotationDate")} />
+            <PurchaseLineEditor
+              value={field.value}
+              onChange={field.onChange}
+              taxDate={form.watch("quotationDate")}
+              currencyCode={form.watch("currency")}
+              pricing
+              lockMasterData
+            />
           )}
         />
         <FormField label="Notes">
@@ -597,8 +776,12 @@ export function PurchaseOrderFormModal({
   order,
 }: PurchaseOrderProps) {
   const { branches, branchId } = useBranch();
+  const { tenantId } = useTenant();
+  const { permissions, hasPermission } = usePermissions();
+  const [branchOptions, setBranchOptions] = useState(branches);
   const suppliers = usePurchasingSupplierOptions();
   const mutations = usePurchasingMutations();
+  const tenantCurrency = useTenantCurrency();
   const form = useForm<PurchaseOrderFormValues>({
     resolver: zodResolver(purchaseOrderSchema),
     defaultValues: {
@@ -608,13 +791,34 @@ export function PurchaseOrderFormModal({
       orderDate: today(),
       expectedDeliveryDate: future(14),
       paymentTerms: "",
-      currency: "USD",
+      currency: tenantCurrency.currencyCode ?? "USD",
+      directPurchaseReason: "",
       notes: "",
       items: [blankLine()],
     },
   });
   const selectedBranch = form.watch("branchId");
   const warehouses = useWarehouseOptions(selectedBranch);
+  useEffect(() => {
+    if (!tenantId) {
+      setBranchOptions(branches);
+      return;
+    }
+    const canViewAllBranches =
+      permissions.includes("*") ||
+      hasPermission(PERMISSIONS.SETTINGS.BRANCHES_VIEW);
+    if (!canViewAllBranches) {
+      setBranchOptions(branches);
+      return;
+    }
+    let active = true;
+    void branchService.getAllBranches(tenantId).then((rows) => {
+      if (active) setBranchOptions(rows.filter((row) => row.isActive));
+    }).catch(() => {
+      if (active) setBranchOptions(branches);
+    });
+    return () => { active = false; };
+  }, [branches, hasPermission, permissions, tenantId]);
   useEffect(() => {
     if (!isOpen) return;
     form.reset(
@@ -627,6 +831,7 @@ export function PurchaseOrderFormModal({
             expectedDeliveryDate: order.expectedDeliveryDate,
             paymentTerms: order.paymentTerms,
             currency: order.currency,
+            directPurchaseReason: order.directPurchaseReason ?? "",
             notes: order.notes ?? "",
             items: order.items.map((item) => ({
               productId: item.productId,
@@ -645,12 +850,13 @@ export function PurchaseOrderFormModal({
             orderDate: today(),
             expectedDeliveryDate: future(14),
             paymentTerms: "",
-            currency: "USD",
+            currency: tenantCurrency.currencyCode ?? "USD",
+            directPurchaseReason: "",
             notes: "",
             items: [blankLine()],
           },
     );
-  }, [branchId, form, isOpen, order]);
+  }, [branchId, form, isOpen, order, tenantCurrency.currencyCode]);
   const submit = form.handleSubmit(async (values) => {
     try {
       if (order) await mutations.updateOrder(order.id, values);
@@ -703,7 +909,7 @@ export function PurchaseOrderFormModal({
             error={form.formState.errors.supplierId?.message}
           >
             <Select
-              {...form.register("supplierId", { onChange: (event) => { const supplier = suppliers.data?.find((item) => item.id === event.target.value); if (supplier) { form.setValue("paymentTerms", supplier.paymentTerms); form.setValue("currency", supplier.currency); } } })}
+              {...form.register("supplierId", { onChange: (event) => { const supplier = suppliers.data?.find((item) => item.id === event.target.value); if (supplier) form.setValue("paymentTerms", supplier.paymentTerms); } })}
               placeholder="Select supplier"
               options={(suppliers.data ?? []).map((item) => ({
                 value: item.id,
@@ -720,7 +926,7 @@ export function PurchaseOrderFormModal({
               {...form.register("branchId", {
                 onChange: () => form.setValue("warehouseId", ""),
               })}
-              options={option(branches)}
+              options={option(branchOptions)}
             />
           </FormField>
           <FormField
@@ -750,16 +956,28 @@ export function PurchaseOrderFormModal({
             <Controller control={form.control} name="paymentTerms" render={({ field }) => <PaymentTermSelect value={field.value} onChange={(code) => field.onChange(code)} />} />
           </FormField>
           <FormField label="Currency">
-            <TextInput {...form.register("currency")} />
+            <TextInput {...form.register("currency")} readOnly />
           </FormField>
         </div>
         <Controller
           control={form.control}
           name="items"
           render={({ field }) => (
-            <PurchaseLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("orderDate")} />
+            <PurchaseLineEditor
+              value={field.value}
+              onChange={field.onChange}
+              taxDate={form.watch("orderDate")}
+              currencyCode={form.watch("currency")}
+              pricing
+              lockMasterData
+            />
           )}
         />
+        {!order?.sourceQuotationId && (
+          <FormField label="Direct purchase exception reason" required error={form.formState.errors.directPurchaseReason?.message}>
+            <Textarea rows={2} {...form.register("directPurchaseReason")} placeholder="Explain why the approved request and RFQ process is being bypassed." />
+          </FormField>
+        )}
         <FormField label="Notes">
           <Textarea rows={2} {...form.register("notes")} />
         </FormField>
@@ -964,6 +1182,7 @@ export function PurchaseInvoiceFormModal({ isOpen, onClose }: Props) {
   const receipts = useGoodsReceipts({ branchId: "all", pageSize: 100 });
   const mutations = usePurchasingMutations();
   const { terms } = usePaymentTerms();
+  const tenantCurrency = useTenantCurrency();
   const form = useForm<PurchaseInvoiceFormValues>({
     resolver: zodResolver(purchaseInvoiceSchema),
     defaultValues: {
@@ -973,6 +1192,7 @@ export function PurchaseInvoiceFormModal({ isOpen, onClose }: Props) {
       invoiceDate: today(),
       dueDate: future(30),
       paymentTerms: "",
+      currency: tenantCurrency.currencyCode ?? "USD",
       notes: "",
       items: [blankLine()],
     },
@@ -987,6 +1207,7 @@ export function PurchaseInvoiceFormModal({ isOpen, onClose }: Props) {
     const po = orders.data?.data.find((item) => item.id === poId);
     if (po) {
       form.setValue("paymentTerms", po.paymentTerms);
+      form.setValue("currency", po.currency);
       form.setValue(
         "items",
         po.items.map((item) => ({
@@ -1064,12 +1285,22 @@ export function PurchaseInvoiceFormModal({ isOpen, onClose }: Props) {
           <FormField label="Payment terms">
             <Controller control={form.control} name="paymentTerms" render={({ field }) => <PaymentTermSelect value={field.value} onChange={(code) => field.onChange(code)} />} />
           </FormField>
+          <FormField label="Currency">
+            <TextInput {...form.register("currency")} readOnly />
+          </FormField>
         </div>
         <Controller
           control={form.control}
           name="items"
           render={({ field }) => (
-            <PurchaseLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("invoiceDate")} />
+            <PurchaseLineEditor
+              value={field.value}
+              onChange={field.onChange}
+              taxDate={form.watch("invoiceDate")}
+              currencyCode={form.watch("currency")}
+              pricing
+              lockMasterData
+            />
           )}
         />
         <FormField label="Notes">

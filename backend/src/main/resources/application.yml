@@ -72,6 +72,7 @@ app:
     from: ${MAIL_FROM:no-reply@quickerp.local}
     # Frontend page that receives the reset token (?token=...).
     password-reset-url: ${PASSWORD_RESET_URL:http://localhost:3000/reset-password}
+    supplier-rfq-url: ${SUPPLIER_RFQ_URL:http://localhost:3000/supplier/rfq}
   files:
     max-bytes: 20971520
   ai:
@@ -192,6 +193,21 @@ app:
       - collection: core.auditEvents
         read: [audit.view]
         append-only: true
+      - collection: sales.flashSales
+        read: [sales.flash_sales.view, pos.sell, salesOrder.create]
+        write: [sales.flash_sales.create, sales.flash_sales.edit, sales.flash_sales.submit, sales.flash_sales.approve, sales.flash_sales.disable, pos.sell, salesOrder.create]
+      - collection: purchases.requests
+        read: [purchases.requests.view]
+        write: [purchases.requests.create, purchases.requests.edit, purchases.requests.submit, purchases.requests.approve, purchases.requests.return, purchases.requests.cancel, rfq.create, purchase.create]
+      - collection: purchases.rfqs
+        read: [purchases.rfq.view, rfq.view]
+        write: [rfq.create, rfq.edit]
+      - collection: purchases.rfqInvitations
+        read: [purchases.rfq.view, rfq.view]
+        write: [rfq.create]
+      - collection: purchases.quotations
+        read: [purchases.rfq.view, rfq.view]
+        write: [rfq.create]
       - collection: platform.foundation
         platform-only: true
       # --- Settings: administrators only, except screens every user has ---

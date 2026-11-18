@@ -30,7 +30,7 @@ export const productImportColumns: ImportColumnDefinition[] = [
   { key: 'trackInventory', label: 'Track Inventory' },
   { key: 'allowNegativeStock', label: 'Allow Negative Stock' },
   { key: 'minStockLevel', label: 'Minimum Stock' },
-  { key: 'reorderLevel', label: 'Reorder Level' },
+  { key: 'reorderLevel', label: 'Low Stock Level' },
   { key: 'maxStockLevel', label: 'Maximum Stock' },
   { key: 'trackByBatch', label: 'Track by Batch' },
   { key: 'trackBySerialNumber', label: 'Track by Serial Number' },

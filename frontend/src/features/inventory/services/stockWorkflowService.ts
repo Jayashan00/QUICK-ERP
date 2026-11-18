@@ -41,6 +41,8 @@ import { calculateAvailableQuantity, getStockAlertStatus } from "../utils/stockC
 import { inventoryStore } from "./inventoryStore";
 import { inventoryService } from "./inventoryService";
 import { inventorySettingsService } from "./inventorySettingsService";
+import { purchasingStore } from "@/features/purchases/services/purchasingStore";
+import { productRelationshipStore } from "@/features/products/services/productRelationshipStore";
 import { registerSet } from '@/core/persistence/stateRegistry';
 
 export type StockWorkflowKind =
@@ -1252,9 +1254,47 @@ export const stockWorkflowService = {
     ]);
     return balances
       .filter((item) => getStockAlertStatus(item.quantityAvailable, item.minStockLevel, item.reorderLevel) !== "healthy")
+      .filter((item) => !purchasingStore.requests().some((request) =>
+        request.sourceReorder?.balanceId === item.id &&
+        !["draft", "returned", "cancelled"].includes(request.status)))
       .map((item) => {
         const product = productFor(scope.tenantId, item.productId);
         const key = `${scope.tenantId}:${item.id}`;
+        const openPurchaseQuantity = purchasingStore.orders()
+          .filter((order) => order.tenantId === scope.tenantId &&
+            order.branchId === item.branchId &&
+            ["approved", "sent", "partially_received"].includes(order.status))
+          .reduce((total, order) => total + order.items
+            .filter((line) => line.productId === item.productId && (line.variantId ?? "") === (item.variantId ?? ""))
+            .reduce((sum, line) => sum + line.quantity, 0), 0);
+        const projectedAvailable = item.quantityAvailable + openPurchaseQuantity + item.quantityInTransit;
+        const transferSource = inventoryStore.balances()
+          .filter((balance) => balance.tenantId === scope.tenantId &&
+            balance.branchId !== item.branchId &&
+            balance.productId === item.productId &&
+            (balance.variantId ?? "") === (item.variantId ?? "") &&
+            calculateAvailableQuantity(balance.quantityOnHand, balance.quantityCommitted) > 0)
+          .sort((left, right) => calculateAvailableQuantity(right.quantityOnHand, right.quantityCommitted) -
+            calculateAvailableQuantity(left.quantityOnHand, left.quantityCommitted))[0];
+        const transferSuggestion = transferSource ? (() => {
+          const warehouse = inventoryStore.warehouses().find((row) => row.id === transferSource.warehouseId);
+          const location = inventoryStore.locations().find((row) => row.id === transferSource.locationId);
+          const branch = branches.find((row) => row.id === transferSource.branchId);
+          return {
+            branchId: transferSource.branchId,
+            branchName: branch?.name ?? transferSource.branchId,
+            warehouseId: transferSource.warehouseId,
+            warehouseName: warehouse?.name ?? transferSource.warehouseId,
+            locationId: transferSource.locationId,
+            locationName: location?.name ?? transferSource.locationId,
+            available: calculateAvailableQuantity(transferSource.quantityOnHand, transferSource.quantityCommitted),
+          };
+        })() : undefined;
+        const preferredSupplier = productRelationshipStore.suppliers()
+          .filter((relationship) => relationship.tenantId === scope.tenantId &&
+            relationship.productId === item.productId && relationship.isActive)
+          .sort((left, right) => Number(right.isPreferred) - Number(left.isPreferred))[0];
+        const leadTimeDays = preferredSupplier?.leadTimeDays ?? 14;
         return {
           balanceId: item.id,
           tenantId: item.tenantId,
@@ -1272,6 +1312,11 @@ export const stockWorkflowService = {
           reorderLevel: item.reorderLevel,
           maxStockLevel: product.maxStockLevel,
           suggestedQuantity: Math.max(1, (product.maxStockLevel ?? item.reorderLevel * 2) - item.quantityAvailable),
+          openPurchaseQuantity,
+          projectedAvailable,
+          quantityInTransit: item.quantityInTransit,
+          leadTimeDays,
+          transferSuggestion,
           handoffStatus: preparedReorders.has(key) ? "prepared" : "ready",
         };
       });
