@@ -10,9 +10,15 @@ import { toUrlSlug } from '@/shared/utils/slug';
 const fullPosPermissions = Object.values(TENANT_PERMISSIONS.POS);
 
 function normalizeAtomicModulePermissions(role: Role): Role {
-  const permissions = role.permissions.some((permission) => permission.startsWith('pos.'))
+  let permissions = role.permissions.some((permission) => permission.startsWith('pos.'))
     ? [...new Set([...role.permissions, ...fullPosPermissions])]
     : [...role.permissions];
+  if (role.isSystem && role.code === 'sales_manager') {
+    permissions = [...new Set([...permissions.filter((permission) => permission !== 'invoice.approve'), 'invoice.edit', 'invoice.submit', 'invoice.send'])];
+  }
+  if (role.isSystem && role.code === 'accountant') {
+    permissions = [...new Set([...permissions, 'invoice.approve', 'invoice.post', 'invoice.return', 'invoice.void', 'creditNote.approve', 'creditNote.post', 'creditNote.return', 'creditNote.void', 'creditNote.refund'])];
+  }
   return { ...role, permissions, isActive: role.isActive ?? true };
 }
 

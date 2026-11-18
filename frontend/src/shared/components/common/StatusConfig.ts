@@ -13,6 +13,7 @@ export const STATUS_CONFIG: Record<string, StatusStyleConfig> = {
   draft: { label: "Draft", variant: "default" },
   pending: { label: "Pending", variant: "warning" },
   approved: { label: "Approved", variant: "primary" },
+  posted: { label: "Posted", variant: "success" },
   rejected: { label: "Rejected", variant: "danger" },
   archived: { label: "Archived", variant: "default" },
   cancelled: { label: "Cancelled", variant: "danger" },
@@ -34,6 +35,7 @@ export const STATUS_CONFIG: Record<string, StatusStyleConfig> = {
   // Orders
   confirmed: { label: "Confirmed", variant: "primary" },
   processing: { label: "Processing", variant: "info" },
+  returned_to_sales: { label: "Returned to Sales", variant: "warning" },
   shipped: { label: "Shipped", variant: "info" },
   delivered: { label: "Delivered", variant: "success" },
   returned: { label: "Returned", variant: "warning" },

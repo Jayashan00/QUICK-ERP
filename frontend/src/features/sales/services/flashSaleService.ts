@@ -21,7 +21,7 @@ export const flashSaleService = {
     const value = { ...parsed, startsAt: new Date(parsed.startsAt).toISOString(), endsAt: new Date(parsed.endsAt).toISOString() };
     if (!scope.tenantId || !permittedBranches.includes(value.branchId)) throw new Error('Branch access is required.');
     const product = productStore.all().find(row => row.id === value.productId && row.tenantId === scope.tenantId && row.isSellable && row.status === 'active');
-    if (!product || product.type === 'composite' || product.hasVariants) throw new Error('Choose an active, single product.');
+    if (!product || product.type === 'composite') throw new Error('Choose an active, single product.');
     if (value.salePrice >= product.sellingPrice) throw new Error('Flash sale price must be below the normal selling price.');
     if (sales.some(sale => sale.id !== id && sale.tenantId === scope.tenantId && sale.branchId === value.branchId && sale.productId === value.productId && sale.enabled && value.enabled && Date.parse(sale.startsAt) < Date.parse(value.endsAt) && Date.parse(value.startsAt) < Date.parse(sale.endsAt))) throw new Error('This product already has a flash sale in that time period.');
     const now = new Date().toISOString();

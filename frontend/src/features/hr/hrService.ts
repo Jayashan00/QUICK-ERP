@@ -7,6 +7,7 @@ import { documentService } from '@/features/documents/documentService';
 import { auditEventService } from '@/core/audit';
 import type { User } from '@/core/auth/types/user';
 import { salesStore } from '@/features/sales/services/salesStore';
+import { settlementStore } from '@/features/accounting/settlementStore';
 import { getStateAccessor, registerList, replaceArray } from '@/core/persistence/stateRegistry';
 import { assertOpenAccountingPeriod } from '@/features/settings/finance/accountingPeriodEnforcement';
 import '@/features/settings/finance/services/tenantSettingsService';
@@ -249,17 +250,17 @@ export const hrService = {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error('Period must be YYYY-MM.');
     const periodEnd = new Date(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0).toISOString().slice(0, 10);
     assertOpenAccountingPeriod(scope.tenantId, periodEnd, 'prepare payroll');
-    return salesStore.payments().filter(payment => payment.tenantId === scope.tenantId && permitted(scope, payment.branchId) && (!branchId || payment.branchId === branchId) && payment.paymentDate.startsWith(period) && payment.amount > 0).flatMap(payment => {
-      const invoice = salesStore.invoices().find(row => row.id === payment.invoiceId && row.tenantId === scope.tenantId && row.branchId === payment.branchId && row.status !== 'void');
+    return settlementStore.records().filter(payment => payment.kind === 'receipt' && payment.tenantId === scope.tenantId && permitted(scope, payment.branchId) && (!branchId || payment.branchId === branchId) && payment.date.startsWith(period) && payment.amount > 0).flatMap(payment => {
+      const invoice = salesStore.invoices().find(row => row.id === payment.documentId && row.tenantId === scope.tenantId && row.branchId === payment.branchId && row.status !== 'void');
       if (!invoice?.salespersonId) return [];
-      return [{ paymentId: payment.id, invoiceId: invoice.id, branchId: payment.branchId, period, reference: payment.referenceNumber, salespersonId: invoice.salespersonId, salespersonName: invoice.salespersonName, currency: invoice.currency, collectedAmount: payment.amount, rate: 2.5, amount: round(payment.amount * 0.025), handoff: commissions.find(row => row.tenantId === scope.tenantId && row.paymentId === payment.id) }];
+      return [{ paymentId: payment.id, invoiceId: invoice.id, branchId: payment.branchId, period, reference: payment.reference, salespersonId: invoice.salespersonId, salespersonName: invoice.salespersonName, currency: invoice.currency, collectedAmount: payment.amount, rate: 2.5, amount: round(payment.amount * 0.025), handoff: commissions.find(row => row.tenantId === scope.tenantId && row.paymentId === payment.id) }];
     });
   },
   commissions: (scope: HrScope, branchId?: string) => visible(commissions, scope, branchId),
   prepareCommission(scope: HrScope, actor: HrActor, paymentId: string, employeeId: string) {
-    const candidate = salesStore.payments().find(payment => payment.id === paymentId && payment.tenantId === scope.tenantId && permitted(scope, payment.branchId));
+    const candidate = settlementStore.records().find(payment => payment.kind === 'receipt' && payment.id === paymentId && payment.tenantId === scope.tenantId && permitted(scope, payment.branchId));
     if (!candidate) throw new Error('Collected payment is unavailable in your branches.');
-    const source = this.commissionCandidates(scope, candidate.paymentDate.slice(0, 7), candidate.branchId).find(row => row.paymentId === paymentId);
+    const source = this.commissionCandidates(scope, candidate.date.slice(0, 7), candidate.branchId).find(row => row.paymentId === paymentId);
     if (!source) throw new Error('This payment is not eligible for commission.');
     const worker = employee(scope, employeeId);
     if (worker.branchId !== source.branchId || worker.status !== 'active') throw new Error('Choose an active employee in the payment branch.');

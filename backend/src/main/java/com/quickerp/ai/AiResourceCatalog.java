@@ -95,7 +95,6 @@ public final class AiResourceCatalog {
         resources.add(r("product_categories", "Product categories", "products", "products.categories", "products.categories.view", "product categories", "item categories"));
         resources.add(r("brands", "Product brands", "products", "products.brands", "products.brands.view", "brands", "product brands"));
         resources.add(r("units", "Units of measure", "products", "products.uoms", "products.uoms.view", "units of measure", "uom", "units"));
-        resources.add(r("price_lists", "Price lists", "products", "products.priceLists", "products.price_lists.view", "price lists", "pricing lists", "prices"));
         resources.add(r("product_variants", "Product variants", "products", "products.variants", "products.view", "product variants", "variants"));
         resources.add(r("product_suppliers", "Product suppliers", "products", "products.suppliers", "products.view", "product suppliers", "supplier products"));
         resources.add(r("product_specifications", "Product specifications", "products", "products.specifications", "products.view", "product specifications", "specifications"));

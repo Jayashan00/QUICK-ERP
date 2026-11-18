@@ -1,6 +1,5 @@
 import type {
   CreditNote,
-  CustomerPayment,
   DeliveryNote,
   RecurringInvoice,
   SalesInvoice,
@@ -142,31 +141,12 @@ export const mockSalesInvoices: SalesInvoice[] = [
     paymentTerms: "Net 30",
     currency: "USD",
     status: "partially_paid",
+      deliveryStatus: "sent",
+      collectionStatus: "partially_paid",
     items: [invoiceItem],
     ...totals([invoiceItem]),
     paidAmount: 200,
     outstandingAmount: totals([invoiceItem]).totalAmount - 200,
-  },
-];
-export const mockCustomerPayments: CustomerPayment[] = [
-  {
-    id: "customer-payment-001",
-    tenantId: "tenant-001",
-    branchId: "branch-001",
-    referenceNumber: "PAY-2026-0061",
-    invoiceId: "sales-invoice-001",
-    customerId: "cust-001",
-    amount: 200,
-    paymentMethod: "bank_transfer",
-    paymentDate: "2026-09-27",
-    externalReference: "BANK-TRX-88422",
-    remainingBalance: totals([invoiceItem]).totalAmount - 200,
-    accountingStatus: "prepared",
-    receivedBy: "usr-001",
-    receivedByName: "Admin User",
-    auditEntries: [],
-    createdAt,
-    updatedAt: createdAt,
   },
 ];
 export const mockSalesReturns: SalesReturn[] = [];

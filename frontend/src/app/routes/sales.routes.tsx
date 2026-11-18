@@ -19,9 +19,7 @@ const SalesQuotationsPage = salesPage("SalesQuotationsPage");
 const SalesOrdersPage = salesPage("SalesOrdersPage");
 const DeliveryNotesPage = salesPage("DeliveryNotesPage");
 const SalesInvoicesPage = salesPage("SalesInvoicesPage");
-const CustomerPaymentsPage = salesPage("CustomerPaymentsPage");
 const SalesReturnsPage = salesPage("SalesReturnsPage");
-const CreditNotesPage = salesPage("CreditNotesPage");
 const RecurringInvoicesPage = salesPage("RecurringInvoicesPage");
 const SalesCommissionsPage = salesPage("SalesCommissionsPage");
 const FlashSalesPage = lazyPage(() => import("@/features/sales/pages/FlashSalesPage").then(module => ({ default: module.FlashSalesPage })));
@@ -65,16 +63,8 @@ export const salesRoutes: RouteObject[] = [
     element: protect(PERMISSIONS.SALES_WORKFLOW.VIEW, SalesInvoicesPage),
   },
   {
-    path: "sales/payments",
-    element: protect(PERMISSIONS.SALES_WORKFLOW.VIEW, CustomerPaymentsPage),
-  },
-  {
     path: "sales/returns",
     element: protect(PERMISSIONS.SALES_WORKFLOW.VIEW, SalesReturnsPage),
-  },
-  {
-    path: "sales/credit-notes",
-    element: protect(PERMISSIONS.SALES_WORKFLOW.VIEW, CreditNotesPage),
   },
   {
     path: "sales/recurring",

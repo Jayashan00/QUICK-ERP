@@ -17,15 +17,103 @@ import { mockSuppliers } from '@/features/suppliers/mocks/suppliers';
 import { mockDocuments } from '@/shared/mocks/documents';
 import { documentService } from '@/features/documents/documentService';
 import { tenantSettingsService } from '@/features/settings/finance/services/tenantSettingsService';
+import { SUPPLIER_PAYMENT_METHODS } from '@/features/suppliers/schemas/supplier.schema';
+import { purchasingStore } from '@/features/purchases/services/purchasingStore';
+import { accountingService } from '@/features/accounting/accountingService';
+import type { PurchaseInvoice, PurchaseOrderStatus } from '@/features/purchases/types/purchasing';
 
 let suppliersStore: Supplier[] = [...mockSuppliers];
+
+function nextSupplierCode(tenantId: string): string {
+  const highestSequence = suppliersStore
+    .filter((supplier) => supplier.tenantId === tenantId)
+    .reduce((highest, supplier) => {
+      const match = /^SUP-(\d+)$/i.exec(supplier.code.trim());
+      return match ? Math.max(highest, Number(match[1])) : highest;
+    }, 0);
+
+  return `SUP-${String(highestSequence + 1).padStart(4, '0')}`;
+}
+
+function assertSupportedPaymentMethod(paymentMethod?: string): void {
+  if (
+    paymentMethod
+    && !(SUPPLIER_PAYMENT_METHODS as readonly string[]).includes(paymentMethod)
+  ) {
+    throw new Error(`${paymentMethod} is not a supported supplier payment method`);
+  }
+}
+
+function normalizeSupportedCurrency(
+  currency: string | undefined,
+  fallback: string,
+  supportedCurrencies: string[],
+): string {
+  const normalized = (currency || fallback).trim().toUpperCase();
+  if (!supportedCurrencies.includes(normalized)) {
+    throw new Error(`${normalized || 'Selected currency'} is not supported by this company`);
+  }
+  return normalized;
+}
+
+function assertRequiredBankDetails(
+  paymentMethod: string | undefined,
+  bankDetails: Supplier['bankDetails'],
+): void {
+  if (paymentMethod !== 'bank_transfer') return;
+  if (!bankDetails?.bankName?.trim()) {
+    throw new Error('Bank name is required for bank transfers');
+  }
+  if (!bankDetails.accountName?.trim()) {
+    throw new Error('Account name is required for bank transfers');
+  }
+  if (!bankDetails.accountNumber?.trim()) {
+    throw new Error('Account number is required for bank transfers');
+  }
+}
 
 /** Supplier history preview records, separate from the purchasing workflow document. */
 export interface SupplierPurchaseHistoryOrder {
   id: string; tenantId: string; branchId: string; poNumber: string; supplierId: string; supplierName: string;
-  orderDate: string; expectedDate: string; status: 'draft' | 'issued' | 'received' | 'partial' | 'cancelled';
+  orderDate: string; expectedDate: string; status: PurchaseOrderStatus;
   currency: string; items: { id: string; productId: string; productName: string; sku: string; unit: string; quantity: number; unitPrice: number; taxPercent: number; taxAmount: number; subtotal: number; total: number }[];
   subtotal: number; taxAmount: number; totalAmount: number; notes?: string; createdAt: string; updatedAt: string;
+}
+
+const financialInvoiceStatuses = new Set<PurchaseInvoice['status']>([
+  'approved',
+  'partially_paid',
+  'paid',
+  'overdue',
+]);
+
+const roundMoney = (amount: number) => Math.round(amount * 100) / 100;
+
+function financialBranchIds(
+  branchId?: string,
+  permittedBranchIds: string[] = [],
+): string[] {
+  const permitted = permittedBranchIds.length
+    ? permittedBranchIds
+    : branchId
+      ? [branchId]
+      : [];
+  if (!branchId) return [...new Set(permitted)];
+  return permitted.includes(branchId) ? [branchId] : [];
+}
+
+function financialInvoices(
+  tenantId: string,
+  supplierId: string,
+  branchIds: string[],
+): PurchaseInvoice[] {
+  return purchasingStore.invoices().filter(
+    (invoice) =>
+      invoice.tenantId === tenantId
+      && invoice.supplierId === supplierId
+      && branchIds.includes(invoice.branchId)
+      && financialInvoiceStatuses.has(invoice.status),
+  );
 }
 
 function createMockDocPreview(title: string, category: string): string {
@@ -161,7 +249,14 @@ export interface PaginatedSuppliersResult {
   pageSize: number;
 }
 
-export type CreateSupplierInput = Omit<Supplier, 'id' | 'createdAt' | 'updatedAt' | 'tenantId'>;
+export type CreateSupplierInput = Omit<
+  Supplier,
+  'id' | 'code' | 'createdAt' | 'updatedAt' | 'tenantId'
+>;
+
+export type UpdateSupplierInput = Partial<
+  Omit<Supplier, 'id' | 'code' | 'createdAt' | 'updatedAt' | 'tenantId'>
+>;
 
 export const supplierService = {
   async getSuppliers(
@@ -278,17 +373,35 @@ export const supplierService = {
   async createSupplier(tenantId: string, data: CreateSupplierInput): Promise<Supplier> {
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    const duplicate = suppliersStore.find(
-      (s) => s.tenantId === tenantId && s.code === data.code,
+    const localization = await tenantSettingsService.getLocalization(tenantId);
+    const currency = normalizeSupportedCurrency(
+      data.currency,
+      localization.baseCurrency,
+      localization.supportedCurrencies,
     );
-    if (duplicate) {
-      throw new Error(`Supplier with code "${data.code}" already exists.`);
-    }
+    assertSupportedPaymentMethod(data.paymentMethod);
+    const bankDetails = data.paymentMethod === 'cash'
+      ? undefined
+      : data.bankDetails;
+    const bankCurrency = bankDetails?.currency
+      ? normalizeSupportedCurrency(
+          bankDetails.currency,
+          currency,
+          localization.supportedCurrencies,
+        )
+      : undefined;
+    const normalizedBankDetails = bankDetails
+      ? { ...bankDetails, currency: bankCurrency }
+      : undefined;
+    assertRequiredBankDetails(data.paymentMethod, normalizedBankDetails);
     const paymentTerm = tenantSettingsService.requirePaymentTerm(tenantId, data.paymentTermCode ?? data.paymentTermsDays);
 
     const now = new Date().toISOString();
     const newSupplier: Supplier = {
       ...data,
+      code: nextSupplierCode(tenantId),
+      currency,
+      bankDetails: normalizedBankDetails,
       paymentTermCode: paymentTerm.code,
       paymentTermsDays: paymentTerm.dueDays,
       id: crypto.randomUUID(),
@@ -303,21 +416,50 @@ export const supplierService = {
   async updateSupplier(
     tenantId: string,
     id: string,
-    data: Partial<Supplier>,
+    data: UpdateSupplierInput,
   ): Promise<Supplier> {
     await new Promise((resolve) => setTimeout(resolve, 250));
     const index = suppliersStore.findIndex(
       (s) => s.id === id && s.tenantId === tenantId,
     );
     if (index === -1) throw new Error('Supplier not found');
+    const localization = await tenantSettingsService.getLocalization(tenantId);
+    const currency = data.currency === undefined
+      ? suppliersStore[index].currency
+      : normalizeSupportedCurrency(
+          data.currency,
+          localization.baseCurrency,
+          localization.supportedCurrencies,
+        );
+    assertSupportedPaymentMethod(data.paymentMethod);
+    const paymentMethod = data.paymentMethod ?? suppliersStore[index].paymentMethod;
+    const candidateBankDetails = paymentMethod === 'cash'
+      ? undefined
+      : data.bankDetails ?? suppliersStore[index].bankDetails;
+    const bankCurrency = candidateBankDetails?.currency
+      ? normalizeSupportedCurrency(
+          candidateBankDetails.currency,
+          currency,
+          localization.supportedCurrencies,
+        )
+      : undefined;
+    const normalizedBankDetails = candidateBankDetails
+      ? { ...candidateBankDetails, currency: bankCurrency }
+      : undefined;
+    if (data.paymentMethod !== undefined || data.bankDetails !== undefined) {
+      assertRequiredBankDetails(paymentMethod, normalizedBankDetails);
+    }
     const paymentTerm = tenantSettingsService.requirePaymentTerm(tenantId, data.paymentTermCode ?? data.paymentTermsDays ?? suppliersStore[index].paymentTermCode ?? suppliersStore[index].paymentTermsDays);
 
     const updated: Supplier = {
       ...suppliersStore[index],
       ...data,
+      currency,
+      bankDetails: normalizedBankDetails,
       paymentTermCode: paymentTerm.code,
       paymentTermsDays: paymentTerm.dueDays,
       id: suppliersStore[index].id,
+      code: suppliersStore[index].code,
       tenantId: suppliersStore[index].tenantId,
       createdAt: suppliersStore[index].createdAt,
       updatedAt: new Date().toISOString(),
@@ -495,75 +637,81 @@ export const supplierService = {
   async getSupplierActivity(
     tenantId: string,
     supplierId: string,
+    branchId?: string,
+    permittedBranchIds: string[] = branchId ? [branchId] : [],
   ): Promise<SupplierActivity[]> {
     await new Promise((resolve) => setTimeout(resolve, 200));
     const supplier = suppliersStore.find(
       (s) => s.id === supplierId && s.tenantId === tenantId,
     );
     if (!supplier) return [];
-
-    const categories: SupplierActivity['category'][] = [
-      'general',
-      'status',
-      'order',
-      'payment',
-      'document',
-      'note',
-    ];
-
-    const actions: Record<string, { action: string; description: string }[]> = {
-      general: [
-        { action: 'Supplier Updated', description: `Contact person updated to ${supplier.contactPerson}.` },
-        { action: 'Category Changed', description: `Category set to ${supplier.category ?? 'Other'}.` },
-      ],
-      status: [
-        { action: 'Status Changed', description: `Status changed from Pending to Active.` },
-        { action: 'Supplier Approved', description: `Supplier "${supplier.name}" was approved for procurement.` },
-      ],
-      order: [
-        { action: 'Purchase Order Created', description: `PO-2025-0042 created for ${supplier.currency} 12,500.00.` },
-        { action: 'Purchase Order Received', description: `PO-2025-0038 marked as fully received.` },
-        { action: 'Purchase Order Issued', description: `PO-2025-0045 issued to ${supplier.name}.` },
-      ],
-      payment: [
-        { action: 'Payment Processed', description: `Payment of ${supplier.currency} 8,750.00 processed via bank transfer.` },
-        { action: 'Credit Note Applied', description: `Credit note CN-2025-0012 for ${supplier.currency} 450.00 applied.` },
-      ],
-      document: [
-        { action: 'Document Uploaded', description: `Tax registration certificate uploaded.` },
-        { action: 'Document Expired', description: `Insurance certificate has expired and needs renewal.` },
-      ],
-      note: [
-        { action: 'Note Added', description: `Internal note added regarding delivery schedules.` },
-        { action: 'Note Updated', description: `Note about payment terms clarification updated.` },
-      ],
+    const branchIds = financialBranchIds(branchId, permittedBranchIds);
+    const orders = purchasingStore.orders().filter(
+      (order) => order.tenantId === tenantId
+        && order.supplierId === supplierId
+        && branchIds.includes(order.branchId),
+    );
+    const invoices = purchasingStore.invoices().filter(
+      (invoice) => invoice.tenantId === tenantId
+        && invoice.supplierId === supplierId
+        && branchIds.includes(invoice.branchId),
+    );
+    const invoiceIds = new Set(invoices.map((invoice) => invoice.id));
+    const scope = {
+      tenantId,
+      branchId: branchId ?? branchIds[0] ?? '',
+      permittedBranchIds: branchIds,
     };
+    const payments = branchIds.length
+      ? accountingService.settlements(scope).filter(
+          (settlement) => settlement.kind === 'payment' && invoiceIds.has(settlement.documentId),
+        )
+      : [];
 
-    const actors = ['Sarah Thompson', 'James Chen', 'Emily Rodriguez', 'Michael Kim', 'Admin'];
-
-    const activities: SupplierActivity[] = [];
-    const baseDate = new Date();
-
-    for (let i = 0; i < 12; i++) {
-      const cat = categories[i % categories.length] ?? 'general';
-      const catActions = actions[cat] ?? actions['general'];
-      const entry = catActions[i % catActions.length];
-
-      const ts = new Date(baseDate);
-      ts.setDate(ts.getDate() - i * 3 - Math.floor(Math.random() * 2));
-      ts.setHours(9 + (i % 8), Math.floor(Math.random() * 60));
-
-      activities.push({
-        id: `act-${supplierId}-${i}`,
+    const activities: SupplierActivity[] = [
+      ...orders.flatMap((order) => order.auditEntries.map((entry) => ({
+        id: `supplier-${entry.id}`,
         tenantId,
         supplierId,
-        action: entry.action,
-        description: entry.description,
-        actorName: actors[i % actors.length],
-        timestamp: ts.toISOString(),
-        category: cat,
-      });
-    }
+        action: `Purchase Order ${entry.action}`,
+        description: `${order.referenceNumber}: ${entry.action}.`,
+        actorName: entry.actorName,
+        timestamp: entry.timestamp,
+        category: 'order' as const,
+      }))),
+      ...invoices.flatMap((invoice) => invoice.auditEntries.map((entry) => ({
+        id: `supplier-${entry.id}`,
+        tenantId,
+        supplierId,
+        action: `Purchase Invoice ${entry.action}`,
+        description: `${invoice.referenceNumber}: ${entry.action}.`,
+        actorName: entry.actorName,
+        timestamp: entry.timestamp,
+        category: 'payment' as const,
+      }))),
+      ...payments.map((payment) => ({
+        id: `supplier-${payment.id}`,
+        tenantId,
+        supplierId,
+        action: 'Supplier Payment Recorded',
+        description: `${payment.reference} recorded against ${invoices.find((invoice) => invoice.id === payment.documentId)?.referenceNumber ?? payment.documentId}.`,
+        actorName: 'Accounting',
+        timestamp: payment.date,
+        category: 'payment' as const,
+      })),
+      ...supplierNotesStore
+        .filter((note) => note.tenantId === tenantId && note.supplierId === supplierId)
+        .map((note) => ({
+          id: `supplier-${note.id}`,
+          tenantId,
+          supplierId,
+          action: 'Supplier Note Recorded',
+          description: note.content,
+          actorName: note.updatedBy ?? note.createdBy,
+          timestamp: note.updatedAt,
+          category: 'note' as const,
+        })),
+    ];
 
     return activities.sort(
       (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
@@ -576,81 +724,53 @@ export const supplierService = {
     tenantId: string,
     supplierId: string,
     branchId?: string,
+    permittedBranchIds: string[] = branchId ? [branchId] : [],
   ): Promise<SupplierPurchaseHistoryOrder[]> {
     await new Promise((resolve) => setTimeout(resolve, 200));
     const supplier = suppliersStore.find(
       (s) => s.id === supplierId && s.tenantId === tenantId,
     );
     if (!supplier) return [];
-
-    const statuses: SupplierPurchaseHistoryOrder['status'][] = ['draft', 'issued', 'received', 'partial', 'cancelled'];
-    const orders: SupplierPurchaseHistoryOrder[] = [];
-    const baseDate = new Date();
-
-    for (let i = 0; i < 8; i++) {
-      const orderDate = new Date(baseDate);
-      orderDate.setDate(orderDate.getDate() - i * 12 - ((i * 7 + 3) % 10));
-
-      const expectedDate = new Date(orderDate);
-      expectedDate.setDate(expectedDate.getDate() + 14 + ((i * 5 + 2) % 14));
-
-      const supplierSeed = [...supplier.id].reduce((sum, character) => sum + character.charCodeAt(0), 0);
-      const subtotal = 5000 + ((supplierSeed * 137 + i * 7919) % 25000);
-      const taxRate = tenantSettingsService.resolveDefaultTaxRate(tenantId, 'purchase', orderDate.toISOString().slice(0, 10))?.percentage ?? 0;
-      const taxFactor = taxRate / 100;
-      const taxAmount = Math.round(subtotal * taxFactor * 100) / 100;
-      const totalAmount = Math.round((subtotal + taxAmount) * 100) / 100;
-      const status = statuses[i % statuses.length];
-
-      orders.push({
-        id: `po-${supplierId}-${i}`,
-        tenantId,
-        branchId: i % 2 === 0 ? 'branch-001' : 'branch-002',
-        poNumber: `PO-2025-${String(42 + i).padStart(4, '0')}`,
-        supplierId,
+    const branchIds = financialBranchIds(branchId, permittedBranchIds);
+    const orders: SupplierPurchaseHistoryOrder[] = purchasingStore.orders()
+      .filter(
+        (order) => order.tenantId === tenantId
+          && order.supplierId === supplierId
+          && branchIds.includes(order.branchId),
+      )
+      .map((order) => ({
+        id: order.id,
+        tenantId: order.tenantId,
+        branchId: order.branchId,
+        poNumber: order.referenceNumber,
+        supplierId: order.supplierId,
         supplierName: supplier.name,
-        orderDate: orderDate.toISOString(),
-        expectedDate: expectedDate.toISOString(),
-        status,
-        currency: supplier.currency,
-        items: [
-          {
-            id: `item-${i}-1`,
-            productId: `prod-${i}-1`,
-            productName: `Component Part ${i + 1}A`,
-            sku: `COMP-${i + 1}A`,
-            unit: 'unit',
-            quantity: 10 + i * 5,
-            unitPrice: Math.round((subtotal * 0.6) / (10 + i * 5) * 100) / 100,
-            taxPercent: taxRate,
-            taxAmount: Math.round(subtotal * 0.6 * taxFactor * 100) / 100,
-            subtotal: Math.round(subtotal * 0.6 * 100) / 100,
-            total: Math.round(subtotal * 0.6 * (1 + taxFactor) * 100) / 100,
-          },
-          {
-            id: `item-${i}-2`,
-            productId: `prod-${i}-2`,
-            productName: `Assembly Kit ${i + 1}B`,
-            sku: `KIT-${i + 1}B`,
-            unit: 'unit',
-            quantity: 5 + i * 2,
-            unitPrice: Math.round((subtotal * 0.4) / (5 + i * 2) * 100) / 100,
-            taxPercent: taxRate,
-            taxAmount: Math.round(subtotal * 0.4 * taxFactor * 100) / 100,
-            subtotal: Math.round(subtotal * 0.4 * 100) / 100,
-            total: Math.round(subtotal * 0.4 * (1 + taxFactor) * 100) / 100,
-          },
-        ],
-        subtotal,
-        taxAmount,
-        totalAmount,
-        notes: i % 3 === 0 ? 'Urgent delivery required.' : undefined,
-        createdAt: orderDate.toISOString(),
-        updatedAt: orderDate.toISOString(),
-      });
-    }
+        orderDate: order.orderDate,
+        expectedDate: order.expectedDeliveryDate,
+        status: order.status,
+        currency: order.currency,
+        items: order.items.map((item) => ({
+          id: item.id,
+          productId: item.productId,
+          productName: item.description ?? item.productId,
+          sku: item.productId,
+          unit: 'unit',
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          taxPercent: item.taxPercent,
+          taxAmount: item.taxAmount,
+          subtotal: item.subtotal,
+          total: item.total,
+        })),
+        subtotal: order.subtotal,
+        taxAmount: order.taxAmount,
+        totalAmount: order.totalAmount,
+        notes: order.notes,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+      }));
 
-    return orders.filter((order) => !branchId || order.branchId === branchId).sort(
+    return orders.sort(
       (a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime(),
     );
   },
@@ -661,6 +781,7 @@ export const supplierService = {
     tenantId: string,
     supplierId: string,
     branchId?: string,
+    permittedBranchIds: string[] = branchId ? [branchId] : [],
   ): Promise<SupplierTransaction[]> {
     await new Promise((resolve) => setTimeout(resolve, 200));
     const supplier = suppliersStore.find(
@@ -668,47 +789,60 @@ export const supplierService = {
     );
     if (!supplier) return [];
 
-    const types: SupplierTransaction['type'][] = ['invoice', 'payment', 'credit_note', 'debit_note', 'refund'];
-    const statusOptions: SupplierTransaction['status'][] = ['completed', 'pending', 'cleared'];
-    const txns: SupplierTransaction[] = [];
-    const baseDate = new Date();
-    baseDate.setHours(0, 0, 0, 0);
-    const supplierSeed = [...supplier.id].reduce((sum, character) => sum + character.charCodeAt(0), 0);
-
-    for (let i = 9; i >= 0; i--) {
-      const txDate = new Date(baseDate);
-      txDate.setDate(txDate.getDate() - i * 8 - ((i * 3 + 1) % 5));
-
-      const type = types[i % types.length];
-      const isDebit = type === 'invoice' || type === 'debit_note';
-
-      const amount = 1000 + ((supplierSeed * 113 + i * 3253) % 15000);
-      const debit = isDebit ? amount : 0;
-      const credit = isDebit ? 0 : amount;
-      txns.push({
-        id: `txn-${supplierId}-${i}`,
+    const branchIds = financialBranchIds(branchId, permittedBranchIds);
+    const invoices = financialInvoices(tenantId, supplierId, branchIds);
+    const invoiceById = new Map(invoices.map((invoice) => [invoice.id, invoice]));
+    const scope = {
+      tenantId,
+      branchId: branchId ?? branchIds[0] ?? '',
+      permittedBranchIds: branchIds,
+    };
+    const payments = branchIds.length
+      ? accountingService.settlements(scope).filter(
+          (settlement) => settlement.kind === 'payment' && invoiceById.has(settlement.documentId),
+        )
+      : [];
+    const scoped: SupplierTransaction[] = [
+      ...invoices.map((invoice) => ({
+        id: `supplier-invoice-${invoice.id}`,
         tenantId,
-        branchId: i % 2 === 0 ? 'branch-001' : 'branch-002',
+        branchId: invoice.branchId,
         supplierId,
-        transactionNumber: `TXN-2025-${String(100 + i).padStart(4, '0')}`,
-        referenceNumber: isDebit ? `INV-2025-${String(200 + i).padStart(4, '0')}` : `PMT-2025-${String(300 + i).padStart(4, '0')}`,
-        date: txDate.toISOString(),
-        type,
-        description: isDebit
-          ? `Invoice for purchase order PO-2025-${String(42 + i).padStart(4, '0')}`
-          : `Payment against invoice INV-2025-${String(200 + i).padStart(4, '0')}`,
-        debit,
-        credit,
+        transactionNumber: invoice.referenceNumber,
+        referenceNumber: invoice.supplierInvoiceNumber,
+        date: invoice.invoiceDate,
+        type: 'invoice' as const,
+        description: `Approved supplier invoice ${invoice.supplierInvoiceNumber}`,
+        debit: invoice.totalAmount,
+        credit: 0,
         balance: 0,
-        currency: supplier.currency,
-        status: statusOptions[i % statusOptions.length],
-      });
-    }
+        currency: invoice.currency,
+        status: invoice.status === 'paid' ? 'completed' as const : 'pending' as const,
+      })),
+      ...payments.map((payment) => {
+        const invoice = invoiceById.get(payment.documentId)!;
+        return {
+          id: `supplier-payment-${payment.id}`,
+          tenantId,
+          branchId: payment.branchId,
+          supplierId,
+          transactionNumber: payment.reference,
+          referenceNumber: invoice.referenceNumber,
+          date: payment.date,
+          type: 'payment' as const,
+          description: `Payment against ${invoice.referenceNumber}`,
+          debit: 0,
+          credit: payment.amount,
+          balance: 0,
+          currency: invoice.currency,
+          status: 'cleared' as const,
+        };
+      }),
+    ].sort((a, b) => a.date.localeCompare(b.date));
 
-    const scoped = txns.filter((transaction) => !branchId || transaction.branchId === branchId);
     let runningBalance = 0;
     for (const transaction of scoped) {
-      runningBalance = Math.round((runningBalance + transaction.debit - transaction.credit) * 100) / 100;
+      runningBalance = roundMoney(runningBalance + transaction.debit - transaction.credit);
       transaction.balance = Math.max(runningBalance, 0);
     }
 
@@ -722,6 +856,8 @@ export const supplierService = {
   async getSupplierBalance(
     tenantId: string,
     supplierId: string,
+    branchId?: string,
+    permittedBranchIds: string[] = branchId ? [branchId] : [],
   ): Promise<SupplierBalanceSummary | null> {
     await new Promise((resolve) => setTimeout(resolve, 150));
     const supplier = suppliersStore.find(
@@ -729,24 +865,49 @@ export const supplierService = {
     );
     if (!supplier) return null;
 
-    const totalPurchases = Math.round((50000 + Math.random() * 150000) * 100) / 100;
-    const totalPayments = Math.round(totalPurchases * (0.65 + Math.random() * 0.25) * 100) / 100;
-    const outstandingBalance = Math.round((totalPurchases - totalPayments) * 100) / 100;
-    const overdueAmount = Math.round(outstandingBalance * (0.1 + Math.random() * 0.3) * 100) / 100;
-
-    const lastPayDate = new Date();
-    lastPayDate.setDate(lastPayDate.getDate() - Math.floor(Math.random() * 30 + 5));
+    const branchIds = financialBranchIds(branchId, permittedBranchIds);
+    const invoices = financialInvoices(tenantId, supplierId, branchIds);
+    const invoiceIds = new Set(invoices.map((invoice) => invoice.id));
+    const scope = {
+      tenantId,
+      branchId: branchId ?? branchIds[0] ?? '',
+      permittedBranchIds: branchIds,
+    };
+    const payables = branchIds.length
+      ? accountingService.payables(scope).filter(
+          (payable) => payable.party === supplierId && invoiceIds.has(payable.id),
+        )
+      : [];
+    const payments = branchIds.length
+      ? accountingService.settlements(scope)
+          .filter((settlement) => settlement.kind === 'payment' && invoiceIds.has(settlement.documentId))
+          .sort((a, b) => b.date.localeCompare(a.date))
+      : [];
+    const orders = purchasingStore.orders().filter(
+      (order) => order.tenantId === tenantId
+        && order.supplierId === supplierId
+        && branchIds.includes(order.branchId),
+    );
+    const today = new Date().toISOString().slice(0, 10);
+    const totalPurchases = roundMoney(invoices.reduce((sum, invoice) => sum + invoice.totalAmount, 0));
+    const totalPayments = roundMoney(payables.reduce((sum, payable) => sum + payable.paid, 0));
+    const outstandingBalance = roundMoney(payables.reduce((sum, payable) => sum + payable.outstanding, 0));
+    const overdueAmount = roundMoney(payables
+      .filter((payable) => payable.outstanding > 0 && (payable.status === 'overdue' || payable.dueDate < today))
+      .reduce((sum, payable) => sum + payable.outstanding, 0));
+    const lastPayment = payments[0];
 
     return {
       outstandingBalance,
       totalPurchases,
       totalPayments,
       overdueAmount,
-      creditLimit: 100000,
       currency: supplier.currency,
-      lastPaymentDate: lastPayDate.toISOString(),
-      lastPaymentAmount: Math.round((2000 + Math.random() * 8000) * 100) / 100,
-      pendingOrdersCount: Math.floor(Math.random() * 5) + 1,
+      lastPaymentDate: lastPayment?.date,
+      lastPaymentAmount: lastPayment?.amount,
+      pendingOrdersCount: orders.filter(
+        (order) => order.status !== 'completed' && order.status !== 'cancelled',
+      ).length,
     };
   },
 
@@ -756,6 +917,7 @@ export const supplierService = {
     startDate: string,
     endDate: string,
     branchId?: string,
+    permittedBranchIds: string[] = branchId ? [branchId] : [],
   ): Promise<SupplierStatementData | null> {
     const supplier = suppliersStore.find(
       (s) => s.id === supplierId && s.tenantId === tenantId,
@@ -765,7 +927,12 @@ export const supplierService = {
       return { transactions: [], currency: supplier.currency };
     }
 
-    const transactions = await this.getSupplierTransactions(tenantId, supplierId, branchId);
+    const transactions = await this.getSupplierTransactions(
+      tenantId,
+      supplierId,
+      branchId,
+      permittedBranchIds,
+    );
     const filtered = transactions
       .filter((transaction) => {
         const transactionDate = transaction.date.slice(0, 10);
@@ -784,35 +951,50 @@ export const supplierService = {
     tenantId: string,
     supplierId: string,
     branchId?: string,
+    permittedBranchIds: string[] = branchId ? [branchId] : [],
   ): Promise<SupplierPerformanceSummary | null> {
     const supplier = suppliersStore.find(
       (s) => s.id === supplierId && s.tenantId === tenantId,
     );
     if (!supplier) return null;
 
-    const orders = await this.getSupplierPurchaseHistory(tenantId, supplierId, branchId);
-    const openOrders = orders.filter(
-      (order) => order.status === 'issued' || order.status === 'partial',
+    const branchIds = financialBranchIds(branchId, permittedBranchIds);
+    const orders = await this.getSupplierPurchaseHistory(
+      tenantId,
+      supplierId,
+      branchId,
+      permittedBranchIds,
     );
-    const supplierSeed = [...supplier.id].reduce(
-      (sum, character) => sum + character.charCodeAt(0),
-      0,
+    const openOrders = orders.filter(
+      (order) => ['draft', 'pending_approval', 'approved', 'sent', 'partially_received'].includes(order.status),
+    );
+    const receipts = purchasingStore.receipts().filter(
+      (receipt) => receipt.tenantId === tenantId
+        && receipt.supplierId === supplierId
+        && branchIds.includes(receipt.branchId),
+    );
+    const returns = purchasingStore.returns().filter(
+      (purchaseReturn) => purchaseReturn.tenantId === tenantId
+        && purchaseReturn.supplierId === supplierId
+        && branchIds.includes(purchaseReturn.branchId)
+        && purchaseReturn.status !== 'cancelled',
     );
     return {
       purchaseOrderCount: orders.length,
       totalPurchaseOrderValue: orders.reduce((sum, order) => sum + order.totalAmount, 0),
-      receivedOrderCount: orders.filter((order) => order.status === 'received').length,
+      receivedOrderCount: orders.filter((order) => order.status === 'completed').length,
       openOrderCount: openOrders.length,
       openPurchaseOrderValue: openOrders.reduce((sum, order) => sum + order.totalAmount, 0),
       cancelledOrderCount: orders.filter((order) => order.status === 'cancelled').length,
       scheduledDeliveryCount: orders.filter((order) => Boolean(order.expectedDate)).length,
-      returnedOrderCount: orders.length ? supplierSeed % Math.min(orders.length + 1, 4) : 0,
-      rejectedReceiptCount: orders.length
-        ? Math.floor(supplierSeed / 3) % Math.min(orders.length + 1, 4)
-        : 0,
-      returnIndicatorsAreMock: true,
+      returnedOrderCount: returns.length,
+      rejectedReceiptCount: receipts.filter(
+        (receipt) => receipt.status === 'completed'
+          && receipt.items.some((item) => item.rejectedQuantity > 0),
+      ).length,
+      returnIndicatorsAreMock: false,
       currency: supplier.currency,
-      deliveryTrackingAvailable: false,
+      deliveryTrackingAvailable: orders.some((order) => Boolean(order.expectedDate)),
     };
   },
 };

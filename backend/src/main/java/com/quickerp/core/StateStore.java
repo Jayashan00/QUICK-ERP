@@ -942,6 +942,12 @@ public final class StateStore {
         if (tenantScope && RecordGuards.QUOTATIONS.equals(change.collection())) {
             guardQuotation(connection, tenant, change);
         }
+        if (tenantScope && RecordGuards.SALES_ORDERS.equals(change.collection()) && !principal.superAdmin()) {
+            guardSalesOrder(connection, principal, permissions, tenant, change);
+        }
+        if (tenantScope && RecordGuards.CREDIT_NOTES.equals(change.collection()) && !principal.superAdmin()) {
+            guardCreditNote(connection, permissions, tenant, change);
+        }
         if (tenantScope && change.collection().startsWith("notifications.")) {
             guardNotificationChange(connection, principal, permissions, tenant, change);
         }
@@ -1211,6 +1217,22 @@ public final class StateStore {
             throw ApiException.badRequest("The journal id does not match its content.");
         }
         RecordGuards.checkJournal(permissions, stored, change.isDelete() ? null : change.data());
+    }
+
+    private void guardSalesOrder(Connection connection, Principal principal, Permissions permissions, String tenant, Change change) throws SQLException {
+        String recordId = change.recordId();
+        if (ORDER_RECORD.equals(recordId)) return;
+        if (isReserved(recordId)) throw ApiException.badRequest("Sales orders must be saved one by one.");
+        JsonNode stored = storedData(connection, tenant, change.collection(), recordId);
+        if (!change.isDelete() && !recordId.equals(Sql.text(change.data(), "id"))) {
+            throw ApiException.badRequest("The sales order id does not match its content.");
+        }
+        RecordGuards.checkSalesOrder(permissions, principal, stored, change.isDelete() ? null : change.data());
+    }
+
+    private void guardCreditNote(Connection connection, Permissions permissions, String tenant, Change change) throws SQLException {
+        JsonNode stored = storedData(connection, tenant, RecordGuards.CREDIT_NOTES, change.recordId());
+        RecordGuards.checkCreditNote(permissions, stored, change.isDelete() ? null : change.data());
     }
 
     /** Customer contact details must identify only one customer inside a tenant. */

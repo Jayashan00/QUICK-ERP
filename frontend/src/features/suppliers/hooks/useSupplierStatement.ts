@@ -11,12 +11,19 @@ export function useSupplierStatement(
   endDate: string,
 ) {
   const { tenantId } = useTenant();
-  const { branchId } = useBranch();
+  const { branchId, branches } = useBranch();
   const query = useQuery({
     queryKey: supplierKeys.statement(tenantId ?? '', supplierId ?? '', startDate, endDate, branchId ?? ''),
     queryFn: () => {
       if (!tenantId || !supplierId || !branchId) return null;
-      return supplierService.getSupplierStatement(tenantId, supplierId, startDate, endDate, branchId);
+      return supplierService.getSupplierStatement(
+        tenantId,
+        supplierId,
+        startDate,
+        endDate,
+        branchId,
+        branches.map((branch) => branch.id),
+      );
     },
     enabled: Boolean(tenantId && supplierId && branchId && startDate && endDate && startDate <= endDate),
   });

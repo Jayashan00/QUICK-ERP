@@ -19,6 +19,7 @@ import {
   settlementBankAccountSchema,
   type SettlementBankAccountValues,
 } from '@/features/settings/integrations/schemas/integrationSettingsSchemas';
+import { accountingService } from '@/features/accounting/accountingService';
 
 const currencyOptions = [
   { value: 'LKR', label: 'LKR - Sri Lankan Rupee' },
@@ -50,6 +51,7 @@ function SettlementBankAccountForm({
 }) {
   const { hasPermission } = usePermissions();
   const canEdit = hasPermission(PERMISSIONS.INTEGRATIONS.SETTLEMENT_BANK_EDIT);
+  const linkedLedger = accountingService.accounts(settings.tenantId).find((account) => account.id === settings.ledgerAccountId);
   const {
     register,
     handleSubmit,
@@ -140,6 +142,12 @@ function SettlementBankAccountForm({
               Bank account number is stored securely and displayed only as {settings.accountNumberMasked}.
             </div>
           )}
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+            <p className="font-medium">Linked Finance ledger</p>
+            <p className="mt-1">{linkedLedger ? `${linkedLedger.code} · ${linkedLedger.name}` : 'A bank ledger will be created automatically when these settings are saved.'}</p>
+            <p className="mt-1 text-xs text-slate-500">Receipts, supplier payments, cash flow and bank reconciliation use this ledger. Full bank details remain restricted to Settings.</p>
+          </div>
 
           {canEdit && (
             <div className="flex justify-end border-t border-slate-200 pt-5">

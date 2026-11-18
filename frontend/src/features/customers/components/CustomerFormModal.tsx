@@ -15,6 +15,7 @@ import { getErrorMessage } from '@/shared/utils/errors';
 import { appToast } from '@/shared/utils/toast';
 import type { Customer } from '@/features/customers/types/customer';
 import { PaymentTermSelect } from '@/features/settings/finance/components/PaymentTermSelect';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 
 import { customerSchema, type CustomerFormValues } from '../schemas/customerSchema';
 
@@ -23,19 +24,21 @@ interface CustomerFormModalProps {
   onClose: () => void;
   onSubmit: (data: CustomerFormValues) => Promise<void>;
   customer?: Customer | null;
+  initialValues?: Partial<CustomerFormValues>;
+  title?: string;
+  submitLabel?: string;
+  successMessage?: string;
 }
 
 const FORM_ID = 'customer-form';
 
-function generateCustomerCode() {
-  return `CUST-${Math.floor(1000 + Math.random() * 9000)}`;
-}
-
-function getDefaultValues(customer?: Customer | null): CustomerFormValues {
+function getDefaultValues(
+  customer?: Customer | null,
+  initialValues?: Partial<CustomerFormValues>,
+): CustomerFormValues {
   if (customer) {
     return {
       name: customer.name,
-      code: customer.code,
       type: customer.type,
       email: customer.email,
       phone: customer.phone,
@@ -71,15 +74,14 @@ function getDefaultValues(customer?: Customer | null): CustomerFormValues {
     };
   }
 
-  return {
+  const defaults: CustomerFormValues = {
     name: '',
-    code: generateCustomerCode(),
     type: 'company',
     email: '',
     phone: '',
     website: '',
     taxNumber: '',
-    currency: 'USD',
+    currency: '',
     creditLimit: undefined,
     paymentTermCode: '',
     paymentTermsDays: undefined,
@@ -96,33 +98,73 @@ function getDefaultValues(customer?: Customer | null): CustomerFormValues {
     primaryContact: { name: '', jobTitle: '', email: '', phone: '' },
     notes: '',
   };
+
+  return {
+    ...defaults,
+    ...initialValues,
+    billingAddress: {
+      ...defaults.billingAddress,
+      ...initialValues?.billingAddress,
+    },
+    shippingAddress: {
+      ...defaults.shippingAddress,
+      ...initialValues?.shippingAddress,
+    },
+    primaryContact: {
+      ...defaults.primaryContact,
+      ...initialValues?.primaryContact,
+    },
+  };
 }
 
-export function CustomerFormModal({ isOpen, onClose, onSubmit, customer }: CustomerFormModalProps) {
+export function CustomerFormModal({
+  isOpen,
+  onClose,
+  onSubmit,
+  customer,
+  initialValues,
+  title,
+  submitLabel,
+  successMessage,
+}: CustomerFormModalProps) {
+  const { currencyCode, supportedCurrencies, isLoading: isCurrencyLoading } = useTenantCurrency();
+  const currencyOptions = supportedCurrencies.map((code) => ({ value: code, label: code }));
   const isEditing = Boolean(customer);
   const {
     control,
     handleSubmit,
     register,
     reset,
+    getValues,
     setValue,
     setError,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
-    defaultValues: getDefaultValues(customer),
+    defaultValues: getDefaultValues(customer, initialValues),
   });
   const shippingSameAsBilling = watch('shippingSameAsBilling');
+  const customerType = watch('type');
+  const selectedCurrency = watch('currency');
 
   useEffect(() => {
-    if (isOpen) reset(getDefaultValues(customer));
-  }, [customer, isOpen, reset]);
+    if (isOpen) reset(getDefaultValues(customer, initialValues));
+  }, [customer, initialValues, isOpen, reset]);
+
+  useEffect(() => {
+    if (isOpen && currencyCode && !getValues('currency')) {
+      setValue('currency', currencyCode);
+    }
+  }, [currencyCode, getValues, isOpen, setValue]);
 
   const submitForm = async (data: CustomerFormValues) => {
     try {
-      await onSubmit(data);
-      appToast.success(isEditing ? 'Customer updated successfully.' : 'Customer created successfully.');
+      await onSubmit({
+        ...data,
+        taxNumber: data.type === 'company' ? data.taxNumber : '',
+      });
+      appToast.success(successMessage ?? (isEditing ? 'Customer updated successfully.' : 'Customer created successfully.'));
       onClose();
     } catch (error) {
       const message = getErrorMessage(error, 'Unable to save the customer. Please try again.');
@@ -139,7 +181,7 @@ export function CustomerFormModal({ isOpen, onClose, onSubmit, customer }: Custo
     <Modal
       isOpen={isOpen}
       onClose={isSubmitting ? () => undefined : onClose}
-      title={isEditing ? 'Edit Customer' : 'Create New Customer'}
+      title={title ?? (isEditing ? 'Edit Customer' : 'Create New Customer')}
       maxWidth="760px"
       footer={
         <div className="flex w-full flex-wrap justify-end gap-2">
@@ -147,7 +189,7 @@ export function CustomerFormModal({ isOpen, onClose, onSubmit, customer }: Custo
             Cancel
           </Button>
           <Button type="submit" form={FORM_ID} variant="primary" isLoading={isSubmitting}>
-            {isEditing ? 'Save Changes' : 'Create Customer'}
+            {submitLabel ?? (isEditing ? 'Save Changes' : 'Create Customer')}
           </Button>
         </div>
       }
@@ -157,10 +199,6 @@ export function CustomerFormModal({ isOpen, onClose, onSubmit, customer }: Custo
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField label="Customer Name" htmlFor="customer-name" required error={errors.name?.message}>
               <TextInput id="customer-name" required error={Boolean(errors.name)} aria-describedby={errors.name ? 'customer-name-error' : undefined} placeholder="e.g. Acme Corp" {...register('name')} />
-            </FormField>
-
-            <FormField label="Customer Code" htmlFor="customer-code" required error={errors.code?.message}>
-              <TextInput id="customer-code" required error={Boolean(errors.code)} aria-describedby={errors.code ? 'customer-code-error' : undefined} placeholder="e.g. CUST-0001" {...register('code')} />
             </FormField>
 
             <FormField label="Customer Type" htmlFor="customer-type" required error={errors.type?.message}>
@@ -183,21 +221,37 @@ export function CustomerFormModal({ isOpen, onClose, onSubmit, customer }: Custo
               <TextInput id="customer-website" type="url" error={Boolean(errors.website)} aria-describedby={errors.website ? 'customer-website-error' : undefined} placeholder="https://example.com" {...register('website')} />
             </FormField>
 
-            <FormField label="Tax Number" htmlFor="customer-tax-number" error={errors.taxNumber?.message}>
-              <TextInput id="customer-tax-number" error={Boolean(errors.taxNumber)} aria-describedby={errors.taxNumber ? 'customer-tax-number-error' : undefined} placeholder="Tax registration number" {...register('taxNumber')} />
-            </FormField>
+            {customerType === 'company' && (
+              <FormField
+                label="Tax Identification Number (TIN/VAT No.)"
+                htmlFor="customer-tax-number"
+                error={errors.taxNumber?.message}
+                hint="Optional. Enter this only when the customer is tax registered."
+              >
+                <TextInput id="customer-tax-number" error={Boolean(errors.taxNumber)} aria-describedby={errors.taxNumber ? 'customer-tax-number-error' : 'customer-tax-number-hint'} placeholder="Enter TIN or VAT registration number" {...register('taxNumber')} />
+              </FormField>
+            )}
           </div>
         </FormSection>
 
         <FormSection title="Commercial Terms">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField label="Currency" htmlFor="customer-currency" required error={errors.currency?.message}>
-              <Select id="customer-currency" required error={Boolean(errors.currency)} aria-describedby={errors.currency ? 'customer-currency-error' : undefined} options={[{ value: 'USD', label: 'USD' }, { value: 'LKR', label: 'LKR' }]} {...register('currency')} />
+              <Select
+                id="customer-currency"
+                required
+                placeholder={isCurrencyLoading ? 'Loading currencies...' : 'Select currency'}
+                disabled={isCurrencyLoading || currencyOptions.length === 0}
+                error={Boolean(errors.currency)}
+                aria-describedby={errors.currency ? 'customer-currency-error' : undefined}
+                options={currencyOptions}
+                {...register('currency')}
+              />
             </FormField>
 
             <FormField label="Credit Limit" htmlFor="customer-credit-limit" error={errors.creditLimit?.message} hint="Leave empty when no credit limit is assigned.">
               <Controller name="creditLimit" control={control} render={({ field: { value, onChange, ...field } }) => (
-                <CurrencyInput {...field} id="customer-credit-limit" min={0} value={value ?? ''} error={Boolean(errors.creditLimit)} aria-describedby={errors.creditLimit ? 'customer-credit-limit-error' : 'customer-credit-limit-hint'} onChange={(nextValue) => onChange(nextValue === '' ? undefined : nextValue)} />
+                <CurrencyInput {...field} id="customer-credit-limit" min={0} step={1} currency={selectedCurrency || currencyCode || ''} value={value ?? ''} error={Boolean(errors.creditLimit)} aria-describedby={errors.creditLimit ? 'customer-credit-limit-error' : 'customer-credit-limit-hint'} placeholder="0" onChange={(nextValue) => onChange(nextValue === '' ? undefined : Math.round(nextValue))} />
               )} />
             </FormField>
 

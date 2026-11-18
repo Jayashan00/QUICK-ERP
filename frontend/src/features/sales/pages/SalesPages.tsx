@@ -1,5 +1,5 @@
 import { ModuleDashboardPage } from "@/features/dashboard/components/ModuleDashboard";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Download,
   Plus,
@@ -10,6 +10,7 @@ import { useBranch } from "@/core/branch/branch-context";
 import { useTenant } from "@/core/tenant/tenant-context";
 import { useAuth } from "@/core/auth/auth-context";
 import { usePermissions } from "@/core/permissions/permission-context";
+import { TenantLink } from "@/core/routing";
 import { documentService } from "@/features/documents/documentService";
 import { TENANT_PERMISSIONS as PERMISSIONS } from "@/core/permissions";
 import { usePermission } from "@/core/permissions/permission-context";
@@ -36,21 +37,20 @@ import { getErrorMessage } from "@/shared/utils/errors";
 import { downloadCsv } from "@/shared/utils/fileExport";
 import { appToast } from "@/shared/utils/toast";
 import {
-  CustomerPaymentFormModal,
-  DeliveryFormModal,
   RecurringInvoiceFormModal,
-  SalesInvoiceFormModal,
   SalesOrderFormModal,
+  SalesInvoiceFormModal,
   SalesQuotationFormModal,
   SalesReturnFormModal,
 } from "../components/SalesForms";
 import {
   useCreditNotes,
-  useCustomerPayments,
+  useCreditNotePdf,
   useDeliveryNotes,
   useRecurringInvoices,
   useSalesCommissions,
   useSalesCustomerOptions,
+  useSalesInvoicePdf,
   useSalesInvoices,
   useSalesMutations,
   useSalesOrders,
@@ -62,11 +62,12 @@ import {
 import type { SalesKind, SalesListResult } from "../services/salesService";
 import type {
   CommissionSummary,
-  CustomerPayment,
   SalesDocument,
   SalesInvoice,
   SalesOrder,
   SalesQuotation,
+  SalesReturn,
+  CreditNote,
 } from "../types/sales";
 
 interface ListLine {
@@ -146,6 +147,54 @@ function useFilters() {
   };
 }
 
+function InvoicePdfPreview({ invoice }: { invoice: ListDocument }) {
+  const pdf = useSalesInvoicePdf(invoice.id);
+  const [url, setUrl] = useState<string>();
+
+  useEffect(() => {
+    if (!pdf.data?.blob) {
+      setUrl(undefined);
+      return;
+    }
+    const nextUrl = URL.createObjectURL(pdf.data.blob);
+    setUrl(nextUrl);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [pdf.data?.blob]);
+
+  if (pdf.isLoading) {
+    return <div className="flex h-[70vh] items-center justify-center text-sm text-slate-500">Generating invoice PDF...</div>;
+  }
+  if (pdf.isError || !url) {
+    return (
+      <div className="flex h-[70vh] flex-col items-center justify-center gap-3 text-center">
+        <p className="text-sm text-red-700">{getErrorMessage(pdf.error, "Unable to generate the invoice PDF.")}</p>
+        <Button variant="secondary" onClick={() => void pdf.refetch()}>Try Again</Button>
+      </div>
+    );
+  }
+  return (
+    <iframe
+      className="h-[70vh] w-full rounded-lg border border-slate-200 bg-slate-100"
+      src={url}
+      title={`${invoice.referenceNumber} generated PDF`}
+    />
+  );
+}
+
+function CreditNotePdfPreview({ creditNote }: { creditNote: CreditNote }) {
+  const pdf = useCreditNotePdf(creditNote.id);
+  const [url, setUrl] = useState<string>();
+  useEffect(() => {
+    if (!pdf.data?.blob) { setUrl(undefined); return; }
+    const nextUrl = URL.createObjectURL(pdf.data.blob);
+    setUrl(nextUrl);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [pdf.data?.blob]);
+  if (pdf.isLoading) return <div className="flex h-[65vh] items-center justify-center text-sm text-slate-500">Generating customer credit note PDF...</div>;
+  if (pdf.isError || !url) return <div className="flex h-[65vh] flex-col items-center justify-center gap-3 text-center"><p className="text-sm text-red-700">{getErrorMessage(pdf.error, "Unable to generate the customer credit note PDF.")}</p><Button variant="secondary" onClick={() => void pdf.refetch()}>Try Again</Button></div>;
+  return <iframe className="h-[65vh] w-full rounded-lg border border-slate-200 bg-slate-100" src={url} title={`${creditNote.referenceNumber} generated PDF`} />;
+}
+
 function SalesDetail({
   kind,
   row,
@@ -160,16 +209,26 @@ function SalesDetail({
   const { user } = useAuth();
   const { permissions, hasPermission } = usePermissions();
   const products = useSalesProductOptions(),
-    mutations = useSalesMutations();
-  const canPrint = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_PRINT);
+    mutations = useSalesMutations(),
+    creditNotes = useCreditNotes({ branchId: "all", pageSize: Number.MAX_SAFE_INTEGER }),
+    deliveryNotes = useDeliveryNotes({
+      branchId: "all",
+      pageSize: Number.MAX_SAFE_INTEGER,
+    });
+  const canPrintQuotation = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_PRINT);
+  const hasOrderPrintPermission = usePermission(PERMISSIONS.SALES_WORKFLOW.ORDER_PRINT);
+  const canEditOrder = usePermission(PERMISSIONS.SALES_WORKFLOW.ORDER_EDIT);
+  const canPrintOrder = hasOrderPrintPermission || canEditOrder;
+  const hasDeliveryPrintPermission = usePermission(PERMISSIONS.SALES.DELIVERIES_PRINT);
+  const hasDeliveryViewPermission = usePermission(PERMISSIONS.SALES.DELIVERIES_VIEW);
+  const canPrintDelivery = hasDeliveryPrintPermission || hasDeliveryViewPermission;
+  const canPrint = kind === "quotations"
+    ? canPrintQuotation
+    : kind === "orders"
+      ? canPrintOrder
+      : kind === "deliveries" && canPrintDelivery;
   const canEditQuotation = usePermission(
     PERMISSIONS.SALES_WORKFLOW.QUOTATION_EDIT,
-  );
-  const canEditOrder = usePermission(
-    PERMISSIONS.SALES_WORKFLOW.ORDER_EDIT,
-  );
-  const canCreateDelivery = usePermission(
-    PERMISSIONS.SALES_WORKFLOW.DELIVERY_CREATE,
   );
   const canCreateInvoice = usePermission(
     PERMISSIONS.SALES_WORKFLOW.INVOICE_CREATE,
@@ -180,9 +239,20 @@ function SalesDetail({
   const canUploadDocument =
     (kind === "quotations" && canEditQuotation) ||
     (kind === "orders" && canEditOrder) ||
-    (kind === "deliveries" && canCreateDelivery) ||
     (kind === "invoices" && canCreateInvoice) ||
     (kind === "returns" && canCreateReturn);
+  const linkedDeliveryNotes = kind === "orders" && row
+    ? (deliveryNotes.data?.data ?? []).filter(
+        (delivery) => delivery.salesOrderId === row.id,
+      )
+    : [];
+  const linkedCreditNote = kind === "returns" && row
+    ? (creditNotes.data?.data ?? []).find((credit) => credit.id === (row as SalesReturn).creditNoteId)
+    : undefined;
+  const [creditPdf, setCreditPdf] = useState<CreditNote | null>(null);
+  const isServiceOnlyOrder = kind === "orders" && Boolean(row?.items.length) && row!.items.every(
+    (item) => products.data?.find((product) => product.id === item.productId)?.type === "service",
+  );
   const download = (document: DocumentRecord) => {
     try {
       if (!tenantId || !branchId) throw new Error('Document scope is unavailable.');
@@ -190,54 +260,72 @@ function SalesDetail({
       const anchor = window.document.createElement('a'); anchor.href = file.url; anchor.download = file.name; anchor.click();
     } catch (error) { appToast.error(error instanceof Error ? error.message : 'Download unavailable.'); }
   };
-  const action = async (type: "print" | "share" | "email") => {
+  const generatedPdf = async () => {
+    if (!row) throw new Error("Sales document is unavailable.");
+    if (kind === "quotations") return mutations.quotationPdf(row.id);
+    if (kind === "orders") return mutations.orderPdf(row.id);
+    if (kind === "deliveries") return mutations.deliveryPdf(row.id);
+    throw new Error("PDF generation is not available for this sales document.");
+  };
+  const viewPdf = async () => {
+    if (!row) return;
+    const previewWindow = window.open("about:blank", "_blank");
+    try {
+      const pdf = await generatedPdf();
+      const url = URL.createObjectURL(pdf.blob);
+      if (previewWindow) {
+        previewWindow.opener = null;
+        previewWindow.location.href = url;
+      } else {
+        const anchor = window.document.createElement("a");
+        anchor.href = url;
+        anchor.download = pdf.fileName;
+        anchor.click();
+        appToast.success(`${pdf.fileName} downloaded. Open it to view.`);
+      }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      previewWindow?.close();
+      appToast.error(getErrorMessage(error, `Unable to generate ${row.referenceNumber}.`));
+    }
+  };
+  const print = async () => {
     if (!row) return;
     try {
-      if (type === "print") {
-        window.print();
-        return;
-      }
-
-      const documentUrl = new URL(window.location.href);
-      documentUrl.searchParams.set("record", row.id);
-      documentUrl.searchParams.set("reference", row.referenceNumber);
-      const shareUrl = documentUrl.toString();
-      const title = `${kind === "deliveries" ? "Delivery Note" : "Sales Document"} ${row.referenceNumber}`;
-
-      if (type === "share") {
-        if (typeof navigator.share === "function") {
-          await navigator.share({ title, text: title, url: shareUrl });
-          appToast.success(`${row.referenceNumber} shared.`);
-        } else if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(shareUrl);
-          appToast.success(`Share link copied for ${row.referenceNumber}.`);
-        } else {
-          window.prompt(`Copy the share link for ${row.referenceNumber}:`, shareUrl);
-        }
-        return;
-      }
-
-      const subject = encodeURIComponent(title);
-      const body = encodeURIComponent(`Please review ${title}:\n\n${shareUrl}`);
-      const emailLink = window.document.createElement("a");
-      emailLink.href = `mailto:?subject=${subject}&body=${body}`;
-      emailLink.click();
-      appToast.success(`Email draft opened for ${row.referenceNumber}.`);
+      const pdf = await generatedPdf();
+      const url = URL.createObjectURL(pdf.blob);
+      const frame = window.document.createElement("iframe");
+      frame.setAttribute("title", `${row.referenceNumber} print document`);
+      frame.style.position = "fixed";
+      frame.style.width = "0";
+      frame.style.height = "0";
+      frame.style.border = "0";
+      frame.onload = () => {
+        window.setTimeout(() => {
+          frame.contentWindow?.focus();
+          frame.contentWindow?.print();
+        }, 100);
+      };
+      frame.src = url;
+      window.document.body.appendChild(frame);
+      window.setTimeout(() => {
+        frame.remove();
+        URL.revokeObjectURL(url);
+      }, 60_000);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      appToast.error(
-        getErrorMessage(error, `Unable to ${type} ${row.referenceNumber}.`),
-      );
+      appToast.error(getErrorMessage(error, `Unable to print ${row.referenceNumber}.`));
     }
   };
   return (
     <Modal
       isOpen={Boolean(row)}
       onClose={onClose}
-      title={row ? `${row.referenceNumber} details` : "Sales details"}
-      maxWidth="950px"
+      title={row ? (kind === "invoices" ? `${row.referenceNumber} invoice PDF` : `${row.referenceNumber} details`) : "Sales details"}
+      maxWidth={kind === "invoices" ? "1100px" : "950px"}
     >
-      {row && (
+      {row && kind === "invoices" ? (
+        <InvoicePdfPreview invoice={row} />
+      ) : row && (
         <div className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-slate-500">
@@ -248,31 +336,28 @@ function SalesDetail({
               <StatusBadge status={row.status} />
               {canPrint && (
                 <>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void action("print")}
-                  >
+                  <Button size="sm" variant="secondary" onClick={() => void viewPdf()}>
+                    View PDF
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => void print()}>
                     Print
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void action("share")}
-                  >
-                    Share
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void action("email")}
-                  >
-                    Email
                   </Button>
                 </>
               )}
             </div>
           </div>
+          {kind === "orders" && row.status === "returned_to_sales" && (row as SalesOrder).fulfilmentReturn && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <h3 className="text-sm font-semibold text-amber-900">Inventory returned this order to Sales</h3>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-amber-900">
+                {(row as SalesOrder).fulfilmentReturn!.reason}
+              </p>
+              <p className="mt-2 text-xs text-amber-700">
+                Returned by {(row as SalesOrder).fulfilmentReturn!.returnedByName} on{" "}
+                {new Date((row as SalesOrder).fulfilmentReturn!.returnedAt).toLocaleString()}.
+              </p>
+            </div>
+          )}
           <div className="overflow-x-auto rounded-lg border border-slate-200">
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
@@ -307,6 +392,107 @@ function SalesDetail({
               </tbody>
             </table>
           </div>
+          {kind === "returns" && (
+            <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <h3 className="text-sm font-semibold text-slate-900">Related customer credit note</h3>
+              {creditNotes.isLoading && <p className="mt-2 text-sm text-slate-500">Loading customer credit note...</p>}
+              {linkedCreditNote && <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3"><div><p className="font-semibold text-slate-900">{linkedCreditNote.referenceNumber}</p><p className="mt-1 text-xs text-slate-500">{linkedCreditNote.currency} {linkedCreditNote.amount.toFixed(2)} · Finance status: {linkedCreditNote.status.replace(/_/g, " ")}</p>{linkedCreditNote.returnReason && <p className="mt-2 text-sm text-amber-700"><span className="font-semibold">Finance return reason:</span> {linkedCreditNote.returnReason}</p>}</div><div className="flex gap-2"><Button size="sm" variant="secondary" onClick={() => setCreditPdf(linkedCreditNote)}>View Credit Note PDF</Button>{linkedCreditNote.status === "returned" && <Button size="sm" onClick={async () => { await mutations.transitionCreditNote(linkedCreditNote.id, "resubmit"); appToast.success("Customer credit note resubmitted to Finance."); }}>Resubmit to Finance</Button>}</div></div>}
+              {!creditNotes.isLoading && !linkedCreditNote && <p className="mt-2 text-sm text-slate-500">No related customer credit note is available.</p>}
+            </section>
+          )}
+          {kind === "orders" && (
+            <section className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Delivery notes</h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Delivery records created from this sales order.
+                  </p>
+                </div>
+                {!deliveryNotes.isLoading && !deliveryNotes.isError && (
+                  <span className="text-xs font-medium text-slate-500">
+                    {linkedDeliveryNotes.length} {linkedDeliveryNotes.length === 1 ? "record" : "records"}
+                  </span>
+                )}
+              </div>
+              {deliveryNotes.isLoading && (
+                <p className="mt-4 text-sm text-slate-500">Loading delivery notes...</p>
+              )}
+              {deliveryNotes.isError && (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                  <p className="text-sm text-red-700">Delivery notes could not be loaded.</p>
+                  <Button size="sm" variant="secondary" onClick={() => void deliveryNotes.refetch()}>
+                    Try Again
+                  </Button>
+                </div>
+              )}
+              {!deliveryNotes.isLoading && !deliveryNotes.isError && linkedDeliveryNotes.length === 0 && (
+                <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-5 text-center text-sm text-slate-500">
+                  {isServiceOnlyOrder
+                    ? "No delivery note is required for this service-only order. Confirmed service orders can proceed directly to invoicing."
+                    : "No delivery note has been created for this sales order."}
+                </p>
+              )}
+              {linkedDeliveryNotes.length > 0 && (
+                <div className="mt-4 space-y-3">
+                  {linkedDeliveryNotes.map((delivery) => {
+                    const deliveredQuantity = delivery.items.reduce(
+                      (total, item) => total + item.deliveredQuantity,
+                      0,
+                    );
+                    return (
+                      <article key={delivery.id} className="rounded-lg border border-slate-200 bg-white p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <TenantLink
+                              to={`/sales/deliveries?record=${encodeURIComponent(delivery.id)}`}
+                              className="text-sm font-semibold text-blue-700 hover:underline"
+                            >
+                              {delivery.referenceNumber}
+                            </TenantLink>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Delivery date: {new Date(`${delivery.deliveryDate}T00:00:00`).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <StatusBadge status={delivery.status} />
+                        </div>
+                        <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3">
+                          <div>
+                            <dt className="font-medium text-slate-500">Delivered quantity</dt>
+                            <dd className="mt-1 text-sm font-semibold text-slate-900">{deliveredQuantity}</dd>
+                          </div>
+                          <div>
+                            <dt className="font-medium text-slate-500">Warehouse</dt>
+                            <dd className="mt-1 text-sm text-slate-900">{delivery.warehouseId}</dd>
+                          </div>
+                          <div>
+                            <dt className="font-medium text-slate-500">Stock location</dt>
+                            <dd className="mt-1 text-sm text-slate-900">{delivery.locationId}</dd>
+                          </div>
+                        </dl>
+                        <div className="mt-3 border-t border-slate-100 pt-3">
+                          <p className="text-xs font-medium text-slate-500">Delivery address</p>
+                          <p className="mt-1 text-sm text-slate-700">{delivery.deliveryAddress || "—"}</p>
+                        </div>
+                        <div className="mt-3 space-y-1 border-t border-slate-100 pt-3">
+                          {delivery.items.map((item) => (
+                            <div key={item.id} className="flex flex-wrap justify-between gap-2 text-xs">
+                              <span className="text-slate-600">
+                                {products.data?.find((product) => product.id === item.productId)?.name ?? item.productId}
+                              </span>
+                              <span className="font-medium text-slate-900">
+                                {item.deliveredQuantity} delivered
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
           <div className="grid gap-6 lg:grid-cols-2">
             <section>
               <h3 className="mb-3 text-sm font-semibold">Approval history</h3>
@@ -319,7 +505,7 @@ function SalesDetail({
           </div>
           <DocumentManager
             documents={[...row.attachments, ...(tenantId && branchId ? documentService.linkedPublic({ tenantId, branchId, permittedBranchIds: branches.map((branch) => branch.id) }, 'Sales', row.id).filter((document) => !row.attachments.some((attached) => attached.id === document.id)) : [])]}
-            canUpload={canUploadDocument && hasPermission(PERMISSIONS.DOCUMENTS.UPLOAD)}
+            canUpload={canUploadDocument && hasPermission(PERMISSIONS.DOCUMENTS.UPLOAD) && (kind !== "orders" || row.status === "draft")}
             canDownload={hasPermission(PERMISSIONS.DOCUMENTS.DOWNLOAD)}
             onUpload={async (file) => {
               await mutations.addAttachment(kind, row.id, file);
@@ -328,6 +514,9 @@ function SalesDetail({
           />
         </div>
       )}
+      <Modal isOpen={Boolean(creditPdf)} onClose={() => setCreditPdf(null)} title={creditPdf ? `${creditPdf.referenceNumber} customer credit note` : "Customer credit note"} maxWidth="1050px">
+        {creditPdf && <CreditNotePdfPreview creditNote={creditPdf} />}
+      </Modal>
     </Modal>
   );
 }
@@ -344,6 +533,7 @@ interface ListPageProps<T extends ListDocument> {
   onCreate: () => void;
   amount?: (row: T) => number | undefined;
   actions?: (row: T) => ReactNode;
+  statusMessage?: (row: T) => ReactNode;
 }
 function SalesListPage<T extends ListDocument>(props: ListPageProps<T>) {
   const { branches } = useBranch(),
@@ -394,7 +584,12 @@ function SalesListPage<T extends ListDocument>(props: ListPageProps<T>) {
     {
       key: "status",
       header: "Status",
-      render: (row) => <StatusBadge status={row.status} />,
+      render: (row) => (
+        <div className="space-y-1">
+          <StatusBadge status={row.status} />
+          {props.statusMessage?.(row)}
+        </div>
+      ),
     },
     {
       key: "customerId",
@@ -445,7 +640,9 @@ function SalesListPage<T extends ListDocument>(props: ListPageProps<T>) {
             header: "Actions",
             render: (row: T) => (
               <div onClick={(event) => event.stopPropagation()}>
-                {props.actions?.(row)}
+                <div className="flex flex-wrap gap-2">
+                  {props.actions?.(row)}
+                </div>
               </div>
             ),
           } satisfies Column<T>,
@@ -741,14 +938,13 @@ function QuotationConversion({
 
   if (existingOrder) {
     return (
-      <Button
-        size="sm"
-        variant="secondary"
-        disabled
+      <TenantLink
+        to={`/sales/orders?record=${encodeURIComponent(existingOrder.id)}`}
+        className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
         title={`Created as ${existingOrder.referenceNumber}`}
       >
-        Order Created
-      </Button>
+        View Order
+      </TenantLink>
     );
   }
 
@@ -762,28 +958,105 @@ function QuotationConversion({
 
   return (
     <ConfirmAction
-      label="Create Order"
-      message={`Create a draft sales order from ${row.referenceNumber}?`}
+      label="Convert to Sales Order"
+      message={row.status === "sent"
+        ? `Mark ${row.referenceNumber} as accepted and create a linked draft sales order?`
+        : `Create a linked draft sales order from ${row.referenceNumber}?`}
       onConfirm={async () => {
         const warehouseId = warehouses.data?.[0]?.id;
         if (!warehouseId)
           throw new Error("No active warehouse is available for this branch.");
         await mutations.createOrderFromQuotation(row.id, warehouseId);
-        appToast.success("Draft sales order created.");
+        appToast.success("Quotation converted to a linked draft sales order.");
       }}
     />
   );
 }
 export function SalesQuotationsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialOpportunityId = searchParams.get("opportunityId") ?? "";
   const filters = useFilters(),
     query = useSalesQuotations(filters.params),
+    customers = useSalesCustomerOptions(),
     orders = useSalesOrders({ branchId: "all", pageSize: Number.MAX_SAFE_INTEGER }),
     mutations = useSalesMutations(),
     [open, setOpen] = useState(false),
-    [editing, setEditing] = useState<SalesQuotation | null>(null);
+    [editing, setEditing] = useState<SalesQuotation | null>(null),
+    [emailPreview, setEmailPreview] = useState<SalesQuotation | null>(null),
+    [emailPreviewUrl, setEmailPreviewUrl] = useState<string | null>(null),
+    [emailPreviewError, setEmailPreviewError] = useState<string | null>(null),
+    [isPreviewLoading, setIsPreviewLoading] = useState(false),
+    [isEmailSending, setIsEmailSending] = useState(false);
+  const previewRequestId = useRef(0);
   const canCreate = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_CREATE),
     canEdit = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_EDIT),
-    canApprove = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_APPROVE);
+    canApprove = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_APPROVE),
+    canPrint = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_PRINT);
+  useEffect(() => {
+    if (!initialOpportunityId || !canCreate) return;
+    setEditing(null);
+    setOpen(true);
+  }, [canCreate, initialOpportunityId]);
+
+  useEffect(
+    () => () => {
+      if (emailPreviewUrl) URL.revokeObjectURL(emailPreviewUrl);
+    },
+    [emailPreviewUrl],
+  );
+
+  const closeEmailPreview = () => {
+    previewRequestId.current += 1;
+    if (emailPreviewUrl) URL.revokeObjectURL(emailPreviewUrl);
+    setEmailPreview(null);
+    setEmailPreviewUrl(null);
+    setEmailPreviewError(null);
+    setIsPreviewLoading(false);
+    setIsEmailSending(false);
+  };
+
+  const openEmailPreview = async (quotation: SalesQuotation) => {
+    const requestId = ++previewRequestId.current;
+    if (emailPreviewUrl) URL.revokeObjectURL(emailPreviewUrl);
+    setEmailPreview(quotation);
+    setEmailPreviewUrl(null);
+    setEmailPreviewError(null);
+    setIsPreviewLoading(true);
+    try {
+      const pdf = await mutations.quotationPdf(quotation.id);
+      const url = URL.createObjectURL(pdf.blob);
+      if (requestId !== previewRequestId.current) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      setEmailPreviewUrl(url);
+    } catch (error) {
+      if (requestId !== previewRequestId.current) return;
+      setEmailPreviewError(
+        getErrorMessage(error, `Unable to preview ${quotation.referenceNumber}.`),
+      );
+    } finally {
+      if (requestId === previewRequestId.current) setIsPreviewLoading(false);
+    }
+  };
+
+  const sendPreviewedQuotation = async () => {
+    if (!emailPreview || !emailPreviewUrl) return;
+    setIsEmailSending(true);
+    try {
+      const delivered = await mutations.emailQuotation(emailPreview.id);
+      appToast.success(
+        `${emailPreview.referenceNumber} emailed to ${delivered.delivery?.recipientEmail}.`,
+      );
+      closeEmailPreview();
+    } catch (error) {
+      appToast.error(
+        getErrorMessage(error, `Unable to email ${emailPreview.referenceNumber}.`),
+      );
+      setIsEmailSending(false);
+    }
+  };
+
   const actions = (row: SalesQuotation) => (
     <div className="flex flex-wrap gap-2">
       {row.status === "draft" && (
@@ -831,17 +1104,21 @@ export function SalesQuotationsPage() {
           }}
         />
       )}
-      {row.status === "approved" && (
-        <ConfirmAction
-          label="Mark Sent"
-          message={`Mark ${row.referenceNumber} as sent?`}
-          onConfirm={async () => {
-            await mutations.transitionQuotation(row.id, "send");
-          }}
-        />
+      {row.status === "approved" && canEdit && canPrint && (
+        <Button size="sm" onClick={() => void openEmailPreview(row)}>
+          Email PDF
+        </Button>
       )}
       {row.status === "sent" && (
         <>
+          <QuotationConversion
+            row={row}
+            existingOrder={orders.data?.data.find(
+              (order) => order.sourceQuotationId === row.id,
+            )}
+            isOrderLookupPending={orders.isLoading}
+            isOrderLookupFailed={orders.isError}
+          />
           <ConfirmAction
             label="Accept"
             message={`Record customer acceptance for ${row.referenceNumber}?`}
@@ -873,13 +1150,21 @@ export function SalesQuotationsPage() {
   const close = () => {
     setOpen(false);
     setEditing(null);
+    if (initialOpportunityId) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete("opportunityId");
+        next.delete("customerId");
+        return next;
+      }, { replace: true });
+    }
   };
   return (
     <>
       <SalesListPage
         kind="quotations"
         title="Sales Quotations"
-        description="Create customer proposals, approve commercial terms, and convert accepted quotations."
+        description="Create and email customer proposals, then convert sent or accepted quotations into linked sales orders."
         statuses={[
           "draft",
           "pending_approval",
@@ -904,8 +1189,64 @@ export function SalesQuotationsPage() {
       <SalesQuotationFormModal
         isOpen={open}
         quotation={editing}
+        initialOpportunityId={initialOpportunityId}
         onClose={close}
       />
+      <Modal
+        isOpen={Boolean(emailPreview)}
+        onClose={closeEmailPreview}
+        title={emailPreview ? `Review ${emailPreview.referenceNumber} PDF` : "Review quotation PDF"}
+        maxWidth="1000px"
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeEmailPreview}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!emailPreviewUrl || isPreviewLoading}
+              isLoading={isEmailSending}
+              onClick={() => void sendPreviewedQuotation()}
+            >
+              Send Email
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {emailPreview && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              Review the generated quotation before sending it to{" "}
+              <span className="font-semibold">
+                {customers.data?.find((customer) => customer.id === emailPreview.customerId)?.email ||
+                  "the customer's saved email address"}
+              </span>
+              . The quotation changes to Sent only after the email is delivered successfully.
+            </div>
+          )}
+          {isPreviewLoading && (
+            <div className="flex h-[60vh] items-center justify-center rounded-lg border border-slate-200 text-sm text-slate-500">
+              Generating quotation PDF...
+            </div>
+          )}
+          {emailPreviewError && !isPreviewLoading && (
+            <div className="flex h-[60vh] flex-col items-center justify-center gap-4 rounded-lg border border-red-200 bg-red-50 px-6 text-center">
+              <p className="text-sm font-medium text-red-700">{emailPreviewError}</p>
+              {emailPreview && (
+                <Button variant="secondary" onClick={() => void openEmailPreview(emailPreview)}>
+                  Try Again
+                </Button>
+              )}
+            </div>
+          )}
+          {emailPreviewUrl && !isPreviewLoading && (
+            <iframe
+              title={`${emailPreview?.referenceNumber ?? "Quotation"} PDF preview`}
+              src={emailPreviewUrl}
+              className="h-[60vh] w-full rounded-lg border border-slate-200"
+            />
+          )}
+        </div>
+      </Modal>
     </>
   );
 }
@@ -913,12 +1254,25 @@ export function SalesQuotationsPage() {
 function OrderActions({
   row,
   onEdit,
+  onConvertToInvoice,
+  existingInvoice,
+  canCreateInvoice,
+  canConvertToInvoice,
+  isInvoiceLookupPending,
+  isInvoiceLookupFailed,
 }: {
   row: SalesOrder;
   onEdit: () => void;
+  onConvertToInvoice: () => Promise<void>;
+  existingInvoice?: SalesInvoice;
+  canCreateInvoice: boolean;
+  canConvertToInvoice: boolean;
+  isInvoiceLookupPending: boolean;
+  isInvoiceLookupFailed: boolean;
 }) {
   const mutations = useSalesMutations(),
-    canEdit = usePermission(PERMISSIONS.SALES_WORKFLOW.ORDER_EDIT);
+    canEdit = usePermission(PERMISSIONS.SALES_WORKFLOW.ORDER_EDIT),
+    canConfirm = usePermission(PERMISSIONS.SALES_WORKFLOW.ORDER_CONFIRM);
   return (
     <div className="flex flex-wrap gap-2">
       {row.status === "draft" && (
@@ -928,13 +1282,15 @@ function OrderActions({
               Edit
             </Button>
           )}
-          <ConfirmAction
-            label="Confirm"
-            message={`Confirm ${row.referenceNumber}?`}
-            onConfirm={async () => {
-              await mutations.transitionOrder(row.id, "confirm");
-            }}
-          />
+          {canConfirm && (
+            <ConfirmAction
+              label="Confirm"
+              message={`Confirm ${row.referenceNumber}?`}
+              onConfirm={async () => {
+                await mutations.transitionOrder(row.id, "confirm");
+              }}
+            />
+          )}
           <ConfirmAction
             label="Cancel"
             variant="danger"
@@ -945,13 +1301,43 @@ function OrderActions({
           />
         </>
       )}
-      {row.status === "confirmed" && (
+      {row.status === "returned_to_sales" && (
+        <>
+          {canEdit && (
+            <Button size="sm" variant="secondary" onClick={onEdit}>
+              Edit
+            </Button>
+          )}
+          {canConfirm && (
+            <ConfirmAction
+              label="Resubmit to Inventory"
+              message={`Resubmit the corrected ${row.referenceNumber} to Inventory?`}
+              onConfirm={async () => {
+                await mutations.transitionOrder(row.id, "resubmit");
+              }}
+            />
+          )}
+        </>
+      )}
+      {canConvertToInvoice && (isInvoiceLookupPending || isInvoiceLookupFailed) && (
+        <Button size="sm" variant="secondary" disabled>
+          {isInvoiceLookupFailed ? "Invoice Status Unavailable" : "Checking Invoice"}
+        </Button>
+      )}
+      {canConvertToInvoice && !isInvoiceLookupPending && !isInvoiceLookupFailed && existingInvoice && (
+        <TenantLink
+          to={`/sales/invoices?record=${encodeURIComponent(existingInvoice.id)}`}
+          className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          title={`Created as ${existingInvoice.referenceNumber}`}
+        >
+          View Invoice
+        </TenantLink>
+      )}
+      {canConvertToInvoice && !isInvoiceLookupPending && !isInvoiceLookupFailed && !existingInvoice && canCreateInvoice && (
         <ConfirmAction
-          label="Start Processing"
-          message={`Start fulfilment for ${row.referenceNumber}?`}
-          onConfirm={async () => {
-            await mutations.transitionOrder(row.id, "process");
-          }}
+          label="Convert to Invoice"
+          message={`Create a draft invoice from all confirmed details in ${row.referenceNumber}?`}
+          onConfirm={onConvertToInvoice}
         />
       )}
     </div>
@@ -960,8 +1346,12 @@ function OrderActions({
 export function SalesOrdersPage() {
   const filters = useFilters(),
     query = useSalesOrders(filters.params),
+    products = useSalesProductOptions(),
+    invoices = useSalesInvoices({ branchId: "all", pageSize: Number.MAX_SAFE_INTEGER }),
+    mutations = useSalesMutations(),
     [open, setOpen] = useState(false),
     [editing, setEditing] = useState<SalesOrder | null>(null);
+  const canCreateInvoice = usePermission(PERMISSIONS.SALES_WORKFLOW.INVOICE_CREATE);
   const close = () => {
     setOpen(false);
     setEditing(null);
@@ -976,6 +1366,7 @@ export function SalesOrdersPage() {
           "draft",
           "confirmed",
           "processing",
+          "returned_to_sales",
           "partially_delivered",
           "delivered",
           "returned",
@@ -990,15 +1381,54 @@ export function SalesOrdersPage() {
           setOpen(true);
         }}
         amount={(row) => row.totalAmount}
-        actions={(row) => (
-          <OrderActions
-            row={row}
-            onEdit={() => {
-              setEditing(row);
-              setOpen(true);
-            }}
-          />
-        )}
+        statusMessage={(row) => {
+          if (row.status === "returned_to_sales") {
+            return (
+              <span className="block max-w-52 text-xs text-amber-700" title={row.fulfilmentReturn?.reason}>
+                {row.fulfilmentReturn?.reason || "Inventory correction required"}
+              </span>
+            );
+          }
+          if (row.status !== "confirmed") return null;
+          const isServiceOnly = Boolean(row.items.length) && row.items.every((line) => {
+            const product = products.data?.find((item) => item.id === line.productId);
+            return product?.type === "service";
+          });
+          return isServiceOnly ? (
+            <span className="block max-w-36 text-xs text-blue-700">
+              Ready to invoice · no delivery required
+            </span>
+          ) : (
+            <span className="block max-w-36 text-xs text-amber-700">
+              Waiting for Inventory
+            </span>
+          );
+        }}
+        actions={(row) => {
+          const isServiceOnly = Boolean(row.items.length) && row.items.every(
+            (line) => products.data?.find((item) => item.id === line.productId)?.type === "service",
+          );
+          return (
+            <OrderActions
+              row={row}
+              onEdit={() => {
+                setEditing(row);
+                setOpen(true);
+              }}
+              onConvertToInvoice={async () => {
+                const invoice = await mutations.createInvoiceFromOrder(row.id);
+                appToast.success(`${invoice.referenceNumber} created as a draft invoice.`);
+              }}
+              existingInvoice={invoices.data?.data.find(
+                (invoice) => invoice.salesOrderId === row.id && invoice.status !== "void",
+              )}
+              canCreateInvoice={canCreateInvoice}
+              canConvertToInvoice={row.status === "delivered" || (row.status === "confirmed" && isServiceOnly)}
+              isInvoiceLookupPending={invoices.isLoading}
+              isInvoiceLookupFailed={invoices.isError}
+            />
+          );
+        }}
       />
       <SalesOrderFormModal isOpen={open} order={editing} onClose={close} />
     </>
@@ -1006,56 +1436,64 @@ export function SalesOrdersPage() {
 }
 export function DeliveryNotesPage() {
   const filters = useFilters(),
-    query = useDeliveryNotes(filters.params),
-    [open, setOpen] = useState(false);
+    query = useDeliveryNotes(filters.params);
   return (
-    <>
-      <SalesListPage
-        kind="deliveries"
-        title="Delivery Notes"
-        description="Complete full or partial deliveries and deduct branch/location stock."
-        statuses={["draft", "completed", "cancelled"]}
-        query={query}
-        filters={filters}
-        canCreate={usePermission(PERMISSIONS.SALES_WORKFLOW.DELIVERY_CREATE)}
-        createLabel="New Delivery"
-        onCreate={() => setOpen(true)}
-      />
-      <DeliveryFormModal isOpen={open} onClose={() => setOpen(false)} />
-    </>
+    <SalesListPage
+      kind="deliveries"
+      title="Delivery Notes"
+      description="View delivery records created by Inventory Sales Fulfilment, including stock, batch and serial details."
+      statuses={["completed", "cancelled"]}
+      query={query}
+      filters={filters}
+      canCreate={false}
+      createLabel=""
+      onCreate={() => undefined}
+    />
   );
 }
 export function SalesInvoicesPage() {
   const filters = useFilters(),
     query = useSalesInvoices(filters.params),
-    mutations = useSalesMutations(),
-    [open, setOpen] = useState(false);
-  const canApprove = usePermission(PERMISSIONS.SALES_WORKFLOW.INVOICE_APPROVE);
+    mutations = useSalesMutations();
+  const [editingInvoice, setEditingInvoice] = useState<SalesInvoice | null>(null);
+  const canEdit = usePermission(PERMISSIONS.SALES_WORKFLOW.INVOICE_EDIT);
+  const canSubmit = usePermission(PERMISSIONS.SALES_WORKFLOW.INVOICE_SUBMIT);
+  const canSend = usePermission(PERMISSIONS.SALES_WORKFLOW.INVOICE_SEND);
+  const returnReason = (row: SalesInvoice) =>
+    [...row.approval.history]
+      .reverse()
+      .find((entry) => entry.status === "rejected")
+      ?.remarks?.trim();
   const actions = (row: SalesInvoice) => (
     <div className="flex flex-wrap gap-2">
-      {row.status === "draft" && canApprove && (
-        <>
-          <ConfirmAction
-            label="Approve"
-            message={`Approve ${row.referenceNumber}?`}
-            onConfirm={async () => {
-              await mutations.transitionInvoice(row.id, "approve");
-            }}
-          />
-          <ConfirmAction
-            label="Void"
-            variant="danger"
-            message={`Void ${row.referenceNumber}?`}
-            onConfirm={async () => {
-              await mutations.transitionInvoice(row.id, "void");
-            }}
-          />
-        </>
+      {row.status === "returned" && canEdit && (
+        <Button variant="secondary" onClick={() => setEditingInvoice(row)}>
+          Edit Invoice
+        </Button>
       )}
-      {row.status === "approved" && (
+      {["draft", "returned"].includes(row.status) && canSubmit && (
         <ConfirmAction
-          label="Mark Sent"
-          message={`Mark ${row.referenceNumber} as sent?`}
+          label={row.status === "returned" ? "Resubmit to Finance" : "Submit to Finance"}
+          message={`Submit ${row.referenceNumber} to Finance for review?`}
+          onConfirm={async () => {
+            await mutations.transitionInvoice(row.id, "submit");
+          }}
+        />
+      )}
+      {["posted", "partially_paid", "paid", "overdue"].includes(row.status) && row.deliveryStatus !== "sent" && canSend && (
+        <ConfirmAction
+          label="Email Invoice"
+          message={`Email ${row.referenceNumber} with its generated PDF to the customer's billing email?`}
+          onConfirm={async () => {
+            await mutations.emailInvoice(row.id);
+            appToast.success(`${row.referenceNumber} emailed to the customer.`);
+          }}
+        />
+      )}
+      {["posted", "partially_paid", "paid", "overdue"].includes(row.status) && row.deliveryStatus !== "sent" && canSend && (
+        <ConfirmAction
+          label="Record as Sent"
+          message={`Record ${row.referenceNumber} as delivered to the customer outside the ERP?`}
           onConfirm={async () => {
             await mutations.transitionInvoice(row.id, "send");
           }}
@@ -1068,10 +1506,13 @@ export function SalesInvoicesPage() {
       <SalesListPage
         kind="invoices"
         title="Sales Invoices"
-        description="Create direct or order/delivery-backed invoices and monitor outstanding balances."
+        description="Review invoices created from delivered sales orders and monitor outstanding balances."
         statuses={[
           "draft",
+          "pending_approval",
+          "returned",
           "approved",
+          "posted",
           "sent",
           "partially_paid",
           "paid",
@@ -1080,137 +1521,33 @@ export function SalesInvoicesPage() {
         ]}
         query={query}
         filters={filters}
-        canCreate={usePermission(PERMISSIONS.SALES_WORKFLOW.INVOICE_CREATE)}
-        createLabel="New Invoice"
-        onCreate={() => setOpen(true)}
+        canCreate={false}
+        createLabel=""
+        onCreate={() => undefined}
         amount={(row) => row.totalAmount}
+        statusMessage={(row) => row.status === "returned" ? (
+          <span className="block max-w-64 whitespace-normal text-xs leading-5 text-amber-700">
+            <span className="font-semibold">Return reason:</span>{" "}
+            {returnReason(row) || "Finance did not provide a reason."}
+          </span>
+        ) : row.deliveryStatus === "sent" ? (
+          <span className="block text-xs text-emerald-700">Delivered to customer{row.sentTo ? ` · ${row.sentTo}` : ""}</span>
+        ) : row.deliveryStatus === "failed" ? (
+          <span className="block text-xs text-red-700">Email delivery failed · retry available</span>
+        ) : ["posted", "partially_paid", "paid", "overdue"].includes(row.status) ? (
+          <span className="block text-xs text-amber-700">Not yet sent</span>
+        ) : null}
         actions={actions}
       />
-      <SalesInvoiceFormModal isOpen={open} onClose={() => setOpen(false)} />
+      <SalesInvoiceFormModal
+        isOpen={Boolean(editingInvoice)}
+        invoice={editingInvoice}
+        onClose={() => setEditingInvoice(null)}
+      />
     </>
   );
 }
 
-export function CustomerPaymentsPage() {
-  const filters = useFilters(),
-    query = useCustomerPayments(filters.params),
-    invoices = useSalesInvoices({ branchId: "all", pageSize: Number.MAX_SAFE_INTEGER }),
-    customers = useSalesCustomerOptions(),
-    currency = useTenantCurrency(),
-    [open, setOpen] = useState(false);
-  const columns: Column<CustomerPayment>[] = [
-    { key: "referenceNumber", header: "Payment" },
-    {
-      key: "invoiceId",
-      header: "Invoice",
-      render: (row) =>
-        invoices.data?.data.find((invoice) => invoice.id === row.invoiceId)
-          ?.referenceNumber ?? "Invoice unavailable",
-    },
-    {
-      key: "customerId",
-      header: "Customer",
-      render: (row) =>
-        customers.data?.find((item) => item.id === row.customerId)?.name ??
-        row.customerId,
-    },
-    { key: "paymentDate", header: "Date" },
-    {
-      key: "paymentMethod",
-      header: "Method",
-      render: (row) => row.paymentMethod.replace(/_/g, " "),
-    },
-    {
-      key: "amount",
-      header: "Amount",
-      align: "right",
-      render: (row) => currency.formatMoney(row.amount),
-    },
-    {
-      key: "remainingBalance",
-      header: "Remaining",
-      align: "right",
-      render: (row) => currency.formatMoney(row.remainingBalance),
-    },
-    {
-      key: "accountingStatus",
-      header: "Accounting",
-      render: (row) => (
-        <StatusBadge
-          status={row.accountingStatus}
-          label="Prepared"
-          tone="info"
-        />
-      ),
-    },
-  ];
-  return (
-    <PageContainer>
-      <PageHeader
-        title="Customer Payments"
-        description="Record partial or full collections and prepare Accounting handoffs."
-        actions={
-          usePermission(PERMISSIONS.SALES_WORKFLOW.PAYMENT_RECEIVE) ? (
-            <Button leftIcon={<Plus size={16} />} onClick={() => setOpen(true)}>
-              Receive Payment
-            </Button>
-          ) : undefined
-        }
-      />
-      {query.error ? (
-        <ErrorState
-          title="Unable to load payments"
-          message="Customer collections are unavailable."
-          onRetry={() => void query.refetch()}
-        />
-      ) : (
-        <DataTable
-          columns={columns}
-          data={query.data?.data ?? []}
-          keyField="id"
-          isLoading={query.isLoading || invoices.isLoading}
-          emptyTitle="No customer payments"
-          emptyMessage="Received payments will appear here."
-          pagination={{
-            page: filters.page,
-            pageSize: 10,
-            total: query.data?.total ?? 0,
-            onPageChange: filters.setPage,
-            onPageSizeChange: () => undefined,
-          }}
-          toolbar={
-            <TableToolbar
-              searchValue={filters.search}
-              onSearchChange={(value) => {
-                filters.setSearch(value);
-                filters.setPage(1);
-              }}
-              searchPlaceholder="Search payment reference..."
-              filters={
-                <Select
-                  className="w-full sm:w-48"
-                  value={filters.customerId}
-                  onChange={(event) => {
-                    filters.setCustomerId(event.target.value);
-                    filters.setPage(1);
-                  }}
-                  options={[
-                    { value: "all", label: "All customers" },
-                    ...(customers.data ?? []).map((item) => ({
-                      value: item.id,
-                      label: item.name,
-                    })),
-                  ]}
-                />
-              }
-            />
-          }
-        />
-      )}
-      <CustomerPaymentFormModal isOpen={open} onClose={() => setOpen(false)} />
-    </PageContainer>
-  );
-}
 export function SalesReturnsPage() {
   const filters = useFilters(),
     query = useSalesReturns(filters.params),
@@ -1219,8 +1556,8 @@ export function SalesReturnsPage() {
     <>
       <SalesListPage
         kind="returns"
-        title="Sales Returns"
-        description="Return delivered goods, restore usable stock, and prepare a credit note."
+        title="Customer Returns"
+        description="Record returned goods, restore usable stock, and send the linked customer credit note to Finance."
         statuses={["completed", "cancelled"]}
         query={query}
         filters={filters}
@@ -1239,8 +1576,8 @@ export function CreditNotesPage() {
     <SalesListPage
       kind="creditNotes"
       title="Credit Notes"
-      description="Review sales-return credits prepared for future Accounting posting."
-      statuses={["prepared", "issued", "void"]}
+      description="Customer-return credit notes are reviewed and posted in Finance & Accounts."
+      statuses={["pending_approval", "returned", "approved", "posted", "void"]}
       query={query}
       filters={filters}
       canCreate={false}

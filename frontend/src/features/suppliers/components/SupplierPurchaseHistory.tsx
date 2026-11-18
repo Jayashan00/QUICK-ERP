@@ -16,10 +16,12 @@ interface SupplierPurchaseHistoryProps {
 }
 
 const poStatusTone: Record<string, 'success' | 'warning' | 'primary' | 'info' | 'danger' | 'default'> = {
-  received: 'success',
-  issued: 'primary',
-  partial: 'warning',
   draft: 'default',
+  pending_approval: 'warning',
+  approved: 'info',
+  sent: 'primary',
+  partially_received: 'warning',
+  completed: 'success',
   cancelled: 'danger',
 };
 
@@ -110,8 +112,8 @@ export function SupplierPurchaseHistory({ supplier }: SupplierPurchaseHistoryPro
         data={orders}
         keyField="id"
         isLoading={isLoading}
-        emptyTitle="No Purchase Orders"
-        emptyMessage="No purchase orders have been placed with this supplier yet."
+        emptyTitle="No purchase history"
+        emptyMessage="No purchase orders have been recorded for this supplier and branch."
       />
     </Card>
   );

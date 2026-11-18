@@ -7,12 +7,17 @@ import { supplierService } from '../services/supplierService';
 
 export function useSupplierPerformance(supplierId: string | undefined) {
   const { tenantId } = useTenant();
-  const { branchId } = useBranch();
+  const { branchId, branches } = useBranch();
   const query = useQuery({
     queryKey: supplierKeys.performance(tenantId ?? '', supplierId ?? '', branchId ?? ''),
     queryFn: () => {
       if (!tenantId || !supplierId || !branchId) return null;
-      return supplierService.getSupplierPerformance(tenantId, supplierId, branchId);
+      return supplierService.getSupplierPerformance(
+        tenantId,
+        supplierId,
+        branchId,
+        branches.map((branch) => branch.id),
+      );
     },
     enabled: Boolean(tenantId && supplierId && branchId),
   });

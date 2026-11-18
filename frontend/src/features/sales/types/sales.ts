@@ -16,6 +16,7 @@ export type SalesOrderStatus =
   | "draft"
   | "confirmed"
   | "processing"
+  | "returned_to_sales"
   | "partially_delivered"
   | "delivered"
   | "returned"
@@ -23,14 +24,17 @@ export type SalesOrderStatus =
 export type DeliveryStatus = "draft" | "completed" | "cancelled";
 export type SalesInvoiceStatus =
   | "draft"
+  | "pending_approval"
+  | "returned"
   | "approved"
+  | "posted"
   | "sent"
   | "partially_paid"
   | "paid"
   | "overdue"
   | "void";
-export type PaymentMethod =
-  "cash" | "bank_transfer" | "card" | "cheque" | "mobile_payment";
+export type InvoiceDeliveryStatus = "not_sent" | "sent" | "failed";
+export type InvoiceCollectionStatus = "open" | "partially_paid" | "paid" | "overdue" | "written_off";
 export type SalesReturnCondition = "usable" | "damaged";
 export type RecurringFrequency = "weekly" | "monthly" | "quarterly" | "yearly";
 
@@ -77,10 +81,23 @@ export interface SalesQuotation extends SalesDocument {
   discountAmount: number;
   taxAmount: number;
   totalAmount: number;
+  delivery?: {
+    status: "sending" | "sent" | "failed";
+    requestId: string;
+    channel: "email";
+    recipientEmail: string;
+    requestedAt: string;
+    requestedBy: EntityId;
+    sentAt?: string;
+    sentBy?: EntityId;
+    failedAt?: string;
+    failureReason?: string;
+    attachmentName?: string;
+  };
 }
 export interface SalesOrder extends SalesDocument {
   sourceQuotationId?: EntityId;
-  warehouseId: EntityId;
+  warehouseId?: EntityId;
   orderDate: string;
   expectedDeliveryDate: string;
   deliveryAddress: string;
@@ -92,6 +109,13 @@ export interface SalesOrder extends SalesDocument {
   discountAmount: number;
   taxAmount: number;
   totalAmount: number;
+  fulfilmentReturn?: {
+    reason: string;
+    returnedAt: string;
+    returnedBy: EntityId;
+    returnedByName: string;
+    previousStatus: "confirmed" | "processing";
+  };
 }
 export interface DeliveryLine {
   id: EntityId;
@@ -102,6 +126,7 @@ export interface DeliveryLine {
   previouslyDeliveredQuantity: number;
   deliveredQuantity: number;
   batchReference?: string;
+  expiryDate?: string;
   serialReferences?: string[];
 }
 export interface DeliveryNote extends SalesDocument {
@@ -121,6 +146,11 @@ export interface SalesInvoice extends SalesDocument {
   paymentTerms: string;
   currency: string;
   status: SalesInvoiceStatus;
+    deliveryStatus?: InvoiceDeliveryStatus;
+    collectionStatus?: InvoiceCollectionStatus;
+    sentAt?: string;
+    sentBy?: string;
+    sentTo?: string;
   items: SalesLine[];
   subtotal: number;
   discountAmount: number;
@@ -128,22 +158,6 @@ export interface SalesInvoice extends SalesDocument {
   totalAmount: number;
   paidAmount: number;
   outstandingAmount: number;
-}
-export interface CustomerPayment extends BaseEntity {
-  tenantId: EntityId;
-  branchId: EntityId;
-  referenceNumber: string;
-  invoiceId: EntityId;
-  customerId: EntityId;
-  amount: number;
-  paymentMethod: PaymentMethod;
-  paymentDate: string;
-  externalReference?: string;
-  remainingBalance: number;
-  accountingStatus: "prepared";
-  receivedBy: EntityId;
-  receivedByName: string;
-  auditEntries: AuditEntry[];
 }
 export interface SalesReturnLine {
   id: EntityId;
@@ -171,9 +185,16 @@ export interface CreditNote extends SalesDocument {
   issueDate: string;
   reason: string;
   currency: string;
-  status: "prepared" | "issued" | "void";
+  status: "pending_approval" | "returned" | "approved" | "posted" | "void";
   amount: number;
-  accountingStatus: "prepared";
+  accountingStatus: "pending" | "posted" | "reversed";
+  appliedAmount: number;
+  unappliedAmount: number;
+  refundedAmount?: number;
+  postedAt?: string;
+  postedBy?: string;
+  journalReference?: string;
+  returnReason?: string;
   items: SalesLine[];
 }
 export interface RecurringInvoice extends SalesDocument {
@@ -209,4 +230,6 @@ export interface CommissionSummary {
 export interface SalesActor {
   id: EntityId;
   name: string;
+  roleId?: EntityId;
+  roleName?: string;
 }

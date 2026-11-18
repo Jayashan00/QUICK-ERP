@@ -39,24 +39,14 @@ const ProductUomPage = lazyPage(() =>
     default: ProductUomPage,
   })),
 );
-const PriceListPage = lazyPage(() =>
-  import("@/features/products").then(({ PriceListPage }) => ({
-    default: PriceListPage,
-  })),
-);
-const PriceListFormPage = lazyPage(() =>
-  import("@/features/products").then(({ PriceListFormPage }) => ({
-    default: PriceListFormPage,
-  })),
-);
-const PriceListDetailPage = lazyPage(() =>
-  import("@/features/products").then(({ PriceListDetailPage }) => ({
-    default: PriceListDetailPage,
-  })),
-);
 const InventoryDashboardPage = lazyPage(() =>
   import("@/features/inventory").then(({ InventoryDashboardPage }) => ({
     default: InventoryDashboardPage,
+  })),
+);
+const SalesFulfilmentPage = lazyPage(() =>
+  import("@/features/inventory").then(({ SalesFulfilmentPage }) => ({
+    default: SalesFulfilmentPage,
   })),
 );
 const StockBalancesPage = lazyPage(() =>
@@ -259,66 +249,27 @@ export const inventoryRoutes: RouteObject[] = [
       </RequirePermission>
     ),
   },
-  {
-    path: "products/price-lists",
-    element: (
-      <RequirePermission
-        allOf={[
-          PERMISSIONS.PRODUCTS.PRODUCTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_VIEW,
-        ]}
-      >
-        <PriceListPage />
-      </RequirePermission>
-    ),
-  },
-  {
-    path: "products/price-lists/new",
-    element: (
-      <RequirePermission
-        allOf={[
-          PERMISSIONS.PRODUCTS.PRODUCTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_CREATE,
-        ]}
-      >
-        <PriceListFormPage />
-      </RequirePermission>
-    ),
-  },
-  {
-    path: "products/price-lists/:id/edit",
-    element: (
-      <RequirePermission
-        allOf={[
-          PERMISSIONS.PRODUCTS.PRODUCTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_EDIT,
-        ]}
-      >
-        <PriceListFormPage />
-      </RequirePermission>
-    ),
-  },
-  {
-    path: "products/price-lists/:id",
-    element: (
-      <RequirePermission
-        allOf={[
-          PERMISSIONS.PRODUCTS.PRODUCTS_VIEW,
-          PERMISSIONS.PRODUCTS.PRICE_LISTS_VIEW,
-        ]}
-      >
-        <PriceListDetailPage />
-      </RequirePermission>
-    ),
-  },
   // Inventory
   {
     path: "inventory",
     element: (
       <RequirePermission permission={PERMISSIONS.INVENTORY.VIEW}>
         <InventoryDashboardPage />
+      </RequirePermission>
+    ),
+  },
+  {
+    path: "inventory/fulfilment",
+    element: (
+      <RequirePermission
+        allOf={[
+          PERMISSIONS.INVENTORY.VIEW,
+          PERMISSIONS.SALES_WORKFLOW.FULFILLMENT_VIEW,
+          PERMISSIONS.SALES_WORKFLOW.ORDER_PROCESS,
+          PERMISSIONS.SALES_WORKFLOW.DELIVERY_CREATE,
+        ]}
+      >
+        <SalesFulfilmentPage />
       </RequirePermission>
     ),
   },

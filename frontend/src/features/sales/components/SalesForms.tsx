@@ -5,6 +5,10 @@ import { Plus, Trash2 } from "lucide-react";
 import { useBranch } from "@/core/branch/branch-context";
 import { useWarehouseOptions } from "@/features/inventory/hooks/useWarehouseManagement";
 import { useStockLocationOptions } from "@/features/inventory/hooks/useStockLocationManagement";
+import {
+  useInventoryBatches,
+  useInventorySerialNumbers,
+} from "@/features/inventory/hooks/useInventoryTracking";
 import { Button } from "@/shared/components/common/Button";
 import { Modal } from "@/shared/components/common/Modal";
 import { DatePicker } from "@/shared/components/forms/DatePicker";
@@ -15,18 +19,17 @@ import { TextInput } from "@/shared/components/forms/TextInput";
 import { getErrorMessage } from "@/shared/utils/errors";
 import { appToast } from "@/shared/utils/toast";
 import { usePaymentTerms, useTaxRates } from '@/features/settings/finance/hooks/useTenantSettings';
+import { useTenantCurrency } from '@/features/settings/finance/currency';
 import { PaymentTermSelect } from '@/features/settings/finance/components/PaymentTermSelect';
 import { addPaymentTermDays, matchPaymentTerm } from '@/features/settings/finance/paymentTerms';
 import { isSalesTaxApplicable } from '@/features/settings/finance/tax';
 import {
-  customerPaymentSchema,
   deliverySchema,
   recurringInvoiceSchema,
   salesInvoiceSchema,
   salesOrderSchema,
   salesQuotationSchema,
   salesReturnSchema,
-  type CustomerPaymentFormValues,
   type DeliveryFormValues,
   type RecurringInvoiceFormValues,
   type SalesInvoiceFormValues,
@@ -44,7 +47,7 @@ import {
   useSalesProductOptions,
   useSalespersonOptions,
 } from "../hooks/useSales";
-import type { SalesOrder, SalesQuotation } from "../types/sales";
+import type { SalesInvoice, SalesOrder, SalesQuotation } from "../types/sales";
 
 interface Props {
   isOpen: boolean;
@@ -52,18 +55,21 @@ interface Props {
 }
 interface QuotationProps extends Props {
   quotation?: SalesQuotation | null;
+  initialOpportunityId?: string;
 }
 interface OrderProps extends Props {
   order?: SalesOrder | null;
 }
 interface EditableLine {
   productId: string;
+  itemType?: "product" | "service";
   variantId?: string;
   quantity: number;
   unitPrice: number;
   discountPercent: number;
   taxCode?: string;
   taxPercent: number;
+  pricesIncludeTax?: boolean;
 }
 const today = () => new Date().toISOString().slice(0, 10);
 const future = (days: number) =>
@@ -76,6 +82,7 @@ const blankLine = (): EditableLine => ({
   discountPercent: 0,
   taxCode: "",
   taxPercent: 0,
+  pricesIncludeTax: false,
 });
 const option = (
   rows: Array<{
@@ -118,10 +125,18 @@ function SalesLineEditor({
   value,
   onChange,
   taxDate,
+  currencyCode = "",
+  formatMoney = (amount) => amount.toFixed(2),
+  lockMasterData = false,
+  separateProductService = false,
 }: {
   value: EditableLine[];
   onChange: (value: EditableLine[]) => void;
   taxDate: string;
+  currencyCode?: string;
+  formatMoney?: (amount: number) => string;
+  lockMasterData?: boolean;
+  separateProductService?: boolean;
 }) {
   const products = useSalesProductOptions();
   const taxQuery = useTaxRates();
@@ -132,6 +147,39 @@ function SalesLineEditor({
         itemIndex === index ? { ...line, ...patch } : line,
       ),
     );
+  const pricedLines = value.map((line) => {
+    if (!lockMasterData) return line;
+    const product = products.data?.find((item) => item.id === line.productId);
+    if (!product) return line;
+    const tax = taxes.find((item) => item.code === product.taxCode);
+    return {
+      ...line,
+      unitPrice: product.sellingPrice,
+      taxCode: tax?.code ?? "",
+      taxPercent: tax?.percentage ?? 0,
+      pricesIncludeTax: product.pricesIncludeTax,
+    };
+  });
+  const amounts = pricedLines.map((line) => {
+    const subtotal = line.quantity * line.unitPrice;
+    const discountAmount = subtotal * line.discountPercent / 100;
+    const taxableAmount = subtotal - discountAmount;
+    const taxAmount = line.pricesIncludeTax
+      ? taxableAmount - taxableAmount / (1 + line.taxPercent / 100)
+      : taxableAmount * line.taxPercent / 100;
+    return {
+      subtotal,
+      discountAmount,
+      taxAmount,
+      total: line.pricesIncludeTax ? taxableAmount : taxableAmount + taxAmount,
+    };
+  });
+  const summary = amounts.reduce((total, amount) => ({
+    subtotal: total.subtotal + amount.subtotal,
+    discountAmount: total.discountAmount + amount.discountAmount,
+    taxAmount: total.taxAmount + amount.taxAmount,
+    total: total.total + amount.total,
+  }), { subtotal: 0, discountAmount: 0, taxAmount: 0, total: 0 });
   return (
     <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -150,14 +198,42 @@ function SalesLineEditor({
       </div>
       {value.map((line, index) => {
         const selectedProduct = products.data?.find((item) => item.id === line.productId);
+        const selectionType = separateProductService
+          ? line.itemType ?? (selectedProduct?.type === "service" ? "service" : selectedProduct ? "product" : "")
+          : "";
+        const pricedLine = pricedLines[index];
         const decimalPlaces = selectedProduct?.quantityDecimalPlaces ?? 2;
         const quantityStep = 10 ** -decimalPlaces;
         return (
           <div
             key={index}
-            className="grid gap-3 rounded-lg bg-white p-3 sm:grid-cols-2 lg:grid-cols-6"
+            className={`grid gap-3 rounded-lg bg-white p-3 sm:grid-cols-2 ${lockMasterData ? "lg:grid-cols-12" : "lg:grid-cols-6"}`}
           >
-          <FormField label="Product / service" className="lg:col-span-2">
+          {separateProductService && (
+            <FormField label="Item type" className={lockMasterData ? "lg:col-span-2" : "lg:col-span-2"}>
+              <Select
+                value={selectionType}
+                onChange={(event) => {
+                  update(index, {
+                    itemType: event.target.value as "product" | "service",
+                    productId: "",
+                    quantity: 1,
+                    unitPrice: 0,
+                    taxCode: "",
+                    taxPercent: 0,
+                    pricesIncludeTax: false,
+                  });
+                }}
+                placeholder="Select type"
+                options={[
+                  { value: "product", label: "Product" },
+                  { value: "service", label: "Service" },
+                ]}
+              />
+            </FormField>
+          )}
+          {(!separateProductService || selectionType) && (
+          <FormField label={separateProductService ? selectionType === "service" ? "Service" : "Product" : "Product / service"} className={lockMasterData ? (separateProductService ? "lg:col-span-3" : "lg:col-span-3") : "lg:col-span-2"}>
             <Select
               value={line.productId}
               onChange={(event) => {
@@ -167,47 +243,57 @@ function SalesLineEditor({
                 const tax = taxes.find((item) => item.code === product?.taxCode);
                 update(index, {
                   productId: event.target.value,
-                  unitPrice: product?.sellingPrice ?? line.unitPrice,
+                  itemType: separateProductService ? selectionType as "product" | "service" : undefined,
+                  unitPrice: product?.sellingPrice ?? 0,
                   taxCode: tax?.code ?? "",
                   taxPercent: tax?.percentage ?? 0,
+                  pricesIncludeTax: product?.pricesIncludeTax ?? false,
                   quantity:
                     product?.quantityDecimalPlaces === 0 && !Number.isInteger(line.quantity)
                       ? 1
                       : line.quantity,
                 });
               }}
-              placeholder="Select item"
-              options={(products.data ?? []).map((item) => ({
+              placeholder={selectionType === "service" ? "Select service" : "Select product"}
+              options={(products.data ?? []).filter((item) => separateProductService ? (selectionType === "service" ? item.type === "service" : item.type !== "service") : true).map((item) => ({
                 value: item.id,
                 label: `${item.name} (${item.sku})`,
               }))}
             />
           </FormField>
-          <FormField label={selectedProduct ? `Quantity (${selectedProduct.uomName})` : "Quantity"}>
-            <TextInput
-              type="number"
-              min={quantityStep}
-              step={quantityStep}
-              value={line.quantity}
-              onChange={(event) => {
-                const quantity = Number(event.target.value);
-                if (decimalPlaces === 0 && !Number.isInteger(quantity)) return;
-                update(index, { quantity });
-              }}
-            />
+          )}
+          {(!separateProductService || selectedProduct?.type !== "service") && (
+            <FormField className={lockMasterData ? "lg:col-span-2" : undefined} label={selectedProduct ? `Quantity (${selectedProduct.uomName})` : "Quantity"}>
+              <TextInput
+                type="number"
+                min={quantityStep}
+                step={quantityStep}
+                value={line.quantity}
+                onChange={(event) => {
+                  const quantity = Number(event.target.value);
+                  if (decimalPlaces === 0 && !Number.isInteger(quantity)) return;
+                  update(index, { quantity });
+                }}
+              />
+            </FormField>
+          )}
+          <FormField
+            className={lockMasterData ? "lg:col-span-2" : undefined}
+            label={`${selectedProduct?.type === "service" ? "Service price" : "Unit price"}${currencyCode ? ` (${currencyCode})` : lockMasterData ? " (base currency)" : ""}`}
+          >
+            {lockMasterData ? (
+              <TextInput type="number" value={pricedLine.unitPrice} readOnly className="bg-slate-100" />
+            ) : (
+              <TextInput
+                type="number"
+                min="0"
+                step="0.01"
+                value={line.unitPrice}
+                onChange={(event) => update(index, { unitPrice: Number(event.target.value) })}
+              />
+            )}
           </FormField>
-          <FormField label="Unit price">
-            <TextInput
-              type="number"
-              min="0"
-              step="0.01"
-              value={line.unitPrice}
-              onChange={(event) =>
-                update(index, { unitPrice: Number(event.target.value) })
-              }
-            />
-          </FormField>
-          <FormField label="Discount %">
+          <FormField className={lockMasterData ? "lg:col-span-1" : undefined} label="Discount %">
             <TextInput
               type="number"
               min="0"
@@ -218,32 +304,51 @@ function SalesLineEditor({
               }
             />
           </FormField>
-          <FormField label="Sales tax">
-            <Select
-              value={line.taxCode ?? ""}
-              onChange={(event) => {
-                const tax = taxes.find((item) => item.code === event.target.value);
-                update(index, { taxCode: tax?.code ?? "", taxPercent: tax?.percentage ?? 0 });
-              }}
-              options={[{ value: "", label: "No tax / Exempt" }, ...taxes.map((tax) => ({ value: tax.code, label: `${tax.name} (${tax.percentage}%)` }))]}
-            />
+          <FormField className={lockMasterData ? "lg:col-span-2" : undefined} label="Sales tax">
+            {lockMasterData ? (
+              <TextInput
+                value={pricedLine.taxCode ? `${pricedLine.taxCode} (${pricedLine.taxPercent}%)${pricedLine.pricesIncludeTax ? " · Included" : ""}` : "No tax / Exempt"}
+                readOnly
+                className="bg-slate-100"
+              />
+            ) : (
+              <Select
+                value={line.taxCode ?? ""}
+                onChange={(event) => {
+                  const tax = taxes.find((item) => item.code === event.target.value);
+                  update(index, { taxCode: tax?.code ?? "", taxPercent: tax?.percentage ?? 0 });
+                }}
+                options={[{ value: "", label: "No tax / Exempt" }, ...taxes.map((tax) => ({ value: tax.code, label: `${tax.name} (${tax.percentage}%)` }))]}
+              />
+            )}
           </FormField>
+          {lockMasterData && <FormField className="lg:col-span-2" label="Line total">
+              <TextInput value={formatMoney(amounts[index].total)} readOnly className="bg-slate-100 font-semibold" />
+            </FormField>}
           {value.length > 1 && (
-            <Button
-              type="button"
-              size="sm"
-              variant="danger"
-              leftIcon={<Trash2 size={14} />}
-              onClick={() =>
-                onChange(value.filter((_, itemIndex) => itemIndex !== index))
-              }
-            >
-              Remove
-            </Button>
+            <div className={`flex justify-end sm:col-span-2 ${lockMasterData ? "lg:col-span-12" : "lg:col-span-6"}`}>
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                leftIcon={<Trash2 size={14} />}
+                onClick={() =>
+                  onChange(value.filter((_, itemIndex) => itemIndex !== index))
+                }
+              >
+                Remove
+              </Button>
+            </div>
           )}
           </div>
         );
       })}
+      {lockMasterData && <div className="grid gap-3 border-t border-slate-200 pt-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <div><p className="text-slate-500">Subtotal</p><p className="font-semibold text-slate-900">{formatMoney(summary.subtotal)}</p></div>
+        <div><p className="text-slate-500">Discount</p><p className="font-semibold text-slate-900">{formatMoney(summary.discountAmount)}</p></div>
+        <div><p className="text-slate-500">Sales tax</p><p className="font-semibold text-slate-900">{formatMoney(summary.taxAmount)}</p></div>
+        <div className="rounded-lg bg-violet-50 px-3 py-2"><p className="text-violet-700">Quotation total</p><p className="text-base font-bold text-violet-900">{formatMoney(summary.total)}</p></div>
+      </div>}
     </div>
   );
 }
@@ -252,12 +357,14 @@ export function SalesQuotationFormModal({
   isOpen,
   onClose,
   quotation,
+  initialOpportunityId = "",
 }: QuotationProps) {
   const { branches, branchId } = useBranch();
   const customers = useSalesCustomerOptions(),
     people = useSalespersonOptions(),
     opportunities = useSalesOpportunityOptions(),
     mutations = useSalesMutations();
+  const tenantCurrency = useTenantCurrency();
   const form = useForm<SalesQuotationFormValues>({
     resolver: zodResolver(salesQuotationSchema),
     defaultValues: {
@@ -268,7 +375,6 @@ export function SalesQuotationFormModal({
       quotationDate: today(),
       expiryDate: future(30),
       terms: "Prices valid until the expiry date.",
-      currency: "USD",
       notes: "",
       items: [blankLine()],
     },
@@ -285,7 +391,6 @@ export function SalesQuotationFormModal({
             quotationDate: quotation.quotationDate,
             expiryDate: quotation.expiryDate,
             terms: quotation.terms,
-            currency: quotation.currency,
             notes: quotation.notes ?? "",
             items: quotation.items.map((item) => ({
               productId: item.productId,
@@ -295,22 +400,37 @@ export function SalesQuotationFormModal({
               discountPercent: item.discountPercent,
               taxCode: item.taxCode,
               taxPercent: item.taxPercent,
+              pricesIncludeTax: item.pricesIncludeTax,
             })),
           }
         : {
             customerId: "",
             branchId: branchId ?? "",
             salespersonId: "",
-            opportunityId: "",
+            opportunityId: initialOpportunityId,
             quotationDate: today(),
             expiryDate: future(30),
             terms: "Prices valid until the expiry date.",
-            currency: "USD",
             notes: "",
             items: [blankLine()],
           },
     );
-  }, [branchId, form, isOpen, quotation]);
+  }, [branchId, form, initialOpportunityId, isOpen, quotation]);
+  useEffect(() => {
+    if (!isOpen || quotation || !initialOpportunityId) return;
+    const opportunity = opportunities.data?.find(
+      (item) => item.id === initialOpportunityId,
+    );
+    if (!opportunity) return;
+    form.setValue("opportunityId", opportunity.id, { shouldValidate: true });
+    form.setValue("customerId", opportunity.customerId, { shouldValidate: true });
+    form.setValue("branchId", opportunity.branchId, { shouldValidate: true });
+    if (opportunity.salespersonId) {
+      form.setValue("salespersonId", opportunity.salespersonId, {
+        shouldValidate: true,
+      });
+    }
+  }, [form, initialOpportunityId, isOpen, opportunities.data, quotation]);
   const submit = form.handleSubmit(async (values) => {
     try {
       if (quotation) await mutations.updateQuotation(quotation.id, values);
@@ -388,7 +508,6 @@ export function SalesQuotationFormModal({
                   );
                   if (customer) {
                     form.setValue("branchId", customer.branchId);
-                    form.setValue("currency", customer.currency);
                   }
                 },
               })}
@@ -423,15 +542,20 @@ export function SalesQuotationFormModal({
           >
             <DatePicker {...form.register("expiryDate")} />
           </FormField>
-          <FormField label="Currency">
-            <TextInput {...form.register("currency")} />
-          </FormField>
         </div>
         <Controller
           control={form.control}
           name="items"
           render={({ field }) => (
-            <SalesLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("quotationDate")} />
+            <SalesLineEditor
+              value={field.value}
+              onChange={field.onChange}
+              taxDate={form.watch("quotationDate")}
+              currencyCode={tenantCurrency.currencyCode ?? ""}
+              formatMoney={(amount) => tenantCurrency.formatMoneyInCurrency(amount, tenantCurrency.currencyCode)}
+              lockMasterData
+              separateProductService
+            />
           )}
         />
         <FormField
@@ -453,7 +577,9 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
   const { branches, branchId } = useBranch();
   const customers = useSalesCustomerOptions(),
     people = useSalespersonOptions(),
+    products = useSalesProductOptions(),
     mutations = useSalesMutations();
+  const tenantCurrency = useTenantCurrency();
   const form = useForm<SalesOrderFormValues>({
     resolver: zodResolver(salesOrderSchema),
     defaultValues: {
@@ -465,12 +591,17 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
       expectedDeliveryDate: future(7),
       deliveryAddress: "",
       paymentTerms: "",
-      currency: "USD",
+      currency: tenantCurrency.currencyCode ?? "USD",
       notes: "",
       items: [blankLine()],
     },
   });
   const selectedBranch = form.watch("branchId");
+  const orderItems = form.watch("items");
+  const requiresWarehouse = orderItems.some((item) => {
+    const product = products.data?.find((option) => option.id === item.productId);
+    return !product || product.type !== "service";
+  });
   const warehouses = useWarehouseOptions(selectedBranch);
   useEffect(() => {
     if (!isOpen) return;
@@ -506,12 +637,12 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
             expectedDeliveryDate: future(7),
             deliveryAddress: "",
             paymentTerms: "",
-            currency: "USD",
+            currency: tenantCurrency.currencyCode ?? "USD",
             notes: "",
             items: [blankLine()],
           },
     );
-  }, [branchId, form, isOpen, order]);
+  }, [branchId, form, isOpen, order, tenantCurrency.currencyCode]);
   const submit = form.handleSubmit(async (values) => {
     try {
       if (order) await mutations.updateOrder(order.id, values);
@@ -535,7 +666,7 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
           formId="sales-order-form"
           busy={form.formState.isSubmitting}
           onClose={onClose}
-          label="Save Draft"
+          label={order?.status === "returned_to_sales" ? "Save Corrections" : "Save Draft"}
         />
       }
     >
@@ -555,7 +686,6 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
                   );
                   if (customer) {
                     form.setValue("branchId", customer.branchId);
-                    form.setValue("currency", customer.currency);
                     form.setValue("paymentTerms", customer.paymentTerms);
                     form.setValue("deliveryAddress", customer.deliveryAddress);
                     form.setValue("warehouseId", "");
@@ -574,7 +704,7 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
               options={option(branches)}
             />
           </FormField>
-          <FormField label="Warehouse" required>
+          <FormField label="Warehouse" required={requiresWarehouse}>
             <Select
               {...form.register("warehouseId")}
               placeholder="Select warehouse"
@@ -597,7 +727,7 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
             <Controller control={form.control} name="paymentTerms" render={({ field }) => <PaymentTermSelect value={field.value} onChange={(code) => field.onChange(code)} />} />
           </FormField>
           <FormField label="Currency">
-            <TextInput {...form.register("currency")} />
+            <TextInput {...form.register("currency")} readOnly />
           </FormField>
         </div>
         <FormField label="Delivery address" required>
@@ -607,7 +737,15 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
           control={form.control}
           name="items"
           render={({ field }) => (
-            <SalesLineEditor value={field.value} onChange={field.onChange} taxDate={form.watch("orderDate")} />
+            <SalesLineEditor
+              value={field.value}
+              onChange={field.onChange}
+              taxDate={form.watch("orderDate")}
+              currencyCode={form.watch("currency")}
+              formatMoney={(amount) => tenantCurrency.formatMoneyInCurrency(amount, form.watch("currency"))}
+              lockMasterData
+              separateProductService
+            />
           )}
         />
         <FormField label="Notes">
@@ -618,15 +756,23 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
   );
 }
 
-export function DeliveryFormModal({ isOpen, onClose }: Props) {
+interface DeliveryProps extends Props {
+  initialOrderId?: string;
+}
+export function DeliveryFormModal({
+  isOpen,
+  onClose,
+  initialOrderId = "",
+}: DeliveryProps) {
   const orders = useSalesOrders({ branchId: "all", pageSize: 100 }),
     deliveries = useDeliveryNotes({ branchId: "all", pageSize: 100 }),
     products = useSalesProductOptions(),
     mutations = useSalesMutations();
+  const { branches } = useBranch();
   const form = useForm<DeliveryFormValues>({
     resolver: zodResolver(deliverySchema),
     defaultValues: {
-      salesOrderId: "",
+      salesOrderId: initialOrderId,
       warehouseId: "",
       locationId: "",
       deliveryDate: today(),
@@ -636,16 +782,36 @@ export function DeliveryFormModal({ isOpen, onClose }: Props) {
     },
   });
   const orderId = form.watch("salesOrderId"),
-    warehouseId = form.watch("warehouseId");
+    warehouseId = form.watch("warehouseId"),
+    locationId = form.watch("locationId");
   const locations = useStockLocationOptions(warehouseId),
-    warehouses = useWarehouseOptions(undefined, true);
+    warehouses = useWarehouseOptions(undefined, true),
+    batches = useInventoryBatches({
+      branchId: "all",
+      warehouseId: warehouseId || "__none__",
+      locationId: locationId || "__none__",
+      permittedBranchIds: branches.map((branch) => branch.id),
+      status: "available",
+      pageSize: 100,
+    }),
+    serials = useInventorySerialNumbers({
+      branchId: "all",
+      warehouseId: warehouseId || "__none__",
+      locationId: locationId || "__none__",
+      permittedBranchIds: branches.map((branch) => branch.id),
+      status: "available",
+      pageSize: 100,
+    });
+  useEffect(() => {
+    if (isOpen && initialOrderId) form.setValue("salesOrderId", initialOrderId);
+  }, [form, initialOrderId, isOpen]);
   useEffect(() => {
     const order = orders.data?.data.find((item) => item.id === orderId);
     if (!order) return;
     const previous = (deliveries.data?.data ?? []).filter(
       (item) => item.salesOrderId === order.id,
     );
-    form.setValue("warehouseId", order.warehouseId);
+    form.setValue("warehouseId", order.warehouseId ?? "");
     form.setValue("deliveryAddress", order.deliveryAddress);
     form.setValue(
       "items",
@@ -655,23 +821,48 @@ export function DeliveryFormModal({ isOpen, onClose }: Props) {
             products.data?.find((item) => item.id === line.productId)
               ?.trackInventory,
         )
-        .map((line) => ({
-          salesOrderLineId: line.id,
-          productId: line.productId,
-          variantId: line.variantId,
-          deliveredQuantity: Math.max(
+        .map((line) => {
+          const deliveredQuantity = Math.max(
             0,
             line.quantity -
-              previous
-                .flatMap((item) => item.items)
-                .filter((item) => item.salesOrderLineId === line.id)
-                .reduce((sum, item) => sum + item.deliveredQuantity, 0),
-          ),
-          batchReference: "",
-          serialReferences: [],
-        })),
+                previous
+                  .flatMap((item) => item.items)
+                  .filter((item) => item.salesOrderLineId === line.id)
+                  .reduce((sum, item) => sum + item.deliveredQuantity, 0),
+          );
+          const batch = batches.data?.data.find(
+            (item) =>
+                item.productId === line.productId &&
+                (item.variantId ?? "") === (line.variantId ?? "") &&
+                item.remainingQuantity >= deliveredQuantity,
+          );
+          return {
+            salesOrderLineId: line.id,
+            productId: line.productId,
+            variantId: line.variantId,
+            deliveredQuantity,
+            batchReference: batch?.batchNumber ?? "",
+            expiryDate: batch?.expiryDate ?? "",
+            serialReferences: serials.data?.data
+                .filter(
+                  (item) =>
+                    item.productId === line.productId &&
+                    (item.variantId ?? "") === (line.variantId ?? ""),
+                )
+                .slice(0, deliveredQuantity)
+                .map((item) => item.serialNumber) ?? [],
+          };
+        }),
     );
-  }, [deliveries.data?.data, form, orderId, orders.data?.data, products.data]);
+  }, [
+    batches.data?.data,
+    deliveries.data?.data,
+    form,
+    orderId,
+    orders.data?.data,
+    products.data,
+    serials.data?.data,
+  ]);
   const submit = form.handleSubmit(async (values) => {
     try {
       await mutations.completeDelivery(values);
@@ -707,6 +898,7 @@ export function DeliveryFormModal({ isOpen, onClose }: Props) {
             <Select
               {...form.register("salesOrderId")}
               placeholder="Select order"
+              disabled={Boolean(initialOrderId)}
               options={option(
                 (orders.data?.data ?? []).filter((item) =>
                   ["confirmed", "processing", "partially_delivered"].includes(
@@ -764,60 +956,35 @@ export function DeliveryFormModal({ isOpen, onClose }: Props) {
                         type="number"
                         min="1"
                         value={line.deliveredQuantity}
-                        onChange={(event) =>
-                          field.onChange(
-                            field.value.map((item, itemIndex) =>
-                              itemIndex === index
-                                ? {
-                                    ...item,
-                                    deliveredQuantity: Number(
-                                      event.target.value,
-                                    ),
-                                  }
-                                : item,
-                            ),
-                          )
-                        }
+                        readOnly
+                        aria-readonly="true"
                       />
                     </FormField>
                     {product?.trackByBatch && (
                       <FormField label="Batch">
                         <TextInput
                           value={line.batchReference ?? ""}
-                          onChange={(event) =>
-                            field.onChange(
-                              field.value.map((item, itemIndex) =>
-                                itemIndex === index
-                                  ? {
-                                      ...item,
-                                      batchReference: event.target.value,
-                                    }
-                                  : item,
-                              ),
-                            )
-                          }
+                          readOnly
+                          aria-readonly="true"
+                        />
+                      </FormField>
+                    )}
+                    {product?.trackExpiry && (
+                      <FormField label="Expiry date">
+                        <TextInput
+                          type="date"
+                          value={line.expiryDate ?? ""}
+                          readOnly
+                          aria-readonly="true"
                         />
                       </FormField>
                     )}
                     {product?.trackBySerialNumber && (
-                      <FormField label="Serials (comma separated)">
+                      <FormField label="Serial numbers">
                         <TextInput
                           value={line.serialReferences.join(", ")}
-                          onChange={(event) =>
-                            field.onChange(
-                              field.value.map((item, itemIndex) =>
-                                itemIndex === index
-                                  ? {
-                                      ...item,
-                                      serialReferences: event.target.value
-                                        .split(",")
-                                        .map((value) => value.trim())
-                                        .filter(Boolean),
-                                    }
-                                  : item,
-                              ),
-                            )
-                          }
+                          readOnly
+                          aria-readonly="true"
                         />
                       </FormField>
                     )}
@@ -835,12 +1002,22 @@ export function DeliveryFormModal({ isOpen, onClose }: Props) {
   );
 }
 
-export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
+interface SalesInvoiceProps extends Props {
+  initialOrderId?: string;
+  invoice?: SalesInvoice | null;
+}
+export function SalesInvoiceFormModal({
+  isOpen,
+  onClose,
+  initialOrderId = "",
+  invoice,
+}: SalesInvoiceProps) {
   const { branches, branchId } = useBranch();
   const customers = useSalesCustomerOptions(),
     people = useSalespersonOptions(),
-    orders = useSalesOrders({ branchId: "all", pageSize: 100 }),
-    deliveries = useDeliveryNotes({ branchId: "all", pageSize: 100 }),
+    productOptions = useSalesProductOptions(),
+    orders = useSalesOrders({ branchId: "all", pageSize: Number.MAX_SAFE_INTEGER }),
+    deliveries = useDeliveryNotes({ branchId: "all", pageSize: Number.MAX_SAFE_INTEGER }),
     mutations = useSalesMutations();
   const { terms } = usePaymentTerms();
   const form = useForm<SalesInvoiceFormValues>({
@@ -849,7 +1026,7 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
       customerId: "",
       branchId: branchId ?? "",
       salespersonId: "",
-      salesOrderId: "",
+      salesOrderId: initialOrderId,
       deliveryNoteId: "",
       invoiceDate: today(),
       dueDate: future(30),
@@ -859,14 +1036,52 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
       items: [blankLine()],
     },
   });
+  const linkedOrderId = invoice?.salesOrderId ?? initialOrderId;
   const orderId = form.watch("salesOrderId"),
     deliveryId = form.watch("deliveryNoteId");
+  const selectedOrder = orders.data?.data.find((item) => item.id === orderId);
+  const selectedOrderIsServiceOnly = Boolean(selectedOrder?.items.length) && selectedOrder!.items.every(
+    (item) => productOptions.data?.find((product) => product.id === item.productId)?.type === "service",
+  );
   const invoiceDate = form.watch("invoiceDate"), paymentTerms = form.watch("paymentTerms");
+  useEffect(() => {
+    if (!isOpen) return;
+    if (invoice) {
+      form.reset({
+        customerId: invoice.customerId,
+        branchId: invoice.branchId,
+        salespersonId: invoice.salespersonId,
+        salesOrderId: invoice.salesOrderId ?? "",
+        deliveryNoteId: invoice.deliveryNoteId ?? "",
+        invoiceDate: invoice.invoiceDate,
+        dueDate: invoice.dueDate,
+        paymentTerms: invoice.paymentTerms,
+        currency: invoice.currency,
+        notes: invoice.notes ?? "",
+        items: invoice.items.map((item) => ({
+          productId: item.productId,
+          variantId: item.variantId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          discountPercent: item.discountPercent,
+          taxCode: item.taxCode,
+          taxPercent: item.taxPercent,
+          pricesIncludeTax: item.pricesIncludeTax,
+        })),
+      });
+      return;
+    }
+    if (initialOrderId) {
+      form.setValue("salesOrderId", initialOrderId);
+      form.setValue("deliveryNoteId", "");
+    }
+  }, [form, initialOrderId, invoice, isOpen]);
   useEffect(() => {
     const term = matchPaymentTerm(terms, paymentTerms);
     if (term && invoiceDate) form.setValue("dueDate", addPaymentTermDays(invoiceDate, term.dueDays));
   }, [form, invoiceDate, paymentTerms, terms]);
   useEffect(() => {
+    if (invoice) return;
     const order = orders.data?.data.find((item) => item.id === orderId);
     if (order) {
       form.setValue("customerId", order.customerId);
@@ -887,8 +1102,9 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
         })),
       );
     }
-  }, [form, orderId, orders.data?.data]);
+  }, [form, invoice, orderId, orders.data?.data]);
   useEffect(() => {
+    if (invoice) return;
     const delivery = deliveries.data?.data.find(
       (item) => item.id === deliveryId,
     );
@@ -913,11 +1129,16 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
           };
         }),
       );
-  }, [deliveries.data?.data, deliveryId, form, orders.data?.data]);
+  }, [deliveries.data?.data, deliveryId, form, invoice, orders.data?.data]);
   const submit = form.handleSubmit(async (values) => {
     try {
-      await mutations.createInvoice(values);
-      appToast.success("Sales invoice saved as draft.");
+      if (invoice) {
+        await mutations.updateInvoice(invoice.id, values);
+        appToast.success("Returned invoice corrections saved.");
+      } else {
+        await mutations.createInvoice(values);
+        appToast.success("Sales invoice saved as draft.");
+      }
       onClose();
     } catch (error) {
       appToast.error(getErrorMessage(error, "Unable to create invoice."));
@@ -927,14 +1148,14 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="New Sales Invoice"
+      title={invoice ? `Edit Returned Invoice ${invoice.referenceNumber}` : selectedOrder ? `Create Invoice from ${selectedOrder.referenceNumber}` : "New Sales Invoice"}
       maxWidth="1050px"
       footer={
         <Footer
           formId="sales-invoice-form"
           busy={form.formState.isSubmitting}
           onClose={onClose}
-          label="Save Draft"
+          label={invoice ? "Save Corrections" : "Save Draft"}
         />
       }
     >
@@ -944,20 +1165,42 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
         className="space-y-4"
         noValidate
       >
+        {invoice?.status === "returned" && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span className="font-semibold">Finance return reason:</span>{" "}
+            {[...invoice.approval.history]
+              .reverse()
+              .find((entry) => entry.status === "rejected")
+              ?.remarks?.trim() || "Finance did not provide a reason."}
+          </div>
+        )}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FormField label="Sales order">
             <Select
               {...form.register("salesOrderId", {
                 onChange: () => form.setValue("deliveryNoteId", ""),
               })}
-              placeholder="Optional order"
-              options={option(orders.data?.data ?? [])}
+              disabled={Boolean(invoice)}
+              placeholder="Select delivered order"
+              options={option(
+                (orders.data?.data ?? []).filter(
+                  (item) =>
+                    (item.status === "delivered" ||
+                      (item.status === "confirmed" && Boolean(item.items.length) && item.items.every(
+                        (line) => productOptions.data?.find((product) => product.id === line.productId)?.type === "service",
+                      ))) &&
+                    (!linkedOrderId || item.id === linkedOrderId),
+                ),
+              )}
             />
           </FormField>
           <FormField label="Delivery note">
             <Select
               {...form.register("deliveryNoteId")}
-              placeholder="Optional delivery"
+              placeholder={selectedOrderIsServiceOnly
+                ? "Not required for a service-only order"
+                : initialOrderId ? "Linked through the delivered order" : "Optional delivery"}
+              disabled={Boolean(linkedOrderId)}
               options={option(
                 (deliveries.data?.data ?? []).filter(
                   (item) => !orderId || item.salesOrderId === orderId,
@@ -968,16 +1211,18 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
           <FormField label="Customer" required>
             <Select
               {...form.register("customerId", { onChange: (event) => { const customer = customers.data?.find((item) => item.id === event.target.value); if (customer) { form.setValue("branchId", customer.branchId); form.setValue("currency", customer.currency); form.setValue("paymentTerms", customer.paymentTerms); } } })}
+              disabled={Boolean(invoice)}
               options={option(customers.data ?? [])}
             />
           </FormField>
           <FormField label="Branch" required>
-            <Select {...form.register("branchId")} options={option(branches)} />
+            <Select {...form.register("branchId")} options={option(branches)} disabled={Boolean(invoice)} />
           </FormField>
           <FormField label="Salesperson" required>
             <Select
               {...form.register("salespersonId")}
               options={option(people.data ?? [])}
+              disabled={Boolean(invoice)}
             />
           </FormField>
           <FormField label="Invoice date">
@@ -990,7 +1235,7 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
             <Controller control={form.control} name="paymentTerms" render={({ field }) => <PaymentTermSelect value={field.value} onChange={(code) => field.onChange(code)} />} />
           </FormField>
           <FormField label="Currency">
-            <TextInput {...form.register("currency")} />
+            <TextInput {...form.register("currency")} readOnly={Boolean(invoice)} aria-readonly={Boolean(invoice)} />
           </FormField>
         </div>
         <Controller
@@ -1003,98 +1248,6 @@ export function SalesInvoiceFormModal({ isOpen, onClose }: Props) {
         <FormField label="Notes">
           <Textarea rows={2} {...form.register("notes")} />
         </FormField>
-      </form>
-    </Modal>
-  );
-}
-
-export function CustomerPaymentFormModal({ isOpen, onClose }: Props) {
-  const invoices = useSalesInvoices({ branchId: "all", pageSize: 100 }),
-    mutations = useSalesMutations();
-  const form = useForm<CustomerPaymentFormValues>({
-    resolver: zodResolver(customerPaymentSchema),
-    defaultValues: {
-      invoiceId: "",
-      amount: 0,
-      paymentMethod: "bank_transfer",
-      paymentDate: today(),
-      externalReference: "",
-    },
-  });
-  const invoiceId = form.watch("invoiceId");
-  useEffect(() => {
-    const invoice = invoices.data?.data.find((item) => item.id === invoiceId);
-    if (invoice) form.setValue("amount", invoice.outstandingAmount);
-  }, [form, invoiceId, invoices.data?.data]);
-  const submit = form.handleSubmit(async (values) => {
-    try {
-      await mutations.receivePayment(values);
-      appToast.success("Payment recorded and Accounting handoff prepared.");
-      onClose();
-    } catch (error) {
-      appToast.error(getErrorMessage(error, "Unable to receive payment."));
-    }
-  });
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Receive Customer Payment"
-      maxWidth="650px"
-      footer={
-        <Footer
-          formId="customer-payment-form"
-          busy={form.formState.isSubmitting}
-          onClose={onClose}
-          label="Receive Payment"
-        />
-      }
-    >
-      <form
-        id="customer-payment-form"
-        onSubmit={submit}
-        className="space-y-4"
-        noValidate
-      >
-        <FormField label="Invoice" required>
-          <Select
-            {...form.register("invoiceId")}
-            placeholder="Select invoice"
-            options={option(
-              (invoices.data?.data ?? []).filter(
-                (item) => item.outstandingAmount > 0 && item.status !== "void",
-              ),
-            )}
-          />
-        </FormField>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Amount" required>
-            <TextInput
-              type="number"
-              min="0.01"
-              step="0.01"
-              {...form.register("amount", { valueAsNumber: true })}
-            />
-          </FormField>
-          <FormField label="Method">
-            <Select
-              {...form.register("paymentMethod")}
-              options={[
-                { value: "cash", label: "Cash" },
-                { value: "bank_transfer", label: "Bank transfer" },
-                { value: "card", label: "Card" },
-                { value: "cheque", label: "Cheque" },
-                { value: "mobile_payment", label: "Mobile payment" },
-              ]}
-            />
-          </FormField>
-          <FormField label="Payment date">
-            <DatePicker {...form.register("paymentDate")} />
-          </FormField>
-          <FormField label="External reference">
-            <TextInput {...form.register("externalReference")} />
-          </FormField>
-        </div>
       </form>
     </Modal>
   );

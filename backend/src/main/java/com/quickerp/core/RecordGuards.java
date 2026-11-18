@@ -1,11 +1,13 @@
 package com.quickerp.core;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -18,6 +20,8 @@ public final class RecordGuards {
     public static final String ROLES = "core.roles";
     public static final String CUSTOMERS = "customers.records";
     public static final String QUOTATIONS = "sales.quotations";
+    public static final String SALES_ORDERS = "sales.orders";
+    public static final String CREDIT_NOTES = "sales.creditNotes";
     public static final String PRODUCTS = "products.records";
     public static final String UOMS = "products.uoms";
 
@@ -84,6 +88,101 @@ public final class RecordGuards {
                 decimalPlaces == 0
                         ? productName + " uses " + uomName + " and requires a whole-number quantity."
                         : productName + " allows at most " + decimalPlaces + " decimal place(s) for quantity.");
+    }
+
+    /** Inventory may return an undelivered order to Sales only with a durable correction reason. */
+    public static void checkSalesOrder(Permissions permissions, Principal principal, JsonNode stored, JsonNode incoming) {
+        if (incoming == null) return;
+        if (!incoming.isObject()) throw ApiException.badRequest("A sales order must be an object.");
+        String previous = Sql.text(stored, "status");
+        String next = Sql.text(incoming, "status");
+        if ("returned_to_sales".equals(next) && !"returned_to_sales".equals(previous)) {
+            if (!permissions.matches("salesOrder.process")) {
+                throw ApiException.forbidden("You do not have permission to return fulfilment orders to Sales.");
+            }
+            if (!Set.of("confirmed", "processing").contains(previous)) {
+                throw ApiException.badRequest("Only confirmed or processing sales orders can be returned to Sales.");
+            }
+            JsonNode detail = incoming.get("fulfilmentReturn");
+            String reason = Sql.text(detail, "reason");
+            if (detail == null || !detail.isObject() || reason == null || reason.trim().length() < 5 || reason.length() > 1000) {
+                throw ApiException.validation("fulfilmentReturn.reason", "A return reason between 5 and 1000 characters is required.");
+            }
+            if (!principal.userId().equals(Sql.text(detail, "returnedBy"))) {
+                throw ApiException.forbidden("The fulfilment return must identify the signed-in user.");
+            }
+            if (!previous.equals(Sql.text(detail, "previousStatus")) || Sql.text(detail, "returnedAt") == null) {
+                throw ApiException.badRequest("The fulfilment return context is incomplete.");
+            }
+        }
+        if ("returned_to_sales".equals(previous)) {
+            if (!Objects.equals(stored.get("fulfilmentReturn"), incoming.get("fulfilmentReturn"))) {
+                throw ApiException.forbidden("The Inventory return reason cannot be changed by Sales.");
+            }
+            if (!"returned_to_sales".equals(next)) {
+                if (!"confirmed".equals(next)) {
+                    throw ApiException.badRequest("An inventory-returned order must be resubmitted to Inventory.");
+                }
+                if (!permissions.matches("salesOrder.confirm")) {
+                    throw ApiException.forbidden("You do not have permission to resubmit sales orders to Inventory.");
+                }
+            }
+        }
+    }
+
+    /** Enforces the Finance lifecycle and immutability of customer credit notes. */
+    public static void checkCreditNote(Permissions permissions, JsonNode stored, JsonNode incoming) {
+        if (incoming == null) {
+            if (stored != null) throw ApiException.forbidden("Customer credit notes cannot be deleted. Void or reverse them instead.");
+            return;
+        }
+        if (!incoming.isObject()) throw ApiException.badRequest("A customer credit note must be an object.");
+        String next = Sql.text(incoming, "status");
+        if (!Set.of("pending_approval", "returned", "approved", "posted", "void").contains(next)) throw ApiException.badRequest("The customer credit note status is not valid.");
+        if (stored == null || !stored.isObject()) {
+            if (!"pending_approval".equals(next) || !permissions.matches("salesReturn.create")) throw ApiException.forbidden("Only the customer return workflow can create a pending customer credit note.");
+            return;
+        }
+        String previous = Sql.text(stored, "status");
+        if (Objects.equals(previous, next)) {
+            if ("posted".equals(previous) && !Objects.equals(stored, incoming)) {
+                if (!permissions.matches("creditNote.refund") || !equalIgnoring(stored, incoming, Set.of("unappliedAmount", "refundedAmount", "auditEntries", "updatedAt"))) {
+                    throw ApiException.forbidden("Posted customer credit notes are locked except for an authorized customer-credit refund.");
+                }
+            }
+            if ("void".equals(previous) && !Objects.equals(stored, incoming)) throw ApiException.forbidden("Void customer credit notes are locked.");
+            return;
+        }
+        String needed = switch (previous + "->" + next) {
+            case "pending_approval->approved" -> "creditNote.approve";
+            case "pending_approval->returned" -> "creditNote.return";
+            case "returned->pending_approval" -> "salesReturn.create";
+            case "pending_approval->void", "returned->void", "approved->void" -> "creditNote.void";
+            case "posted->void" -> "creditNote.void";
+            case "approved->posted" -> "creditNote.post";
+            default -> null;
+        };
+        if (needed == null) throw ApiException.badRequest("This customer credit note status change is not allowed.");
+        if (!permissions.matches(needed)) throw ApiException.forbidden("You do not have permission to complete this customer credit note action.");
+        if (("returned".equals(next) || "void".equals(next))) {
+            String reason = "returned".equals(next) ? Sql.text(incoming, "returnReason") : latestAuditRemarks(incoming);
+            if (reason == null || reason.trim().length() < 3) throw ApiException.validation("reason", "A reason is required for this customer credit note action.");
+        }
+        if ("posted".equals(previous)) throw ApiException.forbidden("A posted customer credit note must be reversed through Accounting.");
+    }
+
+    private static String latestAuditRemarks(JsonNode record) {
+        JsonNode entries = record == null ? null : record.get("auditEntries");
+        if (entries == null || !entries.isArray() || entries.isEmpty()) return null;
+        return Sql.text(entries.get(entries.size() - 1), "remarks");
+    }
+
+    private static boolean equalIgnoring(JsonNode left, JsonNode right, Set<String> ignored) {
+        if (!(left instanceof ObjectNode leftObject) || !(right instanceof ObjectNode rightObject)) return false;
+        ObjectNode leftCopy = leftObject.deepCopy();
+        ObjectNode rightCopy = rightObject.deepCopy();
+        ignored.forEach(field -> { leftCopy.remove(field); rightCopy.remove(field); });
+        return leftCopy.equals(rightCopy);
     }
 
     // ------------------------------------------------------------- journals

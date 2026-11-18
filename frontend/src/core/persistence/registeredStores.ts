@@ -27,7 +27,6 @@ import '@/features/pos/posSettings';
 import '@/features/pos/posWebOrders';
 import '@/features/pos/receiptMessageService';
 import '@/features/products/services/masterDataStore';
-import '@/features/products/services/priceListStore';
 import '@/features/products/services/productDocumentStore';
 import '@/features/products/services/productImageStore';
 import '@/features/products/services/productRelationshipStore';

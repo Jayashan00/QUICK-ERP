@@ -5,11 +5,11 @@ import { leadService } from '../src/features/crm/leads/services/leadService';
 const scope = { tenantId: 'tenant-001', branchId: 'branch-001' };
 const baseCustomer = {
   name: 'Customer QA',
-  code: 'CUST-QA-UNIQUE',
   type: 'company' as const,
   email: 'customer.qa.unique@example.com',
   phone: '+94 77 000 0099',
   currency: 'LKR',
+  creditLimit: 1250.6,
   status: 'active' as const,
   billingAddress: {
     street: '1 Test Street',
@@ -21,13 +21,14 @@ const baseCustomer = {
 };
 
 const created = await customerService.createCustomer(scope, baseCustomer);
+assert.equal(created.code, 'CUST-0006');
+assert.equal(created.creditLimit, 1251);
 assert.equal(created.paymentTermCode, 'NET30');
 assert.equal(created.paymentTermsDays, 30);
 
 await assert.rejects(
   () => customerService.createCustomer(scope, {
     ...baseCustomer,
-    code: 'CUST-QA-EMAIL',
     email: '  CUSTOMER.QA.UNIQUE@EXAMPLE.COM ',
     phone: '+94 77 000 0088',
   }),
@@ -37,21 +38,39 @@ await assert.rejects(
 await assert.rejects(
   () => customerService.createCustomer(scope, {
     ...baseCustomer,
-    code: 'CUST-QA-PHONE',
     email: 'customer.qa.phone@example.com',
     phone: '94770000099',
   }),
   /phone number already exists/,
 );
 
-await customerService.updateCustomer(scope, created.id, {
+await assert.rejects(
+  () => customerService.createCustomer(scope, {
+    ...baseCustomer,
+    email: 'customer.qa.currency@example.com',
+    phone: '+94 77 000 0055',
+    currency: 'EUR',
+  }),
+  /EUR is not supported by this company/,
+);
+
+const updated = await customerService.updateCustomer(scope, created.id, {
   email: 'CUSTOMER.QA.UNIQUE@EXAMPLE.COM',
   phone: '94 (77) 000-0099',
+  code: 'CUST-MANUAL',
+} as Parameters<typeof customerService.updateCustomer>[2]);
+assert.equal(updated.code, created.code);
+
+const nextCustomer = await customerService.createCustomer(scope, {
+  ...baseCustomer,
+  name: 'Second Customer QA',
+  email: 'customer.qa.second@example.com',
+  phone: '+94 77 000 0066',
 });
+assert.equal(nextCustomer.code, 'CUST-0007');
 
 const leadCustomer = await customerService.createCustomer(scope, {
   ...baseCustomer,
-  code: 'CUST-QA-LEAD',
   name: 'Prospective Buyer',
   email: 'prospective.buyer@example.com',
   phone: '+94 77 000 0077',

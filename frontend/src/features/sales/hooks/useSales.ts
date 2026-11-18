@@ -8,8 +8,9 @@ import { useAuth } from "@/core/auth/auth-context";
 import { useBranch } from "@/core/branch/branch-context";
 import { useTenant } from "@/core/tenant/tenant-context";
 import { usePermissions } from "@/core/permissions/permission-context";
+import { accountingService } from "@/features/accounting/accountingService";
+import { useTenantCurrency } from "@/features/settings/finance/currency";
 import type {
-  CustomerPaymentFormValues,
   DeliveryFormValues,
   RecurringInvoiceFormValues,
   SalesInvoiceFormValues,
@@ -18,21 +19,38 @@ import type {
   SalesReturnFormValues,
 } from "../schemas/salesSchemas";
 import { salesKeys } from "../queries/salesKeys";
-import { salesService, type SalesListParams } from "../services/salesService";
+import { salesService, type InvoiceWorkflowAction, type PdfCurrencyOptions, type SalesListParams } from "../services/salesService";
 
 function useSalesContext() {
-  const { tenantId } = useTenant();
+  const { tenantId, currentTenant } = useTenant();
+  const tenantCurrency = useTenantCurrency();
   const { branchId, branches } = useBranch();
   const { user } = useAuth();
   const { permissions } = usePermissions();
+  const multiplier = currentTenant?.currency
+    ? tenantCurrency.convertToBaseAmount(1, currentTenant.currency)
+    : null;
+  const pdfCurrency = tenantCurrency.currencyCode && multiplier
+    ? { currency: tenantCurrency.currencyCode, multiplier }
+    : null;
   return {
     scope: { tenantId: tenantId ?? "", branchId: branchId ?? "" },
     tenantId: tenantId ?? "",
     permitted: branches.map((branch) => branch.id),
-    actor: { id: user?.id ?? "unknown", name: user?.name ?? "Unknown user" },
+    actor: {
+      id: user?.id ?? "unknown",
+      name: user?.name ?? "Unknown user",
+      roleId: user?.roleId,
+      roleName: user?.roleName,
+    },
     permissions,
+    pdfCurrency,
     enabled: Boolean(tenantId && branchId && user),
   };
+}
+function requirePdfCurrency(value: PdfCurrencyOptions | null): PdfCurrencyOptions {
+  if (!value) throw new Error("Wait for the system currency exchange rate to load, then try again.");
+  return value;
 }
 function useList<T>(
   kind: string,
@@ -63,9 +81,24 @@ export const useDeliveryNotes = (
 export const useSalesInvoices = (
   params: Omit<SalesListParams, "permittedBranchIds">,
 ) => useList("invoices", params, salesService.listInvoices);
-export const useCustomerPayments = (
-  params: Omit<SalesListParams, "permittedBranchIds">,
-) => useList("payments", params, salesService.listPayments);
+export function useSalesInvoicePdf(invoiceId?: string) {
+  const context = useSalesContext();
+  return useQuery({
+    queryKey: ["sales", "invoice-pdf", context.scope, invoiceId, context.pdfCurrency],
+    queryFn: () => salesService.invoicePdf(context.scope, context.permitted, invoiceId ?? "", requirePdfCurrency(context.pdfCurrency)),
+    enabled: context.enabled && Boolean(invoiceId) && Boolean(context.pdfCurrency),
+    staleTime: 60_000,
+  });
+}
+export function useCreditNotePdf(creditNoteId?: string) {
+  const context = useSalesContext();
+  return useQuery({
+    queryKey: ["sales", "credit-note-pdf", context.scope, creditNoteId, context.pdfCurrency],
+    queryFn: () => salesService.creditNotePdf(context.scope, context.permitted, creditNoteId ?? "", requirePdfCurrency(context.pdfCurrency)),
+    enabled: context.enabled && Boolean(creditNoteId) && Boolean(context.pdfCurrency),
+    staleTime: 60_000,
+  });
+}
 export const useSalesReturns = (
   params: Omit<SalesListParams, "permittedBranchIds">,
 ) => useList("returns", params, salesService.listReturns);
@@ -152,7 +185,12 @@ export function useSalesMutations() {
   const client = useQueryClient();
   const mutation = useMutation({
     mutationFn: (task: () => Promise<unknown>) => task(),
-    onSuccess: () => client.invalidateQueries({ queryKey: salesKeys.all }),
+    onSettled: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: salesKeys.all }),
+        client.invalidateQueries({ queryKey: ["accounting"] }),
+      ]);
+    },
   });
   const run = <T>(task: () => Promise<T>) =>
     mutation.mutateAsync(task) as Promise<T>;
@@ -199,6 +237,20 @@ export function useSalesMutations() {
           remarks,
         ),
       ),
+    emailQuotation: (id: string) =>
+      run(() =>
+        salesService.emailQuotation(context.scope, context.permitted, id, requirePdfCurrency(context.pdfCurrency)),
+      ),
+    quotationPdf: (id: string) =>
+      salesService.quotationPdf(context.scope, context.permitted, id, requirePdfCurrency(context.pdfCurrency)),
+    orderPdf: (id: string) =>
+      salesService.orderPdf(context.scope, context.permitted, id, requirePdfCurrency(context.pdfCurrency)),
+    deliveryPdf: (id: string) =>
+      salesService.deliveryPdf(context.scope, context.permitted, id),
+    invoicePdf: (id: string) =>
+      salesService.invoicePdf(context.scope, context.permitted, id, requirePdfCurrency(context.pdfCurrency)),
+    emailInvoice: (id: string) =>
+      run(() => salesService.emailInvoice(context.scope, context.permitted, id, context.actor, requirePdfCurrency(context.pdfCurrency))),
     createOrder: (values: SalesOrderFormValues) =>
       run(() =>
         salesService.createOrder(
@@ -228,7 +280,11 @@ export function useSalesMutations() {
           context.actor,
         ),
       ),
-    transitionOrder: (id: string, action: "confirm" | "process" | "cancel") =>
+    transitionOrder: (
+      id: string,
+      action: "confirm" | "process" | "return_to_sales" | "resubmit" | "cancel",
+      remarks?: string,
+    ) =>
       run(() =>
         salesService.transitionOrder(
           context.scope,
@@ -236,6 +292,8 @@ export function useSalesMutations() {
           id,
           action,
           context.actor,
+          context.permissions,
+          remarks,
         ),
       ),
     completeDelivery: (values: DeliveryFormValues) =>
@@ -245,6 +303,7 @@ export function useSalesMutations() {
           context.permitted,
           values,
           context.actor,
+          context.permissions,
         ),
       ),
     createInvoice: (values: SalesInvoiceFormValues) =>
@@ -256,9 +315,29 @@ export function useSalesMutations() {
           context.actor,
         ),
       ),
+    updateInvoice: (id: string, values: SalesInvoiceFormValues) =>
+      run(() =>
+        salesService.updateInvoice(
+          context.scope,
+          context.permitted,
+          id,
+          values,
+          context.actor,
+          context.permissions,
+        ),
+      ),
+    createInvoiceFromOrder: (orderId: string) =>
+      run(() =>
+        salesService.createInvoiceFromOrder(
+          context.scope,
+          context.permitted,
+          orderId,
+          context.actor,
+        ),
+      ),
     transitionInvoice: (
       id: string,
-      action: "approve" | "send" | "void",
+      action: InvoiceWorkflowAction,
       remarks?: string,
     ) =>
       run(() =>
@@ -268,18 +347,45 @@ export function useSalesMutations() {
           id,
           action,
           context.actor,
+          context.permissions,
           remarks,
         ),
       ),
-    receivePayment: (values: CustomerPaymentFormValues) =>
+    postInvoice: (id: string) =>
       run(() =>
-        salesService.receivePayment(
-          context.scope,
-          context.permitted,
-          values,
+        Promise.resolve(accountingService.postSalesInvoice(
+          {
+            tenantId: context.scope.tenantId,
+            branchId: context.scope.branchId,
+            permittedBranchIds: context.permitted,
+          },
           context.actor,
-        ),
+          id,
+          context.permissions,
+        )),
       ),
+    transitionCreditNote: (id: string, action: "approve" | "return" | "resubmit" | "void", remarks?: string) =>
+      run(() => salesService.transitionCreditNote(
+        context.scope, context.permitted, id, action, context.actor, context.permissions, remarks,
+      )),
+    postCreditNote: (id: string) =>
+      run(() => Promise.resolve(accountingService.postCreditNote({
+        tenantId: context.scope.tenantId,
+        branchId: context.scope.branchId,
+        permittedBranchIds: context.permitted,
+      }, context.actor, id, context.permissions))),
+    refundCustomerCredit: (id: string, accountId: string) =>
+      run(() => Promise.resolve(accountingService.refundCustomerCredit({
+        tenantId: context.scope.tenantId,
+        branchId: context.scope.branchId,
+        permittedBranchIds: context.permitted,
+      }, context.actor, id, accountId, context.permissions))),
+    reverseCreditNote: (id: string, reason: string) =>
+      run(() => Promise.resolve(accountingService.reverseCreditNote({
+        tenantId: context.scope.tenantId,
+        branchId: context.scope.branchId,
+        permittedBranchIds: context.permitted,
+      }, context.actor, id, reason, context.permissions))),
     completeReturn: (values: SalesReturnFormValues) =>
       run(() =>
         salesService.completeReturn(

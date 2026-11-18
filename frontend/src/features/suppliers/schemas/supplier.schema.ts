@@ -51,35 +51,6 @@ export const SUPPLIER_CATEGORY_LABELS: Record<SupplierCategory, string> = {
   other: 'Other / General Supplies',
 };
 
-export const SUPPLIER_TAX_CATEGORIES = [
-  { value: 'standard', label: 'Standard Rated' },
-  { value: 'reduced', label: 'Reduced Rate' },
-  { value: 'zero_rated', label: 'Zero Rated' },
-  { value: 'exempt', label: 'Tax Exempt' },
-  { value: 'reverse_charge', label: 'Reverse Charge' },
-] as const;
-
-export const SUPPLIER_TAX_CATEGORY_LABELS: Record<string, string> = {
-  standard: 'Standard Rated',
-  reduced: 'Reduced Rate',
-  zero_rated: 'Zero Rated',
-  exempt: 'Tax Exempt',
-  reverse_charge: 'Reverse Charge',
-};
-
-export const SUPPLIER_CURRENCIES = [
-  { value: 'USD', label: 'USD — US Dollar' },
-  { value: 'EUR', label: 'EUR — Euro' },
-  { value: 'GBP', label: 'GBP — British Pound' },
-  { value: 'CAD', label: 'CAD — Canadian Dollar' },
-  { value: 'JPY', label: 'JPY — Japanese Yen' },
-  { value: 'CNY', label: 'CNY — Chinese Yuan' },
-  { value: 'LKR', label: 'LKR — Sri Lankan Rupee' },
-  { value: 'INR', label: 'INR — Indian Rupee' },
-  { value: 'AUD', label: 'AUD — Australian Dollar' },
-  { value: 'SGD', label: 'SGD — Singapore Dollar' },
-] as const;
-
 export const SUPPLIER_COUNTRIES = [
   { value: 'US', label: 'United States (US)' },
   { value: 'DE', label: 'Germany (DE)' },
@@ -130,25 +101,16 @@ export const supplierAddressSchema = z.object({
 export const SUPPLIER_PAYMENT_METHODS = [
   'bank_transfer',
   'cash',
-  'card',
-  'credit',
-  'other',
 ] as const;
 
 export const SUPPLIER_PAYMENT_METHOD_OPTIONS: { value: SupplierPaymentMethod; label: string }[] = [
   { value: 'bank_transfer', label: 'Bank Transfer' },
   { value: 'cash', label: 'Cash' },
-  { value: 'card', label: 'Credit / Debit Card' },
-  { value: 'credit', label: 'Credit / On Account' },
-  { value: 'other', label: 'Other' },
 ];
 
 export const SUPPLIER_PAYMENT_METHOD_LABELS: Record<SupplierPaymentMethod, string> = {
   bank_transfer: 'Bank Transfer',
   cash: 'Cash',
-  card: 'Credit / Debit Card',
-  credit: 'Credit / On Account',
-  other: 'Other',
 };
 
 export const SUPPLIER_PAYMENT_TERM_OPTIONS: { value: string; label: string }[] = [
@@ -198,7 +160,6 @@ export const supplierBankDetailsSchema = z.object({
 });
 
 export const supplierSchema = z.object({
-  code: requiredString('Supplier code', 50),
   name: requiredString('Supplier name', 150),
   category: z
     .string()
@@ -215,7 +176,6 @@ export const supplierSchema = z.object({
   website: optionalWebsite,
   taxNumber: optionalString('Tax ID / Number', 60),
   vatNumber: optionalString('VAT registration number', 60),
-  taxCategory: optionalString('Tax category', 60),
   registrationNumber: optionalString('Business registration number', 60),
   currency: requiredString('Currency', 10),
   paymentTermCode: optionalString('Payment term', 50).optional(),
@@ -238,6 +198,24 @@ export const supplierSchema = z.object({
   }),
   address: supplierAddressSchema,
   notes: optionalString('Notes', 2000),
+}).superRefine((value, context) => {
+  if (value.paymentMethod !== 'bank_transfer') return;
+
+  const requiredBankFields = [
+    ['bankName', 'Bank name is required for bank transfers.'],
+    ['accountName', 'Account name is required for bank transfers.'],
+    ['accountNumber', 'Account number is required for bank transfers.'],
+  ] as const;
+
+  for (const [field, message] of requiredBankFields) {
+    if (!value.bankDetails?.[field]?.trim()) {
+      context.addIssue({
+        code: 'custom',
+        path: ['bankDetails', field],
+        message,
+      });
+    }
+  }
 });
 
 export type SupplierFormValues = z.infer<typeof supplierSchema>;

@@ -50,7 +50,7 @@ const stories = [
 
 const platformAreas = [
   { icon: ShoppingBag, title: 'Sales & point of sale', details: 'Quotations, approvals, orders, invoices, payments, deliveries, returns, credit notes, recurring invoices, commissions, POS shifts, receipts, web orders and public storefront.' },
-  { icon: Boxes, title: 'Products & inventory', details: 'Products, services, variants, identifiers, categories, brands, price lists, imports, warehouses, stock locations, batches, serials, expiry, transfers, counts, adjustments, reorder and stock reports.' },
+  { icon: Boxes, title: 'Products & inventory', details: 'Products, services, identifiers, categories, brands, imports, warehouses, stock locations, batches, serials, expiry, transfers, counts, adjustments, reorder and stock reports.' },
   { icon: Truck, title: 'Purchasing & suppliers', details: 'Purchase requests, RFQs, supplier quotations, comparisons, purchase orders, goods receipts, invoice matching, purchase returns, supplier payments and performance.' },
   { icon: Wallet, title: 'Finance & accounting', details: 'Chart of accounts, opening balances, journals, receivables, payables, payments, expenses, bank matching, tax, general ledger, trial balance, budgets, fixed assets and financial reports.' },
   { icon: UserRoundSearch, title: 'CRM & customer records', details: 'Leads, activities, reminders, opportunities, sales pipeline, customer profiles, purchase history and supplier contacts.' },

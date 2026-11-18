@@ -1,22 +1,16 @@
 import { customerService } from "@/features/customers/services/customerService";
+import type { CustomerFormValues } from '@/features/customers/schemas/customerSchema';
 
 import type { Lead } from '@/features/crm/leads/types/lead';
 
-import type { LeadConversionFormValues } from "../schemas/leadConversionSchema";
 import { leadService } from "./leadService";
 import type { TenantBranchScope } from "@/core/tenant/dataScope";
-
-function generateCustomerCode() {
-  return `CUST-${Math.floor(
-    1000 + Math.random() * 9000,
-  )}`;
-}
 
 export const leadConversionService = {
   async convertLead(
     scope: TenantBranchScope,
     lead: Lead,
-    data: LeadConversionFormValues,
+    data: CustomerFormValues,
   ) {
     if (lead.status === "converted") {
       throw new Error(
@@ -24,31 +18,18 @@ export const leadConversionService = {
       );
     }
 
-    const customer =
-      await customerService.createCustomer(scope, {
-        name: data.customerName,
-
-        code: generateCustomerCode(),
-
-        type: data.customerType,
-
-        email: data.email,
-        phone: data.phone,
-
-        currency: data.currency,
-
-        status: "active",
-
-        billingAddress: {
-          street: data.street ?? "",
-          city: data.city ?? "",
-          country: data.country,
-          postalCode:
-            data.postalCode ?? "",
-        },
-
-        notes: data.notes,
-      });
+    const { shippingSameAsBilling, shippingAddress, primaryContact, ...customerData } = data;
+    const hasPrimaryContact = Boolean(
+      primaryContact.name || primaryContact.email || primaryContact.phone || primaryContact.jobTitle,
+    );
+    const customer = await customerService.createCustomer(scope, {
+      ...customerData,
+      shippingAddress: shippingSameAsBilling ? undefined : shippingAddress,
+      primaryContact: hasPrimaryContact ? primaryContact : undefined,
+      contacts: hasPrimaryContact
+        ? [{ id: crypto.randomUUID(), ...primaryContact, isPrimary: true }]
+        : [],
+    });
 
     const convertedLead =
       await leadService.markConverted(

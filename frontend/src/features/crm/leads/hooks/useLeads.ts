@@ -7,12 +7,12 @@ import {
 
 import type { Lead, LeadSource, LeadStatus } from '@/features/crm/leads/types/lead';
 import { customerKeys } from "@/features/customers/queries/customerKeys";
+import type { CustomerFormValues } from '@/features/customers/schemas/customerSchema';
 import { useTenant } from "@/core/tenant/tenant-context";
 import { useBranch } from "@/core/branch/branch-context";
 
 import { leadKeys } from "../queries/leadKeys";
 import { leadActivityKeys } from "../queries/leadActivityKeys";
-import type { LeadConversionFormValues } from "../schemas/leadConversionSchema";
 import type { LeadFormValues } from "../schemas/leadSchema";
 import { leadConversionService } from "../services/leadConversionService";
 import { leadService } from "../services/leadService";
@@ -104,7 +104,7 @@ export function useLeads(initialSearch = "") {
       data,
     }: {
       lead: Lead;
-      data: LeadConversionFormValues;
+      data: CustomerFormValues;
     }) =>
       leadConversionService.convertLead(
         scope,
@@ -211,7 +211,7 @@ export function useLeads(initialSearch = "") {
 
     convertLead: (
       lead: Lead,
-      data: LeadConversionFormValues,
+      data: CustomerFormValues,
     ) =>
       convertMutation.mutateAsync({
         lead,

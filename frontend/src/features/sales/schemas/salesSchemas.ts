@@ -46,7 +46,6 @@ export const salesQuotationSchema = z
     quotationDate: date("Quotation date"),
     expiryDate: date("Expiry date"),
     terms: required("Terms"),
-    currency: required("Currency"),
   })
   .refine(
     (value) => Date.parse(value.expiryDate) >= Date.parse(value.quotationDate),
@@ -58,7 +57,7 @@ export const salesQuotationSchema = z
 export const salesOrderSchema = z
   .object({
     ...common,
-    warehouseId: required("Warehouse"),
+    warehouseId: z.string().optional(),
     orderDate: date("Order date"),
     expectedDeliveryDate: date("Expected delivery date"),
     deliveryAddress: required("Delivery address"),
@@ -80,6 +79,7 @@ const deliveryLine = z.object({
   deliveredQuantity: z.number().positive(),
   batchReference: z.string().trim().optional(),
   serialReferences: z.array(z.string()),
+  expiryDate: z.string().trim().optional(),
 });
 export const deliverySchema = z.object({
   salesOrderId: required("Sales order"),
@@ -108,19 +108,6 @@ export const salesInvoiceSchema = z
     (value) => Date.parse(value.dueDate) >= Date.parse(value.invoiceDate),
     { path: ["dueDate"], message: "Due date cannot be before invoice date." },
   );
-export const customerPaymentSchema = z.object({
-  invoiceId: required("Invoice"),
-  amount: z.number().positive(),
-  paymentMethod: z.enum([
-    "cash",
-    "bank_transfer",
-    "card",
-    "cheque",
-    "mobile_payment",
-  ]),
-  paymentDate: date("Payment date"),
-  externalReference: z.string().trim().max(120).optional(),
-});
 export const salesReturnSchema = z.object({
   salesOrderId: required("Sales order"),
   deliveryNoteId: required("Delivery note"),
@@ -165,6 +152,5 @@ export type SalesQuotationFormValues = z.infer<typeof salesQuotationSchema>;
 export type SalesOrderFormValues = z.infer<typeof salesOrderSchema>;
 export type DeliveryFormValues = z.infer<typeof deliverySchema>;
 export type SalesInvoiceFormValues = z.infer<typeof salesInvoiceSchema>;
-export type CustomerPaymentFormValues = z.infer<typeof customerPaymentSchema>;
 export type SalesReturnFormValues = z.infer<typeof salesReturnSchema>;
 export type RecurringInvoiceFormValues = z.infer<typeof recurringInvoiceSchema>;

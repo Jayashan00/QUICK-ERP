@@ -34,6 +34,14 @@ assert.throws(() => priceCart({ lines: [{ product, quantity: 1 }], discount: 0, 
 assert.throws(() => posService.openShift(scope, ['branch-002'], 'qa-cashier', 'QA', 20), /Branch/);
 const shift = posService.openShift(scope, branches, 'qa-cashier', 'QA', 20);
 posService.confirmDrawer(shift);
+await assert.rejects(
+  () => posService.checkout(scope, branches, 'qa-cashier', 'QA', { discount: 0, lines: [{ productId: 'prod-007', quantity: 1 }], payments: [{ method: 'cash', amount: 1 }] }, warehouse, location),
+  /Product is unavailable/,
+);
+assert.throws(
+  () => posWebOrders.create(scope, branches, { customerId: 'cust-001', productId: 'prod-007', quantity: 1, locationId: location, paymentStatus: 'paid' }),
+  /Choose a product and location/,
+);
 const before = inventoryStore.balances().find(b => b.branchId === scope.branchId && b.productId === product.id)!.quantityOnHand;
 const sale = await posService.checkout(scope, branches, 'qa-cashier', 'QA', { customerId: 'cust-001', discount: 1, couponCode: 'SAVE10', giftCardCode: 'GIFT100', giftAmount: 5, loyaltyAmount: 2, lines: [{ productId: product.id, quantity: 1 }], payments: [{ method: 'cash', amount: quote.total }] }, warehouse, location);
 assert.equal(sale.total, quote.total);

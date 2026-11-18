@@ -99,7 +99,7 @@ export function reopenAccountingPeriod(tenantId: string, period: AccountingPerio
 
 const transactionCollections: Array<[string, string]> = [
   ['accounting.journals', 'date'], ['accounting.settlements', 'date'], ['accounting.expenses', 'date'], ['accounting.openingBalances', 'date'], ['accounting.withholding', 'date'],
-  ['sales.invoices', 'invoiceDate'], ['sales.payments', 'paymentDate'], ['purchases.invoices', 'invoiceDate'], ['purchases.receipts', 'receivedDate'],
+  ['sales.invoices', 'invoiceDate'], ['purchases.invoices', 'invoiceDate'], ['purchases.receipts', 'receivedDate'],
   ['inventory.movements', 'movementDate'], ['pos.sales', 'at'], ['pos.refunds', 'at'], ['hr.payrolls', 'period'],
 ];
 export function periodHasTransactions(tenantId: string, period: AccountingPeriod) {

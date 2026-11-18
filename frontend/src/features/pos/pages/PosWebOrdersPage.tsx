@@ -22,7 +22,7 @@ export function PosWebOrdersPage() {
   const [revision, refresh] = useState(0); void revision;
   const [customerId, setCustomerId] = useState(''); const [productId, setProductId] = useState(''); const [locationId, setLocationId] = useState(''); const [quantity, setQuantity] = useState(1); const [paymentStatus, setPaymentStatus] = useState<'pending' | 'paid'>('pending');
   const customers = useQuery({ queryKey: ['pos', 'web-customers', scope.tenantId, scope.branchId], queryFn: () => customerService.getCustomers(scope, { pageSize: 500 }), enabled: Boolean(scope.tenantId && scope.branchId) });
-  const products = productStore.all().filter(p => p.tenantId === tenantId && p.status === 'active' && p.isSellable && !p.trackByBatch && !p.trackBySerialNumber);
+  const products = productStore.all().filter(p => p.tenantId === tenantId && p.status === 'active' && p.isSellable && p.type !== 'service' && !p.trackByBatch && !p.trackBySerialNumber);
   const locations = inventoryStore.locations().filter(l => l.tenantId === tenantId && l.branchId === branch);
   const orders = posWebOrders.list(scope);
   const customerOrders = storefrontService.listForStaff(scope);

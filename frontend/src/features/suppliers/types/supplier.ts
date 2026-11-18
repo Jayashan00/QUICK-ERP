@@ -14,10 +14,7 @@ export type SupplierCategory =
 
 export type SupplierPaymentMethod =
   | 'bank_transfer'
-  | 'cash'
-  | 'card'
-  | 'credit'
-  | 'other';
+  | 'cash';
 
 export interface SupplierAddress {
   street: string;
@@ -51,7 +48,6 @@ export interface Supplier extends BaseEntity {
   website?: string;
   taxNumber?: string;
   vatNumber?: string;
-  taxCategory?: string;
   registrationNumber?: string;
   currency: string;
   paymentTermCode?: string;
@@ -158,7 +154,7 @@ export interface SupplierPerformanceSummary {
   scheduledDeliveryCount: number;
   returnedOrderCount: number;
   rejectedReceiptCount: number;
-  returnIndicatorsAreMock: true;
+  returnIndicatorsAreMock: boolean;
   currency: string;
-  deliveryTrackingAvailable: false;
+  deliveryTrackingAvailable: boolean;
 }

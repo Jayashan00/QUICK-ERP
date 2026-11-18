@@ -14,13 +14,18 @@ import com.quickerp.core.CollectionRule;
 import com.quickerp.core.AuthService;
 import com.quickerp.core.CoreSettings;
 import com.quickerp.core.Db;
+import com.quickerp.core.DeliveryNotePdfService;
+import com.quickerp.core.CreditNotePdfService;
 import com.quickerp.core.FileStore;
 import com.quickerp.core.Mailer;
 import com.quickerp.core.MfaService;
 import com.quickerp.core.PasswordResetService;
 import com.quickerp.core.PasswordHasher;
 import com.quickerp.core.ProvisioningService;
+import com.quickerp.core.QuotationDeliveryService;
 import com.quickerp.core.SeedService;
+import com.quickerp.core.SalesOrderPdfService;
+import com.quickerp.core.SalesInvoicePdfService;
 import com.quickerp.core.StateStore;
 import com.quickerp.core.TokenService;
 import java.io.InputStream;
@@ -30,6 +35,7 @@ import java.util.Base64;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import jakarta.mail.MessagingException;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,8 +45,11 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.env.Environment;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 /** Wires the framework-independent core services. */
@@ -148,27 +157,58 @@ public class CoreConfig {
 
     /** Sends email through the configured SMTP server (spring.mail.*); without one, the message is written to the log. */
     @Bean
-    public Mailer mailer(ObjectProvider<JavaMailSender> senders, AppProperties properties) {
-        return (to, subject, body) -> {
-            JavaMailSender sender = senders.getIfAvailable();
-            if (sender == null) {
-                if (properties.isProduction()) {
-                    // Never write message bodies (they can contain password reset links) to production logs.
-                    log.error("Email is not configured (set SPRING_MAIL_HOST). The message \"{}\" to {} was not sent.", subject, to);
-                } else {
-                    log.warn("Email is not configured (set SPRING_MAIL_HOST). Message for {} - {}:\n{}", to, subject, body);
-                }
-                return;
+    public Mailer mailer(ObjectProvider<JavaMailSender> senders, AppProperties properties, Environment environment) {
+        return new Mailer() {
+            private JavaMailSender sender() {
+                return senders.getIfAvailable();
             }
-            try {
+
+            @Override
+            public boolean configured() {
+                String host = environment.getProperty("spring.mail.host", "");
+                return sender() != null && !host.isBlank();
+            }
+
+            @Override
+            public void send(String to, String subject, String body) {
+                JavaMailSender sender = sender();
+                if (!configured() || sender == null) {
+                    if (properties.isProduction()) {
+                        // Never write message bodies (they can contain password reset links) to production logs.
+                        log.error("Email is not configured (set SPRING_MAIL_HOST). The message \"{}\" to {} was not sent.", subject, to);
+                    } else {
+                        log.warn("Email is not configured (set SPRING_MAIL_HOST). Message for {} - {}:\n{}", to, subject, body);
+                    }
+                    return;
+                }
                 SimpleMailMessage message = new SimpleMailMessage();
                 message.setFrom(properties.getMail().getFrom());
                 message.setTo(to);
                 message.setSubject(subject);
                 message.setText(body);
                 sender.send(message);
-            } catch (RuntimeException error) {
-                log.error("Could not send email to {}", to, error);
+            }
+
+            @Override
+            public void sendWithAttachment(String to, String subject, String body, String attachmentName,
+                                           String attachmentContentType, byte[] attachment) {
+                JavaMailSender sender = sender();
+                if (!configured() || sender == null) {
+                    throw new IllegalStateException("Email is not configured. Set SPRING_MAIL_HOST and SMTP credentials.");
+                }
+                try {
+                    var message = sender.createMimeMessage();
+                    MimeMessageHelper helper = new MimeMessageHelper(message, true, StandardCharsets.UTF_8.name());
+                    helper.setFrom(properties.getMail().getFrom());
+                    helper.setTo(to);
+                    helper.setSubject(subject);
+                    helper.setText(body, false);
+                    helper.addAttachment(attachmentName, new ByteArrayResource(attachment), attachmentContentType);
+                    sender.send(message);
+                } catch (MessagingException | RuntimeException error) {
+                    log.error("Could not deliver email attachment to {}", to, error);
+                    throw new IllegalStateException("The quotation email could not be delivered.", error);
+                }
             }
         };
     }
@@ -176,6 +216,31 @@ public class CoreConfig {
     @Bean
     public PasswordResetService passwordResetService(Db db, PasswordHasher hasher, Mailer mailer, CoreSettings settings) {
         return new PasswordResetService(db, hasher, mailer, settings);
+    }
+
+    @Bean
+    public QuotationDeliveryService quotationDeliveryService(Db db, ObjectMapper mapper, AccessRules access, Mailer mailer) {
+        return new QuotationDeliveryService(db, mapper, access, mailer);
+    }
+
+    @Bean
+    public SalesOrderPdfService salesOrderPdfService(Db db, ObjectMapper mapper, AccessRules access) {
+        return new SalesOrderPdfService(db, mapper, access);
+    }
+
+    @Bean
+    public DeliveryNotePdfService deliveryNotePdfService(Db db, ObjectMapper mapper, AccessRules access) {
+        return new DeliveryNotePdfService(db, mapper, access);
+    }
+
+    @Bean
+    public SalesInvoicePdfService salesInvoicePdfService(Db db, ObjectMapper mapper, AccessRules access, Mailer mailer) {
+        return new SalesInvoicePdfService(db, mapper, access, mailer);
+    }
+
+    @Bean
+    public CreditNotePdfService creditNotePdfService(Db db, ObjectMapper mapper, AccessRules access) {
+        return new CreditNotePdfService(db, mapper, access);
     }
 
     @Bean

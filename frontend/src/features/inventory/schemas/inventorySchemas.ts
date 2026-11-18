@@ -66,6 +66,17 @@ const locationFields = {
   locationId: requiredText("Location"),
 };
 
+export const openingStockSchema = z.object({
+  ...locationFields,
+  quantity: z.number().positive("Opening quantity must be greater than zero."),
+  batchReference: z.string().trim().max(80).optional(),
+  expiryDate: z.string().trim().optional(),
+  serialReferences: z.array(z.string().trim().min(1)).default([]),
+  notes: z.string().trim().max(500).optional(),
+});
+
+export type OpeningStockFormValues = z.infer<typeof openingStockSchema>;
+
 export const stockAdjustmentSchema = z.object({
   ...locationFields,
   direction: z.enum(["increase", "decrease"]),

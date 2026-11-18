@@ -6,5 +6,4 @@ export * from './productVariantService';
 export * from './productRelationshipService';
 export * from './productImportService';
 export * from './productHandoffService';
-export * from './priceListService';
 export * from './productSpecificationService';

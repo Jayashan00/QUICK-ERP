@@ -1,15 +1,17 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTenant } from '@/core/tenant/tenant-context';
 import { supplierKeys } from '../queries/supplierKeys';
-import { supplierService } from '../services/supplierService';
-import type { Supplier } from '../types/supplier';
+import {
+  supplierService,
+  type UpdateSupplierInput,
+} from '../services/supplierService';
 
 export function useUpdateSupplier() {
   const queryClient = useQueryClient();
   const { tenantId } = useTenant();
 
   const mutation = useMutation({
-    mutationFn: ({ id, updates }: { id: string; updates: Partial<Supplier> }) => {
+    mutationFn: ({ id, updates }: { id: string; updates: UpdateSupplierInput }) => {
       if (!tenantId) throw new Error('Tenant context is unavailable.');
       return supplierService.updateSupplier(tenantId, id, updates);
     },
@@ -28,7 +30,7 @@ export function useUpdateSupplier() {
   });
 
   return {
-    updateSupplier: (id: string, updates: Partial<Supplier>) =>
+    updateSupplier: (id: string, updates: UpdateSupplierInput) =>
       mutation.mutateAsync({ id, updates }),
     isUpdating: mutation.isPending,
     error: mutation.error,

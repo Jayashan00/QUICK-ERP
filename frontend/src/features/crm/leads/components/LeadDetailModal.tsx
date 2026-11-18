@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "@/shared/components/common/Button";
 import { Modal } from "@/shared/components/common/Modal";
@@ -9,6 +9,8 @@ import { appToast } from "@/shared/utils/toast";
 import { useBranch } from "@/core/branch/branch-context";
 import { useTenant } from "@/core/tenant/tenant-context";
 import { customerService } from "@/features/customers/services/customerService";
+import { CustomerFormModal } from '@/features/customers/components/CustomerFormModal';
+import type { CustomerFormValues } from '@/features/customers/schemas/customerSchema';
 import { useUserOptions } from '@/features/settings/users/hooks/useUserOptions';
 import { useTenantCurrency } from '@/features/settings/finance/currency';
 import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
@@ -18,9 +20,7 @@ import type { LeadActivity } from '@/features/crm/leads/types/lead-activity';
 
 import { LeadActivityFormModal } from "./LeadActivityFormModal";
 import { LeadActivityTimeline } from "./LeadActivityTimeline";
-import { LeadConversionModal } from "./LeadConversionModal";
 import { useLeadActivities } from "../hooks/useLeadActivities";
-import type { LeadConversionFormValues } from "../schemas/leadConversionSchema";
 
 interface LeadDetailModalProps {
   lead: Lead | null;
@@ -34,7 +34,7 @@ interface LeadDetailModalProps {
   onCreateOpportunity?: (lead: Lead) => void;
   onConvert: (
     lead: Lead,
-    data: LeadConversionFormValues,
+    data: CustomerFormValues,
   ) => Promise<void>;
 }
 
@@ -118,6 +118,15 @@ export function LeadDetailModal({
   const { branchId } = useBranch();
   const { users } = useUserOptions({ includeInactive: true });
   const getAssignedUserName = (assignedTo?: string) => users.find(user => user.id === assignedTo)?.name || assignedTo || "Unassigned";
+  const customerInitialValues = useMemo<Partial<CustomerFormValues>>(() => ({
+    name: lead?.company || `${lead?.firstName ?? ''} ${lead?.lastName ?? ''}`.trim(),
+    type: lead?.company ? 'company' : 'individual',
+    email: lead?.email ?? '',
+    phone: lead?.phone ?? '',
+    currency: resolveCrmValueCurrency(lead?.estimatedCurrency),
+    status: 'active',
+    notes: lead?.notes ?? '',
+  }), [lead]);
   const [
     isConversionOpen,
     setIsConversionOpen,
@@ -395,12 +404,15 @@ export function LeadDetailModal({
         }}
       />}
 
-      {canConvert && <LeadConversionModal
-        lead={lead}
+      {canConvert && <CustomerFormModal
         isOpen={isConversionOpen}
         onClose={() =>
           setIsConversionOpen(false)
         }
+        initialValues={customerInitialValues}
+        title="Convert Lead to Customer"
+        submitLabel="Convert to Customer"
+        successMessage="Lead converted to a customer successfully."
         onSubmit={async (data) => {
           await onConvert(
             lead,

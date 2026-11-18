@@ -40,10 +40,10 @@ spring:
     multipart:
       max-file-size: 20MB
       max-request-size: 21MB
-  # Email (password reset links). Configure with environment variables, for example:
+  # Email (password reset links and quotation PDF delivery). Configure with environment variables, for example:
   # SPRING_MAIL_HOST=smtp.gmail.com SPRING_MAIL_PORT=587 SPRING_MAIL_USERNAME=... SPRING_MAIL_PASSWORD=...
   # SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=true SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true
-  # Without SPRING_MAIL_HOST, reset messages are written to the backend log instead.
+  # Without SPRING_MAIL_HOST, reset messages are written to the backend log and quotation delivery is rejected.
 
 app:
   # "development" or "production". In production the server refuses to start with unsafe settings
@@ -103,8 +103,6 @@ app:
       - products.brands
       - products.uoms
       - products.attributes
-      - products.priceLists
-      - products.priceRules
       - products.bundles
       - products.related
       - inventory.warehouses

@@ -7,7 +7,7 @@ import {
 } from '@tanstack/react-query';
 
 import { useDebounce } from '@/shared/hooks/useDebounce';
-import type { Supplier, SupplierStatus } from '@/features/suppliers/types/supplier';
+import type { SupplierStatus } from '@/features/suppliers/types/supplier';
 import { useTenant } from '@/core/tenant/tenant-context';
 
 import { supplierKeys } from '../queries/supplierKeys';
@@ -15,6 +15,7 @@ import {
   supplierService,
   type CreateSupplierInput,
   type GetSuppliersParams,
+  type UpdateSupplierInput,
 } from '../services/supplierService';
 
 export function useSuppliers(initialParams: GetSuppliersParams = {}) {
@@ -68,7 +69,7 @@ export function useSuppliers(initialParams: GetSuppliersParams = {}) {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, updates }: { id: string; updates: Partial<Supplier> }) => {
+    mutationFn: ({ id, updates }: { id: string; updates: UpdateSupplierInput }) => {
       if (!tenantId) throw new Error('Tenant context is unavailable.');
       return supplierService.updateSupplier(tenantId, id, updates);
     },
@@ -173,7 +174,7 @@ export function useSuppliers(initialParams: GetSuppliersParams = {}) {
     createSupplier: (data: CreateSupplierInput) =>
       createMutation.mutateAsync(data),
 
-    updateSupplier: (id: string, updates: Partial<Supplier>) =>
+    updateSupplier: (id: string, updates: UpdateSupplierInput) =>
       updateMutation.mutateAsync({ id, updates }),
 
     deleteSupplier: (id: string) =>
