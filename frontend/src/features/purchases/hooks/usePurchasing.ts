@@ -32,7 +32,13 @@ function useContext() {
     scope: { tenantId: tenantId ?? "", branchId: branchId ?? "" },
     tenantId: tenantId ?? "",
     permitted: branches.map((branch) => branch.id),
-    actor: { id: user?.id ?? "unknown", name: user?.name ?? "Unknown user" },
+    actor: {
+      id: user?.id ?? "unknown",
+      name: user?.name ?? "Unknown user",
+      administrator:
+        permissions.includes("*") ||
+        (user?.roleId === "role-001" && !user.isSuperAdmin),
+    },
     permissions,
     enabled: Boolean(tenantId && branchId && user),
   };
@@ -143,7 +149,7 @@ export function usePurchasingMutations() {
       ),
     transitionRequest: (
       id: string,
-      action: "submit" | "approve" | "reject" | "cancel",
+      action: "submit" | "approve" | "return" | "cancel",
       remarks?: string,
     ) =>
       run(() =>

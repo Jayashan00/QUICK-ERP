@@ -183,6 +183,24 @@ function PurchasingDetail({
             </div>
             <StatusBadge status={row.status} />
           </div>
+          {kind === "requests" && (() => {
+            const request = row as unknown as PurchaseRequest;
+            return (
+              <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                {request.sourceReorder && (
+                  <div className="sm:col-span-2 lg:col-span-4 rounded border border-blue-200 bg-blue-50 p-3 text-blue-900">
+                    <span className="block text-xs font-semibold uppercase">Inventory replenishment source</span>
+                    Balance {request.sourceReorder.balanceId} · Available {request.sourceReorder.available} · Low stock level {request.sourceReorder.lowStockLevel} · Suggested quantity {request.sourceReorder.suggestedQuantity}
+                  </div>
+                )}
+                <div><span className="block text-xs uppercase text-slate-500">Cost center</span>{request.costCenterName ?? request.costCenter ?? "Not assigned"}</div>
+                <div><span className="block text-xs uppercase text-slate-500">Priority</span><span className="capitalize">{request.priority || "normal"}</span></div>
+                <div><span className="block text-xs uppercase text-slate-500">Required date</span>{request.requiredDate}</div>
+                <div className="sm:col-span-2 lg:col-span-4"><span className="block text-xs uppercase text-slate-500">Business reason</span>{request.reason}</div>
+                {request.returnReason && <div className="rounded border border-amber-200 bg-amber-50 p-3 text-amber-900 sm:col-span-2 lg:col-span-4"><span className="block text-xs font-semibold uppercase">Returned for correction</span>{request.returnReason}</div>}
+              </div>
+            );
+          })()}
           <div className="overflow-x-auto rounded-lg border border-slate-200">
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
@@ -223,7 +241,7 @@ function PurchasingDetail({
           <div className="grid gap-6 lg:grid-cols-2">
             <section>
               <h3 className="mb-3 text-sm font-semibold">Approval history</h3>
-              <ApprovalTimeline history={row.approval.history} />
+              <ApprovalTimeline history={row.approval?.history} />
             </section>
             <section>
               <h3 className="mb-3 text-sm font-semibold">Audit trail</h3>
@@ -232,7 +250,7 @@ function PurchasingDetail({
           </div>
           <DocumentManager
             documents={[...row.attachments, ...(tenantId && branchId ? documentService.linkedPublic({ tenantId, branchId, permittedBranchIds: branches.map((branch) => branch.id) }, 'Purchase', row.id).filter((document) => !row.attachments.some((attached) => attached.id === document.id)) : [])]}
-            canUpload={canEdit && hasPermission(PERMISSIONS.DOCUMENTS.UPLOAD)}
+            canUpload={canEdit && hasPermission(PERMISSIONS.DOCUMENTS.UPLOAD) && (kind !== "requests" || ["draft", "returned"].includes(row.status))}
             canDownload={hasPermission(PERMISSIONS.DOCUMENTS.DOWNLOAD)}
             onUpload={async (file) => {
               await mutations.addAttachment(kind, row.id, file);
@@ -619,13 +637,17 @@ export function PurchaseRequestsPage() {
     query = usePurchaseRequests(filters.params),
     mutations = usePurchasingMutations(),
     [open, setOpen] = useState(false),
+    [rfqRequestId, setRfqRequestId] = useState<string | null>(null),
     [editing, setEditing] = useState<PurchaseRequest | null>(null);
-  const canCreate = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.CREATE),
-    canEdit = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.EDIT),
-    canApprove = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.APPROVE),
-    canCancel = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.CANCEL);
+  const canCreate = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.REQUEST_CREATE),
+    canEdit = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.REQUEST_EDIT),
+    canSubmit = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.REQUEST_SUBMIT),
+    canApprove = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.REQUEST_APPROVE),
+    canReturn = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.REQUEST_RETURN),
+    canCancel = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.REQUEST_CANCEL),
+    canCreateRfq = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.RFQ_CREATE);
   const actions = (row: PurchaseRequest) =>
-    row.status === "draft" ? (
+    ["draft", "returned"].includes(row.status) ? (
       <div className="flex flex-wrap gap-2">
         {canEdit && (
           <Button
@@ -639,14 +661,14 @@ export function PurchaseRequestsPage() {
             Edit
           </Button>
         )}
-        <ConfirmAction
-          label="Submit"
-          message={`Submit ${row.referenceNumber} for approval?`}
+        {canSubmit && <ConfirmAction
+          label={row.status === "returned" ? "Resubmit" : "Submit"}
+          message={`${row.status === "returned" ? "Resubmit" : "Submit"} ${row.referenceNumber} for approval?`}
           onConfirm={async () => {
             await mutations.transitionRequest(row.id, "submit");
-            appToast.success("Purchase request submitted.");
+            appToast.success("Purchase request submitted for approval.");
           }}
-        />
+        />}
         {canCancel && (
           <ConfirmAction
             label="Cancel"
@@ -663,15 +685,19 @@ export function PurchaseRequestsPage() {
       <ApprovalActions
         status={row.approval.status}
         canApprove={canApprove}
-        canReject={canApprove}
+        canReject={canReturn}
+        rejectLabel="Return to Requester"
+        requireRejectRemarks
         onDecision={async (status, remarks) => {
           await mutations.transitionRequest(
             row.id,
-            status === "approved" ? "approve" : "reject",
+            status === "approved" ? "approve" : "return",
             remarks,
           );
         }}
       />
+    ) : row.status === "approved" && canCreateRfq ? (
+      <Button size="sm" onClick={() => setRfqRequestId(row.id)}>Create RFQ</Button>
     ) : null;
   const close = () => {
     setOpen(false);
@@ -683,7 +709,7 @@ export function PurchaseRequestsPage() {
         kind="requests"
         title="Purchase Requests"
         description="Capture branch demand and move it through submission and approval."
-        statuses={["draft", "submitted", "approved", "rejected", "cancelled"]}
+        statuses={["draft", "submitted", "returned", "approved", "sourcing", "converted", "cancelled"]}
         query={query}
         filters={filters}
         canCreate={canCreate}
@@ -699,6 +725,7 @@ export function PurchaseRequestsPage() {
         request={editing}
         onClose={close}
       />
+      <RfqFormModal isOpen={Boolean(rfqRequestId)} initialRequestId={rfqRequestId ?? undefined} onClose={() => setRfqRequestId(null)} />
     </>
   );
 }
@@ -977,7 +1004,7 @@ export function PurchaseOrdersPage() {
         ]}
         query={query}
         filters={filters}
-        canCreate={usePermission(PERMISSIONS.PURCHASE_WORKFLOW.CREATE)}
+        canCreate={usePermission(PERMISSIONS.PURCHASE_WORKFLOW.DIRECT_ORDER_CREATE)}
         createLabel="New Direct PO"
         onCreate={() => {
           setEditing(null);

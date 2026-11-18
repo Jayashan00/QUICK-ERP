@@ -41,6 +41,6 @@ export async function aggregatePurchaseDashboard(context: ModuleDashboardContext
   ], { emptyMessage: 'No purchase approvals waiting for review.' });
   addList(context, 'Pending Deliveries', [...receiving].sort((a, b) => a.expectedDeliveryDate.localeCompare(b.expectedDeliveryDate)).map(row => ({ id: row.id, title: row.referenceNumber, description: name(row.supplierId), date: row.expectedDeliveryDate, status: row.status, to: recordLink('/purchases/orders', row.id, row.referenceNumber) })), { to: '/purchases/orders' });
   addList(context, 'Recent Purchase Orders', orders.filter(row => inPeriod(row.orderDate)).sort((a, b) => b.orderDate.localeCompare(a.orderDate)).map(row => ({ id: row.id, title: row.referenceNumber, description: name(row.supplierId), date: row.orderDate, amount: row.totalAmount, status: row.status, to: recordLink('/purchases/orders', row.id, row.referenceNumber) })), { subtitle: 'Latest 5 orders in selected period', to: '/purchases/orders', wide: true, emptyMessage: 'No purchase orders for this period.' });
-  output.workflowDescription = 'Purchase Request > Approval > RFQ > Supplier Quote > PO > GRN > Invoice > Payment';
-  output.workflow = [['Requests', '/purchases/requests', 'purchase.view'], ['RFQs', '/purchases/rfqs', 'rfq.view'], ['Supplier Quotes', '/purchases/quotations', 'rfq.view'], ['Orders', '/purchases/orders', 'purchase.view'], ['GRNs', '/purchases/receipts', 'grn.view'], ['Invoices', '/purchases/invoices', 'purchaseInvoice.view'], ['Payments', '/purchases/payments', 'purchaseInvoice.view']].filter(([, , permission]) => can(permission)).map(([label, to]) => ({ label, to }));
+  output.workflowDescription = undefined;
+  output.workflow = [];
 }

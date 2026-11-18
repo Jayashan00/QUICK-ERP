@@ -5,10 +5,14 @@ import { productStore } from "@/features/products/services/productStore";
 import { supplierService } from "@/features/suppliers/services/supplierService";
 import { inventoryWorkflowService } from "@/features/inventory/services/inventoryWorkflowService";
 import { tenantSettingsService } from "@/features/settings/finance/services/tenantSettingsService";
+import { departmentService } from "@/features/settings/organization/services/departmentService";
+import { accountingService } from "@/features/accounting/accountingService";
 import { assertOpenAccountingPeriod } from "@/features/settings/finance/accountingPeriodEnforcement";
 import type { ApprovalStatus } from "@/shared/types/approval";
 import type { AuditEntry } from "@/shared/types/audit";
 import type { DocumentRecord } from "@/shared/types/document-record";
+import { apiClient } from "@/core/api";
+import { isBackendEnabled } from "@/core/persistence/backendSession";
 import { documentService } from "@/features/documents/documentService";
 import {
   grnSchema,
@@ -467,6 +471,16 @@ export const purchasingService = {
     requireScope(scope, permitted);
     const data = purchaseRequestSchema.parse(values);
     assertBranch(permitted, data.branchId);
+    const department = data.departmentId
+      ? (await departmentService.getAllDepartments(scope.tenantId)).find((item) =>
+          item.id === data.departmentId &&
+          item.status === "active" &&
+          (!item.branchId || item.branchId === data.branchId))
+      : undefined;
+    const costCenter = data.costCenterId
+      ? accountingService.referenceRecords({ tenantId: scope.tenantId, branchId: data.branchId, permittedBranchIds: permitted }, "cost-centers", { branchId: data.branchId }).find((item) => item.id === data.costCenterId && item.status === "active")
+      : undefined;
+    if (data.costCenterId && !costCenter) throw new Error("Select an active cost center available to this branch.");
     data.items.forEach((item) => tenantProduct(scope.tenantId, item.productId));
     const now = new Date().toISOString(),
       referenceNumber = reference("PR", purchasingStore.requests().length);
@@ -478,11 +492,20 @@ export const purchasingService = {
       referenceNumber,
       requesterId: actor.id,
       requesterName: actor.name,
+      departmentId: department?.id,
+      departmentName: department?.name,
+      costCenterId: costCenter?.id,
+      costCenterName: costCenter?.name,
+      warehouseId: data.warehouseId,
+      priority: data.priority,
+      budgetReference: data.budgetReference || undefined,
       requiredDate: data.requiredDate,
       reason: data.reason,
+      estimatedTotal: totals(items).totalAmount,
       notes: data.notes || undefined,
       status: "draft",
       items,
+      sourceReorder: data.sourceReorder,
       createdBy: actor.id,
       createdByName: actor.name,
       approval: emptyApproval,
@@ -513,14 +536,30 @@ export const purchasingService = {
       );
     if (index < 0) throw new Error("Purchase request not found.");
     const current = purchasingStore.requests()[index];
-    if (current.status !== "draft")
-      throw new Error("Only draft purchase requests can be edited.");
+    if (!["draft", "returned"].includes(current.status))
+      throw new Error("Only draft or returned purchase requests can be edited.");
     assertBranch(permitted, data.branchId);
+    const department = data.departmentId
+      ? (await departmentService.getAllDepartments(scope.tenantId)).find((item) =>
+          item.id === data.departmentId &&
+          item.status === "active" &&
+          (!item.branchId || item.branchId === data.branchId))
+      : undefined;
+    const costCenter = data.costCenterId
+      ? accountingService.referenceRecords({ tenantId: scope.tenantId, branchId: data.branchId, permittedBranchIds: permitted }, "cost-centers", { branchId: data.branchId }).find((item) => item.id === data.costCenterId && item.status === "active")
+      : undefined;
+    if (data.costCenterId && !costCenter) throw new Error("Select an active cost center available to this branch.");
+    const nextItems = lines(data.items, { tenantId: scope.tenantId, date: data.requiredDate });
     const next: PurchaseRequest = {
       ...current,
       ...data,
+      departmentName: department?.name,
+      costCenterId: costCenter?.id,
+      costCenterName: costCenter?.name,
+      budgetReference: data.budgetReference || undefined,
       notes: data.notes || undefined,
-      items: lines(data.items, { tenantId: scope.tenantId, date: data.requiredDate }),
+      items: nextItems,
+      estimatedTotal: totals(nextItems).totalAmount,
       auditEntries: [...current.auditEntries, audit(current, "Edited", actor)],
       updatedAt: new Date().toISOString(),
     };
@@ -531,7 +570,7 @@ export const purchasingService = {
     scope: TenantBranchScope,
     permitted: string[],
     id: string,
-    action: "submit" | "approve" | "reject" | "cancel",
+    action: "submit" | "approve" | "return" | "cancel",
     actor: PurchasingActor,
     remarks?: string,
   ) {
@@ -546,32 +585,35 @@ export const purchasingService = {
     if (index < 0) throw new Error("Purchase request not found.");
     const current = purchasingStore.requests()[index];
     const expected = {
-      submit: "draft",
+      submit: current.status === "returned" ? "returned" : "draft",
       approve: "submitted",
-      reject: "submitted",
-      cancel: "draft",
+      return: "submitted",
+      cancel: current.status === "returned" ? "returned" : "draft",
     } as const;
     if (current.status !== expected[action])
       throw new Error("Invalid purchase request status transition.");
-    if (action === "reject" && !remarks?.trim())
+    if (action === "return" && (remarks?.trim().length ?? 0) < 5)
       throw new Error(
-        "Approval remarks are required when rejecting a request.",
+        "A correction reason of at least 5 characters is required.",
       );
+    if (action === "approve" && current.createdBy === actor.id && !actor.administrator)
+      throw new Error("The request creator cannot approve their own purchase request.");
     const status = {
       submit: "submitted",
       approve: "approved",
-      reject: "rejected",
+      return: "returned",
       cancel: "cancelled",
     } as const;
     const decision =
       action === "approve"
         ? "approved"
-        : action === "reject"
+        : action === "return"
           ? "rejected"
           : "pending";
     const next: PurchaseRequest = {
       ...current,
       status: status[action],
+      returnReason: action === "return" ? remarks?.trim() : action === "submit" ? undefined : current.returnReason,
       approval: {
         ...current.approval,
         status: decision,
@@ -603,6 +645,15 @@ export const purchasingService = {
   ) {
     requireScope(scope, permitted);
     const data = rfqSchema.parse(values);
+    if (isBackendEnabled()) {
+      const { data: rfq } = await apiClient.post<RequestForQuotation>('/purchases/rfqs', {
+        purchaseRequestId: data.purchaseRequestId,
+        supplierIds: data.supplierIds,
+        requiredDeliveryDate: data.requiredDeliveryDate,
+        notes: data.notes,
+      });
+      return rfq;
+    }
     const request = purchasingStore
       .requests()
       .find(
@@ -615,6 +666,8 @@ export const purchasingService = {
       throw new Error(
         "RFQs can only be created from approved purchase requests.",
       );
+    if (purchasingStore.rfqs().some((item) => item.purchaseRequestId === request.id && item.status !== "cancelled"))
+      throw new Error("This purchase request already has an active RFQ.");
     for (const supplierId of data.supplierIds)
       await tenantSupplier(scope.tenantId, supplierId);
     const now = new Date().toISOString(),
@@ -643,6 +696,13 @@ export const purchasingService = {
     };
     item.auditEntries = [audit(item, "Sent to suppliers", actor)];
     purchasingStore.insertRfq(item);
+    const requestIndex = purchasingStore.requests().findIndex((record) => record.id === request.id);
+    purchasingStore.replaceRequest(requestIndex, {
+      ...request,
+      status: "sourcing",
+      auditEntries: [...request.auditEntries, audit(request, `RFQ ${referenceNumber} created`, actor)],
+      updatedAt: now,
+    });
     return item;
   },
   async createQuotation(
@@ -749,6 +809,8 @@ export const purchasingService = {
   ) {
     requireScope(scope, permitted);
     const data = purchaseOrderSchema.parse({ ...values, paymentTerms: values.paymentTerms || tenantSettingsService.requirePaymentTerm(scope.tenantId).code });
+    if (!sourceQuotationId && (data.directPurchaseReason?.trim().length ?? 0) < 10)
+      throw new Error("A direct purchase exception reason of at least 10 characters is required.");
     assertBranch(permitted, data.branchId);
     await tenantSupplier(scope.tenantId, data.supplierId);
     const warehouse = (
@@ -769,6 +831,7 @@ export const purchasingService = {
       ...data,
       paymentTerms: tenantSettingsService.requirePaymentTerm(scope.tenantId, data.paymentTerms).code,
       sourceQuotationId,
+      directPurchaseReason: sourceQuotationId ? undefined : data.directPurchaseReason?.trim(),
       notes: data.notes || undefined,
       status: "draft",
       items,
@@ -819,7 +882,7 @@ export const purchasingService = {
       );
     if (!quotation || quotation.status !== "preferred")
       throw new Error("Select a preferred quotation before creating a PO.");
-    return this.createOrder(
+    const order = await this.createOrder(
       scope,
       permitted,
       {
@@ -847,6 +910,19 @@ export const purchasingService = {
       actor,
       quotation.id,
     );
+    const rfq = purchasingStore.rfqs().find((item) => item.id === quotation.rfqId);
+    const requestIndex = rfq ? purchasingStore.requests().findIndex((item) => item.id === rfq.purchaseRequestId) : -1;
+    if (rfq && requestIndex >= 0) {
+      const request = purchasingStore.requests()[requestIndex];
+      purchasingStore.replaceRequest(requestIndex, {
+        ...request,
+        status: "converted",
+        auditEntries: [...request.auditEntries, audit(request, `Converted to ${order.referenceNumber}`, actor)],
+        updatedAt: new Date().toISOString(),
+      });
+      order.sourceRequestId = request.id;
+    }
+    return order;
   },
   async transitionOrder(
     scope: TenantBranchScope,
@@ -1090,7 +1166,13 @@ export const purchasingService = {
     values: PurchaseInvoiceFormValues,
     actor: PurchasingActor,
   ) {
-    const data = purchaseInvoiceSchema.parse({ ...values, paymentTerms: values.paymentTerms || tenantSettingsService.requirePaymentTerm(scope.tenantId).code });
+    const poCurrency = purchasingStore.orders().find((item) => item.id === values.purchaseOrderId)?.currency;
+    const localization = await tenantSettingsService.getLocalization(scope.tenantId);
+    const data = purchaseInvoiceSchema.parse({
+      ...values,
+      paymentTerms: values.paymentTerms || tenantSettingsService.requirePaymentTerm(scope.tenantId).code,
+      currency: values.currency || poCurrency || localization.baseCurrency,
+    });
     assertOpenAccountingPeriod(scope.tenantId, data.invoiceDate, "create this purchase invoice");
     const po = purchasingStore
       .orders()
