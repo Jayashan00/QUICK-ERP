@@ -86,7 +86,7 @@ export const purchasesRoutes: RouteObject[] = [
   },
   {
     path: 'purchases/requests',
-    element: protectedPurchasePage(PERMISSIONS.PURCHASE_WORKFLOW.VIEW, PurchaseRequestsPage),
+    element: protectedPurchasePage(PERMISSIONS.PURCHASE_WORKFLOW.REQUEST_VIEW, PurchaseRequestsPage),
   },
   {
     path: 'purchases/rfqs',

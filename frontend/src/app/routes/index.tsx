@@ -9,6 +9,7 @@ import { StorefrontPage } from '@/features/storefront/StorefrontPage';
 import { LegacyTenantRoute } from '@/core/routing/LegacyTenantRoute';
 import { WelcomePage } from '@/features/welcome/WelcomePage';
 import { inquiryAdminRoute } from './inquiryAdmin.routes';
+import { SupplierRfqPage } from '@/features/purchases/pages/SupplierRfqPage';
 
 export const router = createBrowserRouter([
   { path: '/', element: <WelcomePage /> },
@@ -16,6 +17,7 @@ export const router = createBrowserRouter([
   authRoutes,
   superAdminRoutes,
   erpRoutes,
+  { path: '/supplier/rfq/:token', element: <SupplierRfqPage /> },
   { path: '/shop/:tenantId/:branchId', element: <StorefrontPage /> },
   { path: '/shop/:tenantId/:branchId/cart', element: <StorefrontPage view="cart" /> },
   { path: '/shop/:tenantId/:branchId/checkout', element: <StorefrontPage view="checkout" /> },
