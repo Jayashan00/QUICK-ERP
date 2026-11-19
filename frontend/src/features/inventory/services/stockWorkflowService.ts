@@ -606,8 +606,8 @@ export const stockWorkflowService = {
         inventoryStore.transfers().filter(
           (item) =>
             item.tenantId === scope.tenantId &&
-            params.permittedBranchIds.includes(item.sourceBranchId) &&
-            params.permittedBranchIds.includes(item.destinationBranchId),
+            (params.permittedBranchIds.includes(item.sourceBranchId) ||
+            params.permittedBranchIds.includes(item.destinationBranchId)),
         ),
         params,
         (item) => [item.sourceBranchId, item.destinationBranchId],
@@ -861,8 +861,43 @@ export const stockWorkflowService = {
   async createTransfer(scope: TenantBranchScope, permittedBranchIds: string[], values: StockTransferFormValues, actor: WorkflowActor, sourceRequestId?: string) {
     requireScope(scope, permittedBranchIds);
     const data = stockTransferSchema.parse(values);
+    if (data.sourceBranchId === data.destinationBranchId) {
+      throw new Error("Source and destination branches must be different.");
+    }
+    if (data.sourceWarehouseId === data.destinationWarehouseId) {
+      throw new Error("Source and destination warehouses must be different.");
+    }
+    if (data.sourceLocationId === data.destinationLocationId) {
+      throw new Error("Source and destination locations must be different.");
+    }
     requireLocation(scope.tenantId, permittedBranchIds, data.sourceBranchId, data.sourceWarehouseId, data.sourceLocationId);
-    requireLocation(scope.tenantId, permittedBranchIds, data.destinationBranchId, data.destinationWarehouseId, data.destinationLocationId);
+    const destinationBranch = (await branchService.getAllBranches(scope.tenantId)).find(
+      (b) => b.id === data.destinationBranchId && b.tenantId === scope.tenantId && b.isActive,
+    );
+    if (!destinationBranch) {
+      throw new Error("The selected destination branch is invalid or inactive.");
+    }
+    const destinationWarehouse = inventoryStore.warehouses().find(
+      (item) =>
+        item.tenantId === scope.tenantId &&
+        item.branchId === data.destinationBranchId &&
+        item.id === data.destinationWarehouseId &&
+        item.isActive,
+    );
+    if (!destinationWarehouse) {
+      throw new Error("The selected destination warehouse is invalid or inactive.");
+    }
+    const destinationLocation = inventoryStore.locations().find(
+      (item) =>
+        item.tenantId === scope.tenantId &&
+        item.branchId === data.destinationBranchId &&
+        item.warehouseId === data.destinationWarehouseId &&
+        item.id === data.destinationLocationId &&
+        item.isActive,
+    );
+    if (!destinationLocation) {
+      throw new Error("The selected destination location is invalid or inactive.");
+    }
     const lines = documentLines(data);
     for (const line of lines) {
       validateTracking(scope.tenantId, data.sourceLocationId, line, true);
@@ -893,7 +928,7 @@ export const stockWorkflowService = {
 
   async advanceTransfer(scope: TenantBranchScope, permittedBranchIds: string[], id: string, action: "approve" | "dispatch" | "mark_in_transit" | "receive" | "complete", actor: WorkflowActor, remarks?: string) {
     requireScope(scope, permittedBranchIds);
-    const index = inventoryStore.transfers().findIndex((item) => item.id === id && item.tenantId === scope.tenantId && permittedBranchIds.includes(item.sourceBranchId) && permittedBranchIds.includes(item.destinationBranchId));
+    const index = inventoryStore.transfers().findIndex((item) => item.id === id && item.tenantId === scope.tenantId && (permittedBranchIds.includes(item.sourceBranchId) || permittedBranchIds.includes(item.destinationBranchId)));
     if (index < 0) throw new Error("Stock transfer not found.");
     const current = inventoryStore.transfers()[index];
     const expected = { approve: "draft", dispatch: "approved", mark_in_transit: "dispatched", receive: "in_transit", complete: "received" } as const;

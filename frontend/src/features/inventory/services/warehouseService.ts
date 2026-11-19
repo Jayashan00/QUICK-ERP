@@ -134,7 +134,7 @@ export const warehouseService = {
   },
   async options(
     tenantId: string,
-    permittedBranchIds: string[],
+    permittedBranchIds?: string[],
     branchId?: string,
     includeInactive = false,
   ) {
@@ -144,7 +144,7 @@ export const warehouseService = {
       .filter(
         (item) =>
           item.tenantId === tenantId &&
-          permittedBranchIds.includes(item.branchId) &&
+          (!permittedBranchIds || permittedBranchIds.includes(item.branchId)) &&
           (!branchId || item.branchId === branchId) &&
           (includeInactive || item.isActive),
       )

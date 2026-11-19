@@ -110,6 +110,26 @@ export function useWarehouseOptions(
     enabled: Boolean(tenantId),
   });
 }
+export function useDestinationWarehouseOptions(branchId?: string) {
+  const { tenantId } = useTenant();
+  return useQuery({
+    queryKey: [
+      ...inventoryKeys.warehouses({
+        tenantId: tenantId ?? "",
+        branchId: branchId ?? "all",
+      }),
+      "destination-options",
+    ],
+    queryFn: () =>
+      warehouseService.options(
+        tenantId ?? "",
+        undefined,
+        branchId,
+        false,
+      ),
+    enabled: Boolean(tenantId && branchId),
+  });
+}
 export function useWarehouseMutations() {
   const { tenantId } = useTenant();
   const { branches } = useBranch();
