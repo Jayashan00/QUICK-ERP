@@ -152,8 +152,8 @@ public class CoreConfig {
 
     @Bean
     public AuthService authService(Db db, ObjectMapper mapper, PasswordHasher hasher, TokenService tokens, AccessRules access,
-                                   CoreSettings settings, MfaService mfaService) {
-        return new AuthService(db, mapper, hasher, tokens, access, settings, mfaService);
+                                   CoreSettings settings, MfaService mfaService, ObjectProvider<com.quickerp.core.MaintenanceService> maintenanceServiceProvider) {
+        return new AuthService(db, mapper, hasher, tokens, access, settings, mfaService, maintenanceServiceProvider.getIfAvailable());
     }
 
     /** Sends email through the configured SMTP server (spring.mail.*); without one, the message is written to the log. */
