@@ -48,7 +48,7 @@ export function DashboardPage() {
         {data.branches && <DashboardChartCard title="Revenue by Branch" subtitle="Company comparison · permitted branches only" data={data.branches} currency={currencyCode} valueFormatter={formatMoney} emptyMessage="No sales recorded across permitted branches for this period." />}
         {data.pipeline && <DashboardChartCard title="CRM & Sales Pipeline" subtitle="New leads / quotations in period; open opportunities now" data={data.pipeline} action={link('/crm/opportunities', 'View Opportunities', 'crm.opportunities.view')} />}
         {data.followUps && <DashboardAttention title="Follow-ups Due" items={data.followUps} />}
-        {data.stock && <DashboardChartCard title="Inventory Health" subtitle="Current product / location stock balances" kind="donut" data={data.stock} action={link('/inventory/stock', 'View Inventory', 'inventory.stock.view')} />}
+        {data.stock && <DashboardChartCard title="Inventory Health" subtitle="Current product / location stock balances" kind="donut" data={data.stock} action={link('/inventory/stocks', 'View Inventory', 'inventory.stock.view')} />}
         {data.finance && <DashboardChartCard title="Finance Overview" subtitle="Current outstanding balances from Accounting" data={data.finance} currency={currencyCode} valueFormatter={formatMoney} action={link('/finance/dashboard', 'View Accounting', 'finance.reports.view')} />}
         {canApprove && <DashboardApprovals items={data.approvals} count={data.approvalCount} />}
         {data.lowStock && <SummaryCard title="Low Stock Alerts" subtitle="Up to 5 product / location balances" action={link('/inventory/reorder', 'View Low Stock', 'inventory.stock.view')}>

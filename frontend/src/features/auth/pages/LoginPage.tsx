@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 import { useAuth } from '@/core/auth/auth-context';
 import { isBackendEnabled } from '@/core/persistence/backendSession';
+import { ApiError } from '@/core/api';
 import { FormField } from '@/shared/components/forms/FormField';
 import { TextInput } from '@/shared/components/forms/TextInput';
 import { Button } from '@/shared/components/common/Button';
@@ -38,6 +39,10 @@ export function LoginPage() {
       else if (result.status === 'mfa_required') navigate('/two-factor');
       else navigate(resolvePostLoginPath(result.user, (location.state as { from?: string } | null)?.from));
     } catch (error) {
+      if (error instanceof ApiError && error.isMaintenance) {
+        navigate('/maintenance');
+        return;
+      }
       setError('root', { message: getErrorMessage(error, 'Unable to sign in.') });
     }
   };
