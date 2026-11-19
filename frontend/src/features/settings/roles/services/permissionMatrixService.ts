@@ -2,20 +2,38 @@ import { TENANT_PERMISSIONS, assertPermissionsInScope, isPermissionInScope, reso
 import { roleService } from '@/core/permissions/roleService';
 import { tenantEntitlementService, isPermissionEnabled } from '@/core/tenant/tenantEntitlements';
 
-export const MATRIX_ACTIONS = ['view', 'create', 'edit', 'delete', 'approve', 'export', 'print', 'configure', 'test'] as const;
-export type MatrixAction = typeof MATRIX_ACTIONS[number];
+export type MatrixAction = string;
 export interface PermissionMatrixRow { id: string; label: string; permissions: Partial<Record<MatrixAction, string>> }
 export interface PermissionMatrixGroup { module: string; label: string; rows: PermissionMatrixRow[]; permissions: string[] }
 
 const titleCase = (value: string) => value.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 
+const preferredActionOrder = [
+  'view', 'create', 'edit', 'delete', 'approve', 'submit', 'confirm', 'process', 'post',
+  'return', 'void', 'refund', 'cancel', 'export', 'print', 'configure', 'test',
+  'manage', 'import', 'upload', 'download', 'archive', 'send', 'open', 'close',
+  'disable', 'enable', 'activate', 'convert', 'discount', 'sell', 'reply',
+  'reconcile', 'complete', 'assign', 'count', 'request', 'receive', 'adjust',
+  'transfer', 'reprint',
+] as const;
+
+const allTenantPermissions = Object.values(TENANT_PERMISSIONS)
+  .flatMap((group) => Object.values(group))
+  .filter((permission): permission is string => typeof permission === 'string');
+const discoveredActions = [...new Set(allTenantPermissions.map((permission) => permission.split('.').pop() ?? ''))];
+export const MATRIX_ACTIONS = [
+  ...preferredActionOrder.filter((action) => discoveredActions.includes(action)),
+  ...discoveredActions
+    .filter((action) => !(preferredActionOrder as readonly string[]).includes(action))
+    .sort(),
+] as readonly string[];
+
 function buildTenantCatalog(): PermissionMatrixGroup[] {
-  const permissions = Object.values(TENANT_PERMISSIONS).flatMap((group) => Object.values(group));
+  const permissions = allTenantPermissions;
   const groups = new Map<string, Map<string, PermissionMatrixRow>>();
   for (const permission of [...new Set(permissions)]) {
     const parts = permission.split('.');
     const action = parts[parts.length - 1] as MatrixAction;
-    if (!MATRIX_ACTIONS.includes(action)) continue;
     const module = parts[0];
     const resource = parts.length > 2 ? parts.slice(1, -1).join('_') : module;
     const moduleRows = groups.get(module) ?? new Map<string, PermissionMatrixRow>();
@@ -26,13 +44,17 @@ function buildTenantCatalog(): PermissionMatrixGroup[] {
   return [...groups.entries()].map(([module, rows]) => {
     const matrixRows = [...rows.values()];
     const permissions = module === 'pos'
-      ? [...new Set(Object.values(TENANT_PERMISSIONS.POS))]
-      : [...new Set(matrixRows.flatMap((row) => Object.values(row.permissions)))];
+      ? [...new Set<string>(Object.values(TENANT_PERMISSIONS.POS))]
+      : [...new Set(matrixRows.flatMap((row) =>
+          Object.values(row.permissions).filter((permission): permission is string => typeof permission === 'string')))];
     return { module, label: titleCase(module), rows: matrixRows, permissions };
   });
 }
 
 const tenantCatalog = buildTenantCatalog();
+const matrixManagedPermissions = new Set(
+  tenantCatalog.flatMap((group) => group.permissions),
+);
 
 export const permissionMatrixService = {
   async getCatalog(tenantId: string): Promise<PermissionMatrixGroup[]> {
@@ -41,7 +63,7 @@ export const permissionMatrixService = {
     return tenantCatalog.map((group) => ({
       ...group,
       permissions: group.permissions.filter((permission) => isPermissionEnabled(permission, enabled)),
-      rows: group.rows.map((row) => ({ ...row, permissions: Object.fromEntries(Object.entries(row.permissions).filter(([, permission]) => isPermissionEnabled(permission, enabled))) })).filter((row) => Object.keys(row.permissions).length > 0),
+      rows: group.rows.map((row) => ({ ...row, permissions: Object.fromEntries(Object.entries(row.permissions).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && isPermissionEnabled(entry[1], enabled))) })).filter((row) => Object.keys(row.permissions).length > 0),
     })).filter((group) => group.permissions.length > 0);
   },
   async getRolePermissions(tenantId: string, roleId: string): Promise<string[]> {
@@ -68,7 +90,9 @@ export const permissionMatrixService = {
     }
     const preserved = role.permissions.filter((permission) => {
       const parts = permission.split('.');
-      const managedByMatrix = permission.startsWith('pos.') || MATRIX_ACTIONS.includes(parts[parts.length - 1] as MatrixAction);
+      const managedByMatrix = matrixManagedPermissions.has(permission) ||
+        permission.startsWith('pos.') ||
+        MATRIX_ACTIONS.includes(parts[parts.length - 1] ?? '');
       return isPermissionInScope(permission, 'tenant') && !permission.startsWith('audit.') && (permission === '*' || !isPermissionEnabled(permission, enabled) || !managedByMatrix);
     });
     return roleService.savePermissions(tenantId, roleId, [...preserved, ...permissions]);
