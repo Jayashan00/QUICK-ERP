@@ -15,7 +15,7 @@ import { mockTenants } from '@/core/tenant/mocks/tenants';
 import type { User } from '@/core/auth/types/user';
 import type { Tenant } from '@/core/tenant/types/tenant';
 import { toUrlSlug } from '@/shared/utils/slug';
-import { TENANT_MODULES, expandModuleDependencies, tenantEntitlementService, type TenantEntitlements, type TenantModule } from '@/core/tenant/tenantEntitlements';
+import { TENANT_MODULES, expandModuleDependencies, tenantEntitlementService, type TenantEntitlements, type TenantModule, type TenantSubscriptionInfo } from '@/core/tenant/tenantEntitlements';
 
 const KEYS = APP_CONSTANTS.STORAGE_KEYS;
 
@@ -89,11 +89,22 @@ export function tenantEntitlementsFromServer(tenant: Tenant): TenantEntitlements
     ? configured.enabledModules.filter((module): module is TenantModule => known.has(module))
     : [];
   const enabledModules = listed.length > 0 ? expandModuleDependencies(listed) : [...TENANT_MODULES];
+  // Parse subscription block forwarded by the server in tenantView().
+  const rawSub = (tenant as { subscription?: Record<string, string> }).subscription;
+  const subscription: TenantSubscriptionInfo | undefined = rawSub
+    ? {
+        plan: rawSub['plan'],
+        start: rawSub['start'],
+        expiry: rawSub['expiry'],
+        status: rawSub['status'] as 'active' | 'suspended' | 'expired' | undefined,
+      }
+    : undefined;
   return {
     enabledModules,
     limits: { maxUsers: 1000, maxBranches: 100, ...(configured?.limits ?? {}) },
     usage: { currentUsers: 0, currentBranches: 0, ...(configured?.usage ?? {}) },
     admin: configured?.admin ?? { name: tenant.contactName || tenant.name, email: tenant.ownerEmail || '', status: 'active' },
+    subscription,
   };
 }
 
@@ -171,6 +182,9 @@ export async function authenticateWithBackend(email: string, password: string): 
     return user;
   } catch (error) {
     if (error instanceof ApiError) {
+      if (error.isMaintenance) {
+        throw new Error(error.message || 'VYRO ERP is temporarily unavailable while maintenance is being performed.');
+      }
       if (error.status === 401) throw new Error('Invalid email or password.');
       if (error.status === 403) throw new Error(error.message || 'This account is inactive. Contact your administrator.');
       if (error.status === 429) throw new Error(error.message || 'Too many sign-in attempts. Wait a few minutes and try again.');

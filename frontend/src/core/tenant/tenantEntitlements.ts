@@ -19,6 +19,7 @@ export interface TenantLimits {
   maxBranches: number;
   maxWarehouses?: number;
   maxStorageGb?: number;
+  includeAdminInUserLimit?: boolean;
 }
 
 export interface TenantUsage {
@@ -35,11 +36,20 @@ export interface TenantAdmin {
   lastActiveAt?: string;
 }
 
+export interface TenantSubscriptionInfo {
+  plan?: string;
+  start?: string;
+  expiry?: string;
+  status?: 'active' | 'suspended' | 'expired' | 'pending';
+  daysRemaining?: number;
+}
+
 export interface TenantEntitlements {
   enabledModules: TenantModule[];
   limits: TenantLimits;
   usage: TenantUsage;
   admin: TenantAdmin;
+  subscription?: TenantSubscriptionInfo;
 }
 
 export const TENANT_MODULE_CATALOG: TenantModuleDefinition[] = [
@@ -160,4 +170,25 @@ export function expandModuleDependencies(modules: TenantModule[]): TenantModule[
     }
   }
   return TENANT_MODULES.filter((module) => result.has(module));
+}
+
+export function computeSubscriptionStatus(subscription?: TenantSubscriptionInfo): 'active' | 'suspended' | 'expired' | 'pending' {
+  if (!subscription) return 'active';
+  if (subscription.status === 'pending') return 'pending';
+  if (subscription.status === 'suspended') return 'suspended';
+  if (subscription.status === 'expired') return 'expired';
+  if (subscription.expiry) {
+    const exp = new Date(subscription.expiry);
+    exp.setHours(23, 59, 59, 999);
+    if (exp < new Date()) return 'expired';
+  }
+  return subscription.status ?? 'active';
+}
+
+export function computeDaysRemaining(expiry?: string): number | null {
+  if (!expiry) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const exp = new Date(expiry + 'T00:00:00');
+  return Math.ceil((exp.getTime() - today.getTime()) / 86_400_000);
 }

@@ -1,7 +1,7 @@
 import { BaseEntity } from '@/shared/types/common';
 import type { TenantEntitlements } from '@/core/tenant/tenantEntitlements';
 
-export type TenantStatus = 'active' | 'suspended';
+export type TenantStatus = 'active' | 'suspended' | 'pending';
 
 export interface Tenant extends BaseEntity {
   name: string;
