@@ -14,10 +14,20 @@ import { usePermissionMatrix } from '@/features/settings/roles/hooks/usePermissi
 import { useRoleOptions } from '@/features/settings/roles/hooks/useRoleOptions';
 import { MATRIX_ACTIONS } from '@/features/settings/roles/services/permissionMatrixService';
 
-const actionLabels: Record<(typeof MATRIX_ACTIONS)[number], string> = {
+const actionLabels: Record<string, string> = {
   view: 'View', create: 'Create', edit: 'Edit', delete: 'Delete', approve: 'Approve',
   export: 'Export', print: 'Print', configure: 'Configure', test: 'Test',
+  submit: 'Submit', confirm: 'Confirm', process: 'Process', post: 'Post',
+  return: 'Return', void: 'Void', refund: 'Refund', cancel: 'Cancel',
+  manage: 'Manage', import: 'Import', upload: 'Upload', download: 'Download',
+  archive: 'Archive', send: 'Send', open: 'Open', close: 'Close',
+  disable: 'Disable', enable: 'Enable', activate: 'Activate', convert: 'Convert',
+  discount: 'Discount', sell: 'Sell', reply: 'Reply', reconcile: 'Reconcile',
+  complete: 'Complete', assign: 'Assign', count: 'Count', request: 'Request',
+  receive: 'Receive', adjust: 'Adjust', transfer: 'Transfer', reprint: 'Reprint',
 };
+const formatActionLabel = (action: string) =>
+  actionLabels[action] ?? action.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 
 export function PermissionMatrixPage() {
   const [params, setParams] = useSearchParams();
@@ -109,14 +119,14 @@ export function PermissionMatrixPage() {
               <table className="min-w-full divide-y divide-slate-200">
                 <thead className="bg-slate-50"><tr>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">Resource</th>
-                  {MATRIX_ACTIONS.map((action) => <th key={action} className="px-3 py-3 text-center text-xs font-semibold text-slate-500">{actionLabels[action]}</th>)}
+                  {MATRIX_ACTIONS.map((action) => <th key={action} className="px-3 py-3 text-center text-xs font-semibold text-slate-500">{formatActionLabel(action)}</th>)}
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">{group.rows.map((row) => <tr key={row.id}>
                   <td className="px-4 py-3 text-sm font-medium text-slate-800">{row.label}</td>
                   {MATRIX_ACTIONS.map((action) => {
                     const permission = row.permissions[action];
                     return <td key={action} className="px-3 py-3 text-center">{permission
-                      ? <input type="checkbox" checked={matrix.selected.includes(permission)} disabled={!canConfigure} onChange={() => togglePermission(permission)} aria-label={`${row.label} ${actionLabels[action]}`} />
+                      ? <input type="checkbox" checked={matrix.selected.includes(permission)} disabled={!canConfigure} onChange={() => togglePermission(permission)} aria-label={`${row.label} ${formatActionLabel(action)}`} />
                       : <span className="text-slate-300">—</span>}</td>;
                   })}
                 </tr>)}</tbody>
