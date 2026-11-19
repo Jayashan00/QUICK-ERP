@@ -2,6 +2,10 @@ import { useEffect } from "react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useBranch } from "@/core/branch/branch-context";
+import { useTenant } from "@/core/tenant/tenant-context";
+import { useQuery } from "@tanstack/react-query";
+import { branchService } from "@/core/branch/branchService";
+import { branchKeys } from "@/core/branch/branchKeys";
 import { Button } from "@/shared/components/common/Button";
 import { Modal } from "@/shared/components/common/Modal";
 import { FormField } from "@/shared/components/forms/FormField";
@@ -13,9 +17,9 @@ import { getErrorMessage } from "@/shared/utils/errors";
 import { appToast } from "@/shared/utils/toast";
 import { useInventoryBatches, useInventoryProductOptions, useInventorySerialNumbers } from "../hooks/useInventoryTracking";
 import { useStockBalances } from "../hooks/useInventory";
-import { useStockLocationOptions } from "../hooks/useStockLocationManagement";
+import { useStockLocationOptions, useDestinationStockLocationOptions } from "../hooks/useStockLocationManagement";
 import { useStockWorkflowMutations } from "../hooks/useStockWorkflows";
-import { useWarehouseOptions } from "../hooks/useWarehouseManagement";
+import { useWarehouseOptions, useDestinationWarehouseOptions } from "../hooks/useWarehouseManagement";
 import {
   branchStockRequestSchema,
   stockAdjustmentSchema,
@@ -94,18 +98,341 @@ export function StockAdjustmentCreateModal({ isOpen, onClose }: ModalProps) {
 }
 
 export function StockTransferCreateModal({ isOpen, onClose }: ModalProps) {
-  const { branches, branchId } = useBranch(); const mutations = useStockWorkflowMutations();
-  const form = useForm<StockTransferFormValues>({ resolver: zodResolver(stockTransferSchema), defaultValues: { sourceBranchId: branchId ?? "", sourceWarehouseId: "", sourceLocationId: "", destinationBranchId: "", destinationWarehouseId: "", destinationLocationId: "", notes: "", lines: [{ ...lineDefaults }] } });
+  const { tenantId } = useTenant();
+  const { branches, branchId } = useBranch();
+  const mutations = useStockWorkflowMutations();
+
+  const form = useForm<StockTransferFormValues>({
+    resolver: zodResolver(stockTransferSchema),
+    defaultValues: {
+      sourceBranchId: branchId ?? "",
+      sourceWarehouseId: "",
+      sourceLocationId: "",
+      destinationBranchId: "",
+      destinationWarehouseId: "",
+      destinationLocationId: "",
+      notes: "",
+      lines: [{ ...lineDefaults }],
+    },
+  });
+
   const lineFields = useFieldArray({ control: form.control, name: "lines" });
-  const sourceBranch = form.watch("sourceBranchId"), sourceWarehouse = form.watch("sourceWarehouseId"), sourceLocation = form.watch("sourceLocationId"), destinationBranch = form.watch("destinationBranchId"), destinationWarehouse = form.watch("destinationWarehouseId"), watchedLines = form.watch("lines");
-  const sourceWarehouses = useWarehouseOptions(sourceBranch), sourceLocations = useStockLocationOptions(sourceWarehouse), destinationWarehouses = useWarehouseOptions(destinationBranch), destinationLocations = useStockLocationOptions(destinationWarehouse), products = useInventoryProductOptions("all");
-  const submit = form.handleSubmit(async (values) => { try { await mutations.createTransfer(values); appToast.success("Stock transfer saved as draft."); form.reset(); onClose(); } catch (error) { appToast.error(getErrorMessage(error, "Unable to create stock transfer.")); } });
-  return <Modal isOpen={isOpen} onClose={onClose} title="New Stock Transfer" maxWidth="920px" footer={<FormActions formId="transfer-form" busy={form.formState.isSubmitting} onClose={onClose} submitLabel="Save Draft" />}><form id="transfer-form" onSubmit={submit} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" noValidate>
-    <FormField label="Source branch" error={form.formState.errors.sourceBranchId?.message}><Select {...form.register("sourceBranchId")} options={options(branches)} /></FormField><FormField label="Source warehouse"><Select {...form.register("sourceWarehouseId")} placeholder="Select warehouse" options={options(sourceWarehouses.data ?? [])} /></FormField><FormField label="Source location"><Select {...form.register("sourceLocationId")} placeholder="Select location" options={options(sourceLocations.data ?? [])} /></FormField>
-    <FormField label="Destination branch" error={form.formState.errors.destinationBranchId?.message}><Select {...form.register("destinationBranchId")} placeholder="Select branch" options={options(branches)} /></FormField><FormField label="Destination warehouse"><Select {...form.register("destinationWarehouseId")} placeholder="Select warehouse" options={options(destinationWarehouses.data ?? [])} /></FormField><FormField label="Destination location" error={form.formState.errors.destinationLocationId?.message}><Select {...form.register("destinationLocationId")} placeholder="Select location" options={options(destinationLocations.data ?? [])} /></FormField>
-    <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2 lg:col-span-3"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-slate-800">Products and quantities</h3><Button type="button" size="sm" variant="secondary" onClick={() => lineFields.append({ ...lineDefaults })}>Add Product</Button></div>{lineFields.fields.map((field, index) => <div key={field.id} className="grid gap-3 rounded-lg bg-white p-3 sm:grid-cols-2 lg:grid-cols-3"><FormField label="Product" error={form.formState.errors.lines?.[index]?.productId?.message}><Select {...form.register(`lines.${index}.productId`)} placeholder="Select product" options={options(products.data ?? [])} /></FormField><FormField label="Quantity" error={form.formState.errors.lines?.[index]?.quantity?.message}><TextInput type="number" min="0.01" step="0.01" {...form.register(`lines.${index}.quantity`, { valueAsNumber: true })} /></FormField><Controller control={form.control} name={`lines.${index}.batchReference`} render={({ field: batch }) => <Controller control={form.control} name={`lines.${index}.serialReferences`} render={({ field: serials }) => <TrackingFields branchId={sourceBranch} warehouseId={sourceWarehouse} locationId={sourceLocation} productId={watchedLines[index]?.productId ?? ""} batchReference={batch.value} serialReferences={serials.value} onBatchChange={batch.onChange} onSerialChange={serials.onChange} />} />} />{lineFields.fields.length > 1 && <div className="sm:col-span-2 lg:col-span-3"><Button type="button" size="sm" variant="danger" onClick={() => lineFields.remove(index)}>Remove Product</Button></div>}</div>)}</div>
-    <FormField label="Notes" className="sm:col-span-2 lg:col-span-3"><Textarea rows={2} {...form.register("notes")} /></FormField>
-  </form></Modal>;
+
+  const sourceBranch = form.watch("sourceBranchId");
+  const sourceWarehouse = form.watch("sourceWarehouseId");
+  const sourceLocation = form.watch("sourceLocationId");
+  const destinationBranch = form.watch("destinationBranchId");
+  const destinationWarehouse = form.watch("destinationWarehouseId");
+  const destinationLocation = form.watch("destinationLocationId");
+  const watchedLines = form.watch("lines");
+
+  useEffect(() => {
+    if (isOpen) {
+      form.reset({
+        sourceBranchId: branchId ?? "",
+        sourceWarehouseId: "",
+        sourceLocationId: "",
+        destinationBranchId: "",
+        destinationWarehouseId: "",
+        destinationLocationId: "",
+        notes: "",
+        lines: [{ ...lineDefaults }],
+      });
+    }
+  }, [isOpen, branchId, form]);
+
+  // Destination branch options: query all active branches belonging to current tenant
+  const allBranchesQuery = useQuery({
+    queryKey: [...branchKeys.options(tenantId ?? ""), "all-active-tenant-branches"],
+    queryFn: async () => {
+      if (!tenantId) return [];
+      const all = await branchService.getAllBranches(tenantId);
+      return all.filter((b) => b.isActive && b.tenantId === tenantId);
+    },
+    enabled: Boolean(tenantId && isOpen),
+  });
+
+  // Source options: restricted to user's assigned branches
+  const sourceWarehouses = useWarehouseOptions(sourceBranch);
+  const sourceLocations = useStockLocationOptions(sourceWarehouse);
+
+  // Destination options: all active warehouses & locations belonging to destination branch/warehouse in current tenant
+  const destinationWarehouses = useDestinationWarehouseOptions(destinationBranch);
+  const destinationLocations = useDestinationStockLocationOptions(destinationWarehouse);
+
+  const products = useInventoryProductOptions("all");
+
+  // Prevent users from selecting identical source and destination values in dropdowns
+  const sourceBranchOptions = branches.filter((b) => b.isActive && b.id !== destinationBranch);
+  const sourceWarehouseOptions = (sourceWarehouses.data ?? []).filter((w) => w.id !== destinationWarehouse);
+  const sourceLocationOptions = (sourceLocations.data ?? []).filter((l) => l.id !== destinationLocation);
+
+  const destBranchOptions = (allBranchesQuery.data ?? []).filter((b) => b.id !== sourceBranch);
+  const destWarehouseOptions = (destinationWarehouses.data ?? []).filter((w) => w.id !== sourceWarehouse);
+  const destLocationOptions = (destinationLocations.data ?? []).filter((l) => l.id !== sourceLocation);
+
+  const sourceWarehousePlaceholder = !sourceBranch
+    ? "Select source branch first"
+    : sourceWarehouses.isLoading
+    ? "Loading warehouses..."
+    : sourceWarehouseOptions.length === 0
+    ? "No warehouses available"
+    : "Select source warehouse";
+
+  const sourceLocationPlaceholder = !sourceWarehouse
+    ? "Select source warehouse first"
+    : sourceLocations.isLoading
+    ? "Loading locations..."
+    : sourceLocationOptions.length === 0
+    ? "No locations available"
+    : "Select source location";
+
+  const destBranchPlaceholder = allBranchesQuery.isLoading
+    ? "Loading branches..."
+    : "Select destination branch";
+
+  const destWarehousePlaceholder = !destinationBranch
+    ? "Select destination branch first"
+    : destinationWarehouses.isLoading
+    ? "Loading warehouses..."
+    : destWarehouseOptions.length === 0
+    ? "No warehouses in this branch"
+    : "Select destination warehouse";
+
+  const destLocationPlaceholder = !destinationWarehouse
+    ? "Select destination warehouse first"
+    : destinationLocations.isLoading
+    ? "Loading locations..."
+    : destLocationOptions.length === 0
+    ? "No locations in this warehouse"
+    : "Select destination location";
+
+  const submit = form.handleSubmit(async (values) => {
+    try {
+      await mutations.createTransfer(values);
+      appToast.success("Stock transfer saved as draft.");
+      form.reset();
+      onClose();
+    } catch (error) {
+      appToast.error(getErrorMessage(error, "Unable to create stock transfer."));
+    }
+  });
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="New Stock Transfer"
+      maxWidth="920px"
+      footer={
+        <FormActions
+          formId="transfer-form"
+          busy={form.formState.isSubmitting}
+          onClose={onClose}
+          submitLabel="Save Draft"
+        />
+      }
+    >
+      <form id="transfer-form" onSubmit={submit} className="space-y-4" noValidate>
+        {/* SOURCE SECTION */}
+        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white">
+                1
+              </span>
+              <h3 className="text-sm font-semibold text-slate-800">Source (Origin)</h3>
+            </div>
+            <span className="text-xs text-slate-500">Authorized source branch, warehouse & location</span>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <FormField label="Source Branch" required error={form.formState.errors.sourceBranchId?.message}>
+              <Select
+                {...form.register("sourceBranchId", {
+                  onChange: (e) => {
+                    const next = e.target.value;
+                    form.setValue("sourceWarehouseId", "");
+                    form.setValue("sourceLocationId", "");
+                    if (next && next === destinationBranch) {
+                      form.setValue("destinationBranchId", "");
+                      form.setValue("destinationWarehouseId", "");
+                      form.setValue("destinationLocationId", "");
+                    }
+                  },
+                })}
+                placeholder="Select source branch"
+                options={options(sourceBranchOptions)}
+                error={Boolean(form.formState.errors.sourceBranchId)}
+              />
+            </FormField>
+
+            <FormField label="Source Warehouse" required error={form.formState.errors.sourceWarehouseId?.message}>
+              <Select
+                {...form.register("sourceWarehouseId", {
+                  onChange: (e) => {
+                    const next = e.target.value;
+                    form.setValue("sourceLocationId", "");
+                    if (next && next === destinationWarehouse) {
+                      form.setValue("destinationWarehouseId", "");
+                      form.setValue("destinationLocationId", "");
+                    }
+                  },
+                })}
+                placeholder={sourceWarehousePlaceholder}
+                disabled={!sourceBranch || sourceWarehouses.isLoading || sourceWarehouseOptions.length === 0}
+                options={options(sourceWarehouseOptions)}
+                error={Boolean(form.formState.errors.sourceWarehouseId)}
+              />
+            </FormField>
+
+            <FormField label="Source Location" required error={form.formState.errors.sourceLocationId?.message}>
+              <Select
+                {...form.register("sourceLocationId", {
+                  onChange: (e) => {
+                    const next = e.target.value;
+                    if (next && next === destinationLocation) {
+                      form.setValue("destinationLocationId", "");
+                    }
+                  },
+                })}
+                placeholder={sourceLocationPlaceholder}
+                disabled={!sourceWarehouse || sourceLocations.isLoading || sourceLocationOptions.length === 0}
+                options={options(sourceLocationOptions)}
+                error={Boolean(form.formState.errors.sourceLocationId)}
+              />
+            </FormField>
+          </div>
+        </div>
+
+        {/* DESTINATION SECTION */}
+        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-xs font-semibold text-white">
+                2
+              </span>
+              <h3 className="text-sm font-semibold text-slate-800">Destination</h3>
+            </div>
+            <span className="text-xs text-slate-500">Any active branch, warehouse & location in tenant</span>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <FormField label="Destination Branch" required error={form.formState.errors.destinationBranchId?.message}>
+              <Select
+                {...form.register("destinationBranchId", {
+                  onChange: (e) => {
+                    const next = e.target.value;
+                    form.setValue("destinationWarehouseId", "");
+                    form.setValue("destinationLocationId", "");
+                    if (next && next === sourceBranch) {
+                      form.setValue("sourceBranchId", "");
+                      form.setValue("sourceWarehouseId", "");
+                      form.setValue("sourceLocationId", "");
+                    }
+                  },
+                })}
+                placeholder={destBranchPlaceholder}
+                disabled={allBranchesQuery.isLoading}
+                options={options(destBranchOptions)}
+                error={Boolean(form.formState.errors.destinationBranchId)}
+              />
+            </FormField>
+
+            <FormField label="Destination Warehouse" required error={form.formState.errors.destinationWarehouseId?.message}>
+              <Select
+                {...form.register("destinationWarehouseId", {
+                  onChange: (e) => {
+                    const next = e.target.value;
+                    form.setValue("destinationLocationId", "");
+                    if (next && next === sourceWarehouse) {
+                      form.setValue("sourceWarehouseId", "");
+                      form.setValue("sourceLocationId", "");
+                    }
+                  },
+                })}
+                placeholder={destWarehousePlaceholder}
+                disabled={!destinationBranch || destinationWarehouses.isLoading || destWarehouseOptions.length === 0}
+                options={options(destWarehouseOptions)}
+                error={Boolean(form.formState.errors.destinationWarehouseId)}
+              />
+            </FormField>
+
+            <FormField label="Destination Location" required error={form.formState.errors.destinationLocationId?.message}>
+              <Select
+                {...form.register("destinationLocationId", {
+                  onChange: (e) => {
+                    const next = e.target.value;
+                    if (next && next === sourceLocation) {
+                      form.setValue("sourceLocationId", "");
+                    }
+                  },
+                })}
+                placeholder={destLocationPlaceholder}
+                disabled={!destinationWarehouse || destinationLocations.isLoading || destLocationOptions.length === 0}
+                options={options(destLocationOptions)}
+                error={Boolean(form.formState.errors.destinationLocationId)}
+              />
+            </FormField>
+          </div>
+        </div>
+
+        {/* PRODUCTS AND QUANTITIES */}
+        <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-slate-800">Products and quantities</h3>
+            <Button type="button" size="sm" variant="secondary" onClick={() => lineFields.append({ ...lineDefaults })}>
+              Add Product
+            </Button>
+          </div>
+          {lineFields.fields.map((field, index) => (
+            <div key={field.id} className="grid gap-3 rounded-lg bg-white p-3 sm:grid-cols-2 lg:grid-cols-3">
+              <FormField label="Product" error={form.formState.errors.lines?.[index]?.productId?.message}>
+                <Select {...form.register(`lines.${index}.productId`)} placeholder="Select product" options={options(products.data ?? [])} />
+              </FormField>
+              <FormField label="Quantity" error={form.formState.errors.lines?.[index]?.quantity?.message}>
+                <TextInput type="number" min="0.01" step="0.01" {...form.register(`lines.${index}.quantity`, { valueAsNumber: true })} />
+              </FormField>
+              <Controller
+                control={form.control}
+                name={`lines.${index}.batchReference`}
+                render={({ field: batch }) => (
+                  <Controller
+                    control={form.control}
+                    name={`lines.${index}.serialReferences`}
+                    render={({ field: serials }) => (
+                      <TrackingFields
+                        branchId={sourceBranch}
+                        warehouseId={sourceWarehouse}
+                        locationId={sourceLocation}
+                        productId={watchedLines[index]?.productId ?? ""}
+                        batchReference={batch.value}
+                        serialReferences={serials.value}
+                        onBatchChange={batch.onChange}
+                        onSerialChange={serials.onChange}
+                      />
+                    )}
+                  />
+                )}
+              />
+              {lineFields.fields.length > 1 && (
+                <div className="sm:col-span-2 lg:col-span-3">
+                  <Button type="button" size="sm" variant="danger" onClick={() => lineFields.remove(index)}>
+                    Remove Product
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* NOTES */}
+        <FormField label="Notes">
+          <Textarea rows={2} {...form.register("notes")} />
+        </FormField>
+      </form>
+    </Modal>
+  );
 }
 
 export function BranchStockRequestCreateModal({ isOpen, onClose }: ModalProps) {

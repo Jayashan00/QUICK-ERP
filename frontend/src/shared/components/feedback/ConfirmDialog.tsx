@@ -54,9 +54,9 @@ export function ConfirmDialog({
         </>
       }
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3 min-w-0">
         {variant === 'danger' && <AlertTriangle size={20} className="mt-0.5 shrink-0 text-red-600" />}
-        <p className="text-sm leading-6 text-slate-600">{message}</p>
+        <p className="text-sm leading-6 text-slate-600 min-w-0 max-w-full break-words [overflow-wrap:anywhere] [word-break:break-word] whitespace-normal" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'normal' }}>{message}</p>
       </div>
     </Modal>
   );

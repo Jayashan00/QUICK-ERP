@@ -425,3 +425,10 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   .receipt-print { animation: none; }
 }
+
+/* Text wrapping utility for notices and announcements to prevent layout overflow */
+.notice-text-wrap {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}

@@ -8,9 +8,18 @@ export interface TenantContextValue {
   tenantId: string | null;
   isLoading: boolean;
   setTenant: (tenant: Tenant) => void;
+  subscriptionStatus: 'active' | 'suspended' | 'expired' | 'pending';
+  subscriptionExpiry?: string;
 }
 
-export const TenantContext = createContext<TenantContextValue | undefined>(undefined);
+export const TenantContext = createContext<TenantContextValue | undefined>({
+  currentTenant: null,
+  tenant: null,
+  tenantId: null,
+  isLoading: false,
+  setTenant: () => undefined,
+  subscriptionStatus: 'active',
+});
 
 export function useTenant(): TenantContextValue {
   const context = useContext(TenantContext);

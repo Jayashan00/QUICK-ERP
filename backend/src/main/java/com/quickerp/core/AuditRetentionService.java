@@ -79,6 +79,9 @@ public final class AuditRetentionService {
             int aiAudit = tableExists(connection, "ai_audit_log")
                     ? Sql.update(connection, "DELETE FROM ai_audit_log WHERE created_at < ?", databaseCutoff)
                     : 0;
+            if (tableExists(connection, "platform_audit_log")) {
+                Sql.update(connection, "DELETE FROM platform_audit_log WHERE created_at < ?", databaseCutoff);
+            }
             return new Result(events, history, aiAudit, reminders);
         });
     }

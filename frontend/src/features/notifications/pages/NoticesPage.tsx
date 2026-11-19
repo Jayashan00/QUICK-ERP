@@ -28,12 +28,109 @@ export function NoticesPage() {
   const users = useUserOptions({ includeInactive: true, enabled: canManage });
   const query = useNotices(canManage); const actions = useNoticeActions(); const [editing, setEditing] = useState<Notice | null | 'new'>(null); const [deleting, setDeleting] = useState<Notice | null>(null); const [reporting, setReporting] = useState<Notice | null>(null);
   if (query.isError) return <ErrorState title="Notices unavailable" message="Company and branch notices could not be loaded." onRetry={() => void query.refetch()} />;
-  return <div className="space-y-6"><PageHeader title="Notices & Announcements" description="Company-wide, branch-specific, and targeted notices for your permitted scope." actions={canManage ? <Button leftIcon={<Plus size={16} />} onClick={() => setEditing('new')}>New notice</Button> : undefined} />
-    <div className="grid gap-4 lg:grid-cols-2">{query.isLoading ? Array.from({ length: 4 }, (_, index) => <Card key={index} className="h-44 animate-pulse bg-slate-100" />) : query.data?.length ? query.data.map((notice) => { const acknowledged = notice.acknowledgedBy.includes(user?.id ?? ''); const today = new Date().toISOString().slice(0, 10); const canManageNotice = canManage && notice.createdBy === user?.id; const recipients = getNoticeRecipients(notice, users.users); const acknowledgedCount = recipients.filter((recipient) => notice.acknowledgedBy.includes(recipient.id)).length; const canAcknowledge = notice.createdBy !== user?.id && notice.acknowledgementRequired && notice.isActive && notice.publishDate <= today && (!notice.expiryDate || notice.expiryDate >= today) && (notice.audience === 'company' || (notice.audience === 'branch' && branches.some((branch) => branch.id === notice.branchId)) || notice.userIds.includes(user?.id ?? '')); return <Card key={notice.id} className={!notice.isActive ? 'opacity-70' : ''}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold text-slate-900">{notice.title}</h2><PriorityBadge priority={notice.priority} /><StatusBadge status={notice.isActive ? 'active' : 'inactive'} /></div><p className="mt-2 text-sm leading-6 text-slate-600">{notice.message}</p></div></div><div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4"><p className="text-xs text-slate-500">{notice.audience === 'company' ? 'All company users' : notice.audience === 'branch' ? branches.find((branch) => branch.id === notice.branchId)?.name ?? notice.branchId : `${notice.userIds.length} selected user(s)`} · {notice.publishDate}{notice.expiryDate ? ` to ${notice.expiryDate}` : ''}</p><div className="flex flex-wrap gap-2">{canAcknowledge && !acknowledged && <Button size="sm" variant="secondary" leftIcon={<CheckCircle2 size={15} />} onClick={() => void actions.acknowledge(notice.id).then(() => appToast.success('Notice acknowledged.')).catch((error: unknown) => appToast.error(error instanceof Error ? error.message : 'Unable to acknowledge notice.'))}>Acknowledge</Button>}{canManageNotice && notice.acknowledgementRequired && <Button size="sm" variant="secondary" leftIcon={<UsersRound size={15} />} onClick={() => setReporting(notice)}>{acknowledgedCount}/{recipients.length} acknowledged</Button>}{canManageNotice && <Button size="sm" variant="ghost" leftIcon={<Edit size={15} />} onClick={() => setEditing(notice)}>Edit</Button>}{canManageNotice && <Button size="sm" variant="ghost" leftIcon={<Trash2 size={15} />} onClick={() => setDeleting(notice)}>Delete</Button>}</div></div></Card>; }) : <Card className="lg:col-span-2"><div className="py-10 text-center"><h2 className="font-semibold text-slate-900">No notices in scope</h2><p className="mt-1 text-sm text-slate-500">There are no active company, branch, or targeted notices.</p></div></Card>}</div>
-    <NoticeFormModal notice={editing === 'new' ? undefined : editing ?? undefined} open={Boolean(editing)} branches={branches.map((branch) => ({ id: branch.id, name: branch.name }))} users={users.users.filter((item) => item.isActive).map((item) => ({ id: item.id, name: item.name }))} saving={actions.isPending} onClose={() => setEditing(null)} onSave={async (values) => { try { await actions.save({ input: { ...values, branchId: values.branchId || undefined, expiryDate: values.expiryDate || undefined }, id: editing === 'new' ? undefined : editing?.id }); appToast.success(editing === 'new' ? 'Notice published.' : 'Notice updated.'); setEditing(null); } catch (error) { appToast.error(error instanceof Error ? error.message : 'Unable to save notice.'); } }} />
-    <AcknowledgementReportModal notice={reporting} users={users.users} onClose={() => setReporting(null)} />
-    <ConfirmDialog isOpen={Boolean(deleting)} title="Delete notice" message={`Delete “${deleting?.title}”? This removes the mock notice for all targeted users.`} confirmLabel="Delete notice" variant="danger" isLoading={actions.isPending} onCancel={() => setDeleting(null)} onConfirm={() => { if (!deleting) return; void actions.remove(deleting.id).then(() => { appToast.success('Notice deleted.'); setDeleting(null); }).catch((error: unknown) => appToast.error(error instanceof Error ? error.message : 'Unable to delete notice.')); }} />
-  </div>;
+  return (
+    <div className="w-full min-w-0 space-y-6">
+      <PageHeader
+        title="Notices & Announcements"
+        description="Company-wide, branch-specific, and targeted notices for your permitted scope."
+        actions={canManage ? <Button leftIcon={<Plus size={16} />} onClick={() => setEditing('new')}>New notice</Button> : undefined}
+      />
+      <div className="grid w-full min-w-0 gap-4 lg:grid-cols-2">
+        {query.isLoading ? (
+          Array.from({ length: 4 }, (_, index) => <Card key={index} className="h-44 animate-pulse bg-slate-100" />)
+        ) : query.data?.length ? (
+          query.data.map((notice) => {
+            const acknowledged = notice.acknowledgedBy.includes(user?.id ?? '');
+            const today = new Date().toISOString().slice(0, 10);
+            const canManageNotice = canManage && notice.createdBy === user?.id;
+            const recipients = getNoticeRecipients(notice, users.users);
+            const acknowledgedCount = recipients.filter((recipient) => notice.acknowledgedBy.includes(recipient.id)).length;
+            const canAcknowledge = notice.createdBy !== user?.id && notice.acknowledgementRequired && notice.isActive && notice.publishDate <= today && (!notice.expiryDate || notice.expiryDate >= today) && (notice.audience === 'company' || (notice.audience === 'branch' && branches.some((branch) => branch.id === notice.branchId)) || notice.userIds.includes(user?.id ?? ''));
+
+            return (
+              <Card
+                key={notice.id}
+                className={`flex flex-col justify-between min-w-0 w-full ${!notice.isActive ? 'opacity-70' : ''}`}
+              >
+                <div className="w-full min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <h2
+                      className="font-semibold text-slate-900 min-w-0 max-w-full break-words [overflow-wrap:anywhere] [word-break:break-word] whitespace-normal notice-text-wrap"
+                      style={{
+                        overflowWrap: 'anywhere',
+                        wordBreak: 'break-word',
+                        whiteSpace: 'normal',
+                      }}
+                    >
+                      {notice.title}
+                    </h2>
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      <PriorityBadge priority={notice.priority} />
+                      <StatusBadge status={notice.isActive ? 'active' : 'inactive'} />
+                    </div>
+                  </div>
+                  <p
+                    className="mt-2 text-sm leading-6 text-slate-600 min-w-0 max-w-full break-words [overflow-wrap:anywhere] [word-break:break-word] whitespace-normal notice-text-wrap"
+                    style={{
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
+                      whiteSpace: 'normal',
+                    }}
+                  >
+                    {notice.message}
+                  </p>
+                </div>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 w-full min-w-0">
+                  <p
+                    className="text-xs text-slate-500 min-w-0 max-w-full break-words [overflow-wrap:anywhere] [word-break:break-word] whitespace-normal"
+                    style={{
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
+                      whiteSpace: 'normal',
+                    }}
+                  >
+                    {notice.audience === 'company' ? 'All company users' : notice.audience === 'branch' ? branches.find((branch) => branch.id === notice.branchId)?.name ?? notice.branchId : `${notice.userIds.length} selected user(s)`} · {notice.publishDate}{notice.expiryDate ? ` to ${notice.expiryDate}` : ''}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {canAcknowledge && !acknowledged && (
+                      <Button size="sm" variant="secondary" leftIcon={<CheckCircle2 size={15} />} onClick={() => void actions.acknowledge(notice.id).then(() => appToast.success('Notice acknowledged.')).catch((error: unknown) => appToast.error(error instanceof Error ? error.message : 'Unable to acknowledge notice.'))}>
+                        Acknowledge
+                      </Button>
+                    )}
+                    {canManageNotice && notice.acknowledgementRequired && (
+                      <Button size="sm" variant="secondary" leftIcon={<UsersRound size={15} />} onClick={() => setReporting(notice)}>
+                        {acknowledgedCount}/{recipients.length} acknowledged
+                      </Button>
+                    )}
+                    {canManageNotice && (
+                      <Button size="sm" variant="ghost" leftIcon={<Edit size={15} />} onClick={() => setEditing(notice)}>
+                        Edit
+                      </Button>
+                    )}
+                    {canManageNotice && (
+                      <Button size="sm" variant="ghost" leftIcon={<Trash2 size={15} />} onClick={() => setDeleting(notice)}>
+                        Delete
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            );
+          })
+        ) : (
+          <Card className="lg:col-span-2 min-w-0 w-full">
+            <div className="py-10 text-center">
+              <h2 className="font-semibold text-slate-900">No notices in scope</h2>
+              <p className="mt-1 text-sm text-slate-500">There are no active company, branch, or targeted notices.</p>
+            </div>
+          </Card>
+        )}
+      </div>
+      <NoticeFormModal notice={editing === 'new' ? undefined : editing ?? undefined} open={Boolean(editing)} branches={branches.map((branch) => ({ id: branch.id, name: branch.name }))} users={users.users.filter((item) => item.isActive).map((item) => ({ id: item.id, name: item.name }))} saving={actions.isPending} onClose={() => setEditing(null)} onSave={async (values) => { try { await actions.save({ input: { ...values, branchId: values.branchId || undefined, expiryDate: values.expiryDate || undefined }, id: editing === 'new' ? undefined : editing?.id }); appToast.success(editing === 'new' ? 'Notice published.' : 'Notice updated.'); setEditing(null); } catch (error) { appToast.error(error instanceof Error ? error.message : 'Unable to save notice.'); } }} />
+      <AcknowledgementReportModal notice={reporting} users={users.users} onClose={() => setReporting(null)} />
+      <ConfirmDialog isOpen={Boolean(deleting)} title="Delete notice" message={`Delete “${deleting?.title}”? This removes the mock notice for all targeted users.`} confirmLabel="Delete notice" variant="danger" isLoading={actions.isPending} onCancel={() => setDeleting(null)} onConfirm={() => { if (!deleting) return; void actions.remove(deleting.id).then(() => { appToast.success('Notice deleted.'); setDeleting(null); }).catch((error: unknown) => appToast.error(error instanceof Error ? error.message : 'Unable to delete notice.')); }} />
+    </div>
+  );
 }
 
 function getNoticeRecipients(notice: Notice, users: UserOption[]) {
@@ -50,7 +147,7 @@ function AcknowledgementReportModal({ notice, users, onClose }: { notice: Notice
   const acknowledged = recipients.filter((recipient) => notice?.acknowledgedBy.includes(recipient.id));
   const pending = recipients.filter((recipient) => !notice?.acknowledgedBy.includes(recipient.id));
   return <Modal isOpen={Boolean(notice)} onClose={onClose} title="Acknowledgement report" maxWidth="760px" footer={<Button variant="secondary" onClick={onClose}>Close</Button>}>
-    {notice && <div className="space-y-5"><div><h3 className="font-semibold text-slate-900">{notice.title}</h3><p className="mt-1 text-sm text-slate-500">{notice.recipientUserIds ? 'Recipient snapshot captured when this notice was published.' : 'This older notice uses the current eligible audience because no recipient snapshot was stored.'}</p></div><div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs font-medium uppercase text-slate-500">Recipients</p><p className="mt-1 text-2xl font-semibold text-slate-900">{recipients.length}</p></div><div className="rounded-xl bg-emerald-50 p-4"><p className="text-xs font-medium uppercase text-emerald-700">Acknowledged</p><p className="mt-1 text-2xl font-semibold text-emerald-800">{acknowledged.length}</p></div><div className="rounded-xl bg-amber-50 p-4"><p className="text-xs font-medium uppercase text-amber-700">Pending</p><p className="mt-1 text-2xl font-semibold text-amber-800">{pending.length}</p></div></div><div className="max-h-96 overflow-auto rounded-xl border border-slate-200"><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="px-4 py-3">User</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Status</th></tr></thead><tbody>{recipients.map((recipient) => { const hasAcknowledged = notice.acknowledgedBy.includes(recipient.id); return <tr key={recipient.id} className="border-t border-slate-100"><td className="px-4 py-3"><p className="font-medium text-slate-900">{recipient.name}</p>{!recipient.isActive && <p className="text-xs text-slate-500">Inactive account</p>}</td><td className="px-4 py-3 text-slate-600">{recipient.roleName}</td><td className="px-4 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${hasAcknowledged ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{hasAcknowledged ? 'Acknowledged' : 'Pending'}</span></td></tr>; })}</tbody></table>{recipients.length === 0 && <p className="p-6 text-center text-sm text-slate-500">No eligible recipients were captured for this notice.</p>}</div></div>}
+    {notice && <div className="space-y-5"><div><h3 className="font-semibold text-slate-900 min-w-0 max-w-full break-words [overflow-wrap:anywhere] [word-break:break-word] whitespace-normal notice-text-wrap" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'normal' }}>{notice.title}</h3><p className="mt-1 text-sm text-slate-500">{notice.recipientUserIds ? 'Recipient snapshot captured when this notice was published.' : 'This older notice uses the current eligible audience because no recipient snapshot was stored.'}</p></div><div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-slate-50 p-4"><p className="text-xs font-medium uppercase text-slate-500">Recipients</p><p className="mt-1 text-2xl font-semibold text-slate-900">{recipients.length}</p></div><div className="rounded-xl bg-emerald-50 p-4"><p className="text-xs font-medium uppercase text-emerald-700">Acknowledged</p><p className="mt-1 text-2xl font-semibold text-emerald-800">{acknowledged.length}</p></div><div className="rounded-xl bg-amber-50 p-4"><p className="text-xs font-medium uppercase text-amber-700">Pending</p><p className="mt-1 text-2xl font-semibold text-amber-800">{pending.length}</p></div></div><div className="max-h-96 overflow-auto rounded-xl border border-slate-200"><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="px-4 py-3">User</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Status</th></tr></thead><tbody>{recipients.map((recipient) => { const hasAcknowledged = notice.acknowledgedBy.includes(recipient.id); return <tr key={recipient.id} className="border-t border-slate-100"><td className="px-4 py-3"><p className="font-medium text-slate-900">{recipient.name}</p>{!recipient.isActive && <p className="text-xs text-slate-500">Inactive account</p>}</td><td className="px-4 py-3 text-slate-600">{recipient.roleName}</td><td className="px-4 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${hasAcknowledged ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{hasAcknowledged ? 'Acknowledged' : 'Pending'}</span></td></tr>; })}</tbody></table>{recipients.length === 0 && <p className="p-6 text-center text-sm text-slate-500">No eligible recipients were captured for this notice.</p>}</div></div>}
   </Modal>;
 }
 

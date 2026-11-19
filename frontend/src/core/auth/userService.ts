@@ -33,10 +33,23 @@ let usersStore: User[] = mockUsers.map((user) => {
   };
 });
 
+function countBillableUsers(tenantId: string, rows: readonly User[]): number {
+  const entitlements = tenantEntitlementService.get(tenantId);
+  const includeAdmin = entitlements?.limits.includeAdminInUserLimit ?? false;
+  const adminEmail = entitlements?.admin.email?.toLowerCase();
+
+  return rows.filter((user) => {
+    if (user.tenantId !== tenantId || user.isSuperAdmin || user.status === 'inactive') return false;
+    if (includeAdmin) return true;
+    const isTargetAdmin = Boolean(adminEmail && user.email.toLowerCase() === adminEmail);
+    return !isTargetAdmin;
+  }).length;
+}
+
 function synchronizeUserUsage(rows: readonly User[]) {
   const tenantIds = new Set(rows.filter((user) => !user.isSuperAdmin).map((user) => user.tenantId));
   for (const tenantId of tenantIds) {
-    const currentUsers = rows.filter((user) => user.tenantId === tenantId && !user.isSuperAdmin).length;
+    const currentUsers = countBillableUsers(tenantId, rows);
     tenantEntitlementService.updateUsage(tenantId, { currentUsers });
   }
 }
@@ -102,7 +115,7 @@ async function validateAccessAssignment(tenantId: string, roleId: string, branch
 export const userService = {
   async getUserCount(tenantId: string): Promise<number> {
     await new Promise((resolve) => setTimeout(resolve, 100));
-    return usersStore.filter((user) => user.tenantId === tenantId && !user.isSuperAdmin).length;
+    return countBillableUsers(tenantId, usersStore);
   },
 
   async getUsers(tenantId: string, params: GetUsersParams = {}): Promise<PaginatedUsersResult> {
@@ -143,8 +156,9 @@ export const userService = {
     const role = await validateAccessAssignment(tenantId, data.roleId, data.branchIds, data.defaultBranchId);
     const entitlements = tenantEntitlementService.get(tenantId);
     const currentUsers = usersStore.filter((user) => user.tenantId === tenantId && !user.isSuperAdmin).length;
+
     if (entitlements && currentUsers >= entitlements.limits.maxUsers) {
-      throw new Error(`User limit reached (${currentUsers} / ${entitlements.limits.maxUsers}). Contact Quick Solutions to change the company limit.`);
+      throw new Error(`User limit reached (${currentUsers} / ${entitlements.limits.maxUsers}). Contact Quick Solutions Super Admin to increase your user limit.`);
     }
     if (usersStore.some((user) => user.tenantId === tenantId && user.email.toLowerCase() === data.email.toLowerCase())) {
       throw new Error('A user with this email already exists.');
@@ -154,7 +168,7 @@ export const userService = {
     const slug = toUniqueUrlSlug(data.name, usersStore.filter((candidate) => candidate.tenantId === tenantId).map((candidate) => candidate.slug));
     const user: User = { ...data, ...name, slug, roleName: role.name, id: `usr-${crypto.randomUUID().slice(0, 8)}`, tenantId, branchIds: [...data.branchIds], allowedBranchIds: [...data.branchIds], createdAt: now, updatedAt: now };
     usersStore = [user, ...usersStore];
-    tenantEntitlementService.updateUsage(tenantId, { currentUsers: currentUsers + 1 });
+    synchronizeUserUsage(usersStore);
     return cloneUser(user);
   },
 
@@ -166,12 +180,20 @@ export const userService = {
       throw new Error('A user with this email already exists.');
     }
     const existing = usersStore[index];
+    if (existing.status === 'inactive' && data.status === 'active') {
+      const entitlements = tenantEntitlementService.get(tenantId);
+      const countedUsers = countBillableUsers(tenantId, usersStore);
+      if (entitlements && countedUsers >= entitlements.limits.maxUsers) {
+        throw new Error(`User limit reached (${countedUsers} / ${entitlements.limits.maxUsers}). Contact Quick Solutions Super Admin to increase your user limit.`);
+      }
+    }
     const name = data.name ? splitName(data.name) : { firstName: existing.firstName, lastName: existing.lastName };
     const branchIds = data.branchIds ? [...data.branchIds] : existing.branchIds;
     const candidate: User = { ...existing, ...data, ...name, slug: existing.slug, tenantId, branchIds, allowedBranchIds: [...branchIds], updatedAt: new Date().toISOString() };
     const role = await validateAccessAssignment(tenantId, candidate.roleId, candidate.branchIds, candidate.defaultBranchId);
     const updated: User = { ...candidate, roleName: role.name };
     usersStore[index] = updated;
+    synchronizeUserUsage(usersStore);
     return cloneUser(updated);
   },
 
@@ -180,7 +202,7 @@ export const userService = {
     const user = usersStore.find((item) => item.tenantId === tenantId && item.id === id && !item.isSuperAdmin);
     if (!user) throw new Error('User not found.');
     usersStore = usersStore.filter((item) => !(item.tenantId === tenantId && item.id === id));
-    tenantEntitlementService.updateUsage(tenantId, { currentUsers: usersStore.filter((item) => item.tenantId === tenantId && !item.isSuperAdmin).length });
+    synchronizeUserUsage(usersStore);
   },
 
   getAssignedRoleCount(tenantId: string, roleId: string): number {

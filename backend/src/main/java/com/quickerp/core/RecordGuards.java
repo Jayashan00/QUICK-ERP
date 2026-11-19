@@ -11,6 +11,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.function.Function;
 
 /**
  * Business rules the server enforces on records saved by the browser, independent
@@ -28,6 +29,10 @@ public final class RecordGuards {
     public static final String UOMS = "products.uoms";
     public static final String FLASH_SALES = "sales.flashSales";
     public static final String PURCHASE_REQUESTS = "purchases.requests";
+    public static final String TRANSFERS = "inventory.transfers";
+    public static final String BRANCHES = "core.branches";
+    public static final String WAREHOUSES = "inventory.warehouses";
+    public static final String LOCATIONS = "inventory.locations";
 
     private static final Map<String, Set<String>> JOURNAL_TRANSITIONS = Map.of(
             "draft", Set.of("pending_approval"),
@@ -468,6 +473,16 @@ public final class RecordGuards {
      */
     public static void checkRole(Permissions actor, String actorRoleId, String tenantId, String roleId,
                                  JsonNode stored, JsonNode incoming) {
+        checkRole(actor, actorRoleId, tenantId, roleId, stored, incoming, null);
+    }
+
+    /**
+     * Checks a role change by a tenant user. A caller cannot grant permissions they
+     * do not hold, cannot change a role more powerful than their own, cannot
+     * change their own role, and cannot assign permissions for modules disabled by Super Admin.
+     */
+    public static void checkRole(Permissions actor, String actorRoleId, String tenantId, String roleId,
+                                 JsonNode stored, JsonNode incoming, Set<String> enabledModules) {
         if (roleId.equals(actorRoleId) && !actor.isAll()) {
             throw ApiException.forbidden("You cannot change the role you are signed in with.");
         }
@@ -490,9 +505,141 @@ public final class RecordGuards {
             if (!"role-001".equals(roleId) && permission.startsWith("audit.")) {
                 throw ApiException.forbidden("Audit log access is reserved for the company tenant administrator.");
             }
+            if (enabledModules != null && !TenantEntitlementPolicy.isPermissionEnabled(permission, enabledModules)) {
+                throw ApiException.forbidden("Permission '" + permission + "' belongs to a module that is not enabled for this company.");
+            }
         }
         if (!actor.covers(permissions)) {
             throw ApiException.forbidden("You cannot give a role permissions that you do not have yourself.");
+        }
+    }
+
+    /**
+     * Enforces source & destination difference, tenant scoping, source branch authorization,
+     * and database record integrity for stock transfers.
+     */
+    public static void checkStockTransfer(Permissions permissions,
+                                          Principal principal,
+                                          Set<String> allowedBranches,
+                                          String tenantId,
+                                          JsonNode stored,
+                                          JsonNode incoming,
+                                          Function<String, JsonNode> branchLookup,
+                                          Function<String, JsonNode> warehouseLookup,
+                                          Function<String, JsonNode> locationLookup) {
+        if (incoming == null) {
+            if (stored != null && !"draft".equals(Sql.text(stored, "status"))) {
+                throw ApiException.forbidden("Only draft stock transfers can be deleted.");
+            }
+            return;
+        }
+        if (!incoming.isObject()) throw ApiException.badRequest("A stock transfer must be an object.");
+
+        String recordTenant = Sql.text(incoming, "tenantId");
+        if (recordTenant == null || !recordTenant.equals(tenantId)) {
+            throw ApiException.forbidden("The stock transfer belongs to another organization.");
+        }
+
+        String sourceBranchId = Sql.text(incoming, "sourceBranchId");
+        String sourceWarehouseId = Sql.text(incoming, "sourceWarehouseId");
+        String sourceLocationId = Sql.text(incoming, "sourceLocationId");
+        String destinationBranchId = Sql.text(incoming, "destinationBranchId");
+        String destinationWarehouseId = Sql.text(incoming, "destinationWarehouseId");
+        String destinationLocationId = Sql.text(incoming, "destinationLocationId");
+
+        if (sourceBranchId == null || sourceBranchId.isBlank()
+                || sourceWarehouseId == null || sourceWarehouseId.isBlank()
+                || sourceLocationId == null || sourceLocationId.isBlank()
+                || destinationBranchId == null || destinationBranchId.isBlank()
+                || destinationWarehouseId == null || destinationWarehouseId.isBlank()
+                || destinationLocationId == null || destinationLocationId.isBlank()) {
+            throw ApiException.badRequest("Source and destination branch, warehouse, and location are required.");
+        }
+
+        // 1. Difference rules
+        if (sourceBranchId.equals(destinationBranchId)) {
+            throw ApiException.validation("destinationBranchId", "Source and destination branches must be different.");
+        }
+        if (sourceWarehouseId.equals(destinationWarehouseId)) {
+            throw ApiException.validation("destinationWarehouseId", "Source and destination warehouses must be different.");
+        }
+        if (sourceLocationId.equals(destinationLocationId)) {
+            throw ApiException.validation("destinationLocationId", "Source and destination locations must be different.");
+        }
+
+        // 2. User permission check
+        if (!principal.superAdmin() && !permissions.isAll()) {
+            if (!permissions.matchesAny(List.of("stock.transfer", "inventory.transfers.*", "inventory.transfers.create"))) {
+                throw ApiException.forbidden("You do not have permission to initiate stock transfers.");
+            }
+        }
+
+        // 3. User source branch assignment check (Destination branch is NOT restricted to assigned branches)
+        if (!principal.superAdmin() && allowedBranches != null && !allowedBranches.isEmpty()
+                && !allowedBranches.contains(sourceBranchId)) {
+            throw ApiException.forbidden("You are not authorized to transfer stock from the selected source branch.");
+        }
+
+        // 4. Validate source records against actual database records
+        JsonNode srcBranch = branchLookup.apply(sourceBranchId);
+        if (srcBranch == null || !srcBranch.path("isActive").asBoolean(true)) {
+            throw ApiException.badRequest("The selected source branch is invalid or inactive.");
+        }
+        if (!tenantId.equals(Sql.text(srcBranch, "tenantId"))) {
+            throw ApiException.forbidden("The source branch belongs to another organization.");
+        }
+
+        JsonNode srcWarehouse = warehouseLookup.apply(sourceWarehouseId);
+        if (srcWarehouse == null || !srcWarehouse.path("isActive").asBoolean(true)) {
+            throw ApiException.badRequest("The selected source warehouse is invalid or inactive.");
+        }
+        if (!tenantId.equals(Sql.text(srcWarehouse, "tenantId"))) {
+            throw ApiException.forbidden("The source warehouse belongs to another organization.");
+        }
+        if (!sourceBranchId.equals(Sql.text(srcWarehouse, "branchId"))) {
+            throw ApiException.badRequest("The source warehouse does not belong to the selected source branch.");
+        }
+
+        JsonNode srcLocation = locationLookup.apply(sourceLocationId);
+        if (srcLocation == null || !srcLocation.path("isActive").asBoolean(true)) {
+            throw ApiException.badRequest("The selected source location is invalid or inactive.");
+        }
+        if (!tenantId.equals(Sql.text(srcLocation, "tenantId"))) {
+            throw ApiException.forbidden("The source location belongs to another organization.");
+        }
+        if (!sourceWarehouseId.equals(Sql.text(srcLocation, "warehouseId"))) {
+            throw ApiException.badRequest("The source location does not belong to the selected source warehouse.");
+        }
+
+        // 5. Validate destination records against actual database records
+        JsonNode dstBranch = branchLookup.apply(destinationBranchId);
+        if (dstBranch == null || !dstBranch.path("isActive").asBoolean(true)) {
+            throw ApiException.badRequest("The selected destination branch is invalid or inactive.");
+        }
+        if (!tenantId.equals(Sql.text(dstBranch, "tenantId"))) {
+            throw ApiException.forbidden("The destination branch belongs to another organization.");
+        }
+
+        JsonNode dstWarehouse = warehouseLookup.apply(destinationWarehouseId);
+        if (dstWarehouse == null || !dstWarehouse.path("isActive").asBoolean(true)) {
+            throw ApiException.badRequest("The selected destination warehouse is invalid or inactive.");
+        }
+        if (!tenantId.equals(Sql.text(dstWarehouse, "tenantId"))) {
+            throw ApiException.forbidden("The destination warehouse belongs to another organization.");
+        }
+        if (!destinationBranchId.equals(Sql.text(dstWarehouse, "branchId"))) {
+            throw ApiException.badRequest("The destination warehouse does not belong to the selected destination branch.");
+        }
+
+        JsonNode dstLocation = locationLookup.apply(destinationLocationId);
+        if (dstLocation == null || !dstLocation.path("isActive").asBoolean(true)) {
+            throw ApiException.badRequest("The selected destination location is invalid or inactive.");
+        }
+        if (!tenantId.equals(Sql.text(dstLocation, "tenantId"))) {
+            throw ApiException.forbidden("The destination location belongs to another organization.");
+        }
+        if (!destinationWarehouseId.equals(Sql.text(dstLocation, "warehouseId"))) {
+            throw ApiException.badRequest("The destination location does not belong to the selected destination warehouse.");
         }
     }
 }

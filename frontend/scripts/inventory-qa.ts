@@ -470,6 +470,110 @@ const qaTransfer = await stockWorkflowService.createTransfer(
   },
   qaActor,
 );
+
+// Source & Destination validation: same branch rejected
+await assert.rejects(
+  stockWorkflowService.createTransfer(
+    mainScope,
+    ["branch-001"],
+    {
+      sourceBranchId: "branch-001",
+      sourceWarehouseId: "warehouse-hq-main",
+      sourceLocationId: "loc-hq-main",
+      destinationBranchId: "branch-001",
+      destinationWarehouseId: "warehouse-west-main",
+      destinationLocationId: "loc-west-main",
+      lines: [{ productId: "prod-002", quantity: 1, serialReferences: [] }],
+    },
+    qaActor,
+  ),
+  /Source and destination branches must be different/,
+);
+
+// Source & Destination validation: same warehouse rejected
+await assert.rejects(
+  stockWorkflowService.createTransfer(
+    mainScope,
+    ["branch-001"],
+    {
+      sourceBranchId: "branch-001",
+      sourceWarehouseId: "warehouse-hq-main",
+      sourceLocationId: "loc-hq-main",
+      destinationBranchId: "branch-002",
+      destinationWarehouseId: "warehouse-hq-main",
+      destinationLocationId: "loc-west-main",
+      lines: [{ productId: "prod-002", quantity: 1, serialReferences: [] }],
+    },
+    qaActor,
+  ),
+  /Source and destination warehouses must be different/,
+);
+
+// Source & Destination validation: same location rejected
+await assert.rejects(
+  stockWorkflowService.createTransfer(
+    mainScope,
+    ["branch-001"],
+    {
+      sourceBranchId: "branch-001",
+      sourceWarehouseId: "warehouse-hq-main",
+      sourceLocationId: "loc-hq-main",
+      destinationBranchId: "branch-002",
+      destinationWarehouseId: "warehouse-west-main",
+      destinationLocationId: "loc-hq-main",
+      lines: [{ productId: "prod-002", quantity: 1, serialReferences: [] }],
+    },
+    qaActor,
+  ),
+  /Source and destination locations must be different/,
+);
+
+// Unauthorized source branch rejected
+await assert.rejects(
+  stockWorkflowService.createTransfer(
+    { tenantId: "tenant-001", branchId: "branch-001" },
+    ["branch-001"],
+    {
+      sourceBranchId: "branch-002",
+      sourceWarehouseId: "warehouse-west-main",
+      sourceLocationId: "loc-west-main",
+      destinationBranchId: "branch-001",
+      destinationWarehouseId: "warehouse-hq-main",
+      destinationLocationId: "loc-hq-main",
+      lines: [{ productId: "prod-002", quantity: 1, serialReferences: [] }],
+    },
+    qaActor,
+  ),
+  /outside your permitted scope/,
+);
+
+// Cross-branch transfer allowed without user being assigned to destination branch
+const crossBranchTransfer = await stockWorkflowService.createTransfer(
+  { tenantId: "tenant-001", branchId: "branch-001" },
+  ["branch-001"], // User only has branch-001
+  {
+    sourceBranchId: "branch-001",
+    sourceWarehouseId: "warehouse-hq-main",
+    sourceLocationId: "loc-hq-main",
+    destinationBranchId: "branch-002", // Destination is branch-002
+    destinationWarehouseId: "warehouse-west-main",
+    destinationLocationId: "loc-west-main",
+    notes: "Cross branch from branch-001 only user",
+    lines: [{ productId: "prod-002", quantity: 1, serialReferences: [] }],
+  },
+  qaActor,
+);
+assert.equal(crossBranchTransfer.destinationBranchId, "branch-002");
+
+// Verify destination warehouse & location options load correctly without branch permission restrictions
+const destWhOptions = await warehouseService.options("tenant-001", undefined, "branch-002");
+assert(destWhOptions.some((w) => w.id === "warehouse-west-main"));
+assert(destWhOptions.every((w) => w.tenantId === "tenant-001" && w.branchId === "branch-002"));
+
+const destLocOptions = await stockLocationService.options("tenant-001", undefined, "warehouse-west-main");
+assert(destLocOptions.some((l) => l.id === "loc-west-main"));
+assert(destLocOptions.every((l) => l.tenantId === "tenant-001" && l.warehouseId === "warehouse-west-main"));
+
 for (const action of ["approve", "dispatch", "mark_in_transit", "receive", "complete"] as const)
   await stockWorkflowService.advanceTransfer(mainScope, mainBranches, qaTransfer.id, action, qaActor);
 const completedTransfer = inventoryStore.transfers().find((item) => item.id === qaTransfer.id);

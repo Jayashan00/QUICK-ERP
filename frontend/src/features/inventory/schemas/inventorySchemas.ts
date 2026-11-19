@@ -97,12 +97,27 @@ export const stockTransferSchema = z
     lines: workflowLinesSchema,
   })
   .superRefine((value, context) => {
-    if (value.sourceLocationId === value.destinationLocationId)
+    if (value.sourceBranchId && value.destinationBranchId && value.sourceBranchId === value.destinationBranchId) {
+      context.addIssue({
+        code: "custom",
+        path: ["destinationBranchId"],
+        message: "Source and destination branches must be different.",
+      });
+    }
+    if (value.sourceWarehouseId && value.destinationWarehouseId && value.sourceWarehouseId === value.destinationWarehouseId) {
+      context.addIssue({
+        code: "custom",
+        path: ["destinationWarehouseId"],
+        message: "Source and destination warehouses must be different.",
+      });
+    }
+    if (value.sourceLocationId && value.destinationLocationId && value.sourceLocationId === value.destinationLocationId) {
       context.addIssue({
         code: "custom",
         path: ["destinationLocationId"],
         message: "Source and destination locations must be different.",
       });
+    }
   });
 
 export const branchStockRequestSchema = z

@@ -56,18 +56,49 @@ public final class AccessRules {
         return roles(connection, tenantId).get(roleId);
     }
 
+    /** Returns the allowed ERP modules for the given tenant based on Super Admin entitlements. */
+    public java.util.Set<String> enabledModules(Connection connection, String tenantId) throws SQLException {
+        if (tenantId == null || Principal.PLATFORM_TENANT.equals(tenantId)) return TenantEntitlementPolicy.MODULES;
+        String sql = "SELECT profile FROM tenants WHERE id = ?";
+        try (PreparedStatement statement = Sql.prepare(connection, sql, tenantId);
+             ResultSet rows = statement.executeQuery()) {
+            if (rows.next()) {
+                JsonNode profile = Sql.readJson(mapper, rows.getString(1));
+                return TenantEntitlementPolicy.enabledModules(profile);
+            }
+        }
+        return TenantEntitlementPolicy.MODULES;
+    }
+
     /** Effective permissions of the caller. Super Admin users hold every permission in their platform scope. */
     public Permissions permissions(Connection connection, Principal principal) throws SQLException {
         if (principal.superAdmin()) return Permissions.everything();
         JsonNode role = role(connection, principal.tenantId(), principal.roleId());
         if (role == null) return Permissions.none();
         if (role.has("isActive") && !role.path("isActive").asBoolean(true)) return Permissions.none();
-        return Permissions.of(RecordGuards.rolePermissions(role));
+        java.util.Set<String> enabled = enabledModules(connection, principal.tenantId());
+        List<String> rawPermissions = RecordGuards.rolePermissions(role);
+        List<String> filteredPermissions = new java.util.ArrayList<>();
+        for (String perm : rawPermissions) {
+            if (TenantEntitlementPolicy.isPermissionEnabled(perm, enabled)) {
+                filteredPermissions.add(perm);
+            }
+        }
+        return Permissions.of(filteredPermissions);
     }
 
     public Permissions permissionsOfRole(Connection connection, String tenantId, String roleId) throws SQLException {
         JsonNode role = role(connection, tenantId, roleId);
-        return role == null ? Permissions.none() : Permissions.of(RecordGuards.rolePermissions(role));
+        if (role == null) return Permissions.none();
+        java.util.Set<String> enabled = enabledModules(connection, tenantId);
+        List<String> rawPermissions = RecordGuards.rolePermissions(role);
+        List<String> filteredPermissions = new java.util.ArrayList<>();
+        for (String perm : rawPermissions) {
+            if (TenantEntitlementPolicy.isPermissionEnabled(perm, enabled)) {
+                filteredPermissions.add(perm);
+            }
+        }
+        return Permissions.of(filteredPermissions);
     }
 
     /** Kept for existing callers: the permission strings of one role. */

@@ -11,6 +11,9 @@ import { syncService } from '@/features/sync/services/syncService';
 import { projectService } from '@/features/projects/projectService';
 import { documentService } from '@/features/documents/documentService';
 import { tenantSettingsService } from '@/features/settings/finance/services/tenantSettingsService';
+import { platformService } from '@/features/platform/services/platformService';
+import { convertPlatformCurrency } from '@/core/currency/platformCurrency';
+import { formatCurrency } from '@/shared/utils/formatters';
 import type { NotificationEventGroup } from '@/features/settings/finance/types/tenant-settings';
 import { mockNotifications, mockNotices } from '../mocks/notifications';
 import type { Notice, NoticeInput, NotificationFilters, NotificationListResult, NotificationRecord, NotificationScope, NotificationUserState } from '../types/notifications';
@@ -86,6 +89,35 @@ async function deriveOperational(scope: NotificationScope): Promise<Notification
   ]);
   const createdAt = now();
   const records: NotificationRecord[] = [];
+  if (isTenantAdministrator(scope)) {
+    const tenant = await platformService.getTenant(scope.tenantId);
+    const foundation = await platformService.getFoundation();
+    if (tenant?.revenue) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const renewal = new Date(`${tenant.revenue.renewalDate}T00:00:00`);
+      const daysRemaining = Math.ceil((renewal.getTime() - today.getTime()) / 86_400_000);
+      if (daysRemaining >= 0 && daysRemaining <= 7) {
+        const baseCurrency = foundation.settings.baseCurrency;
+        const converted = convertPlatformCurrency(tenant.revenue.amount, tenant.revenue.currency, baseCurrency);
+        records.push(operational({
+          id: `tenant-renewal-${tenant.id}-${tenant.revenue.renewalDate}`,
+          title: 'Company subscription renewal due soon',
+          message: `Your ${tenant.revenue.billingCycle} renewal is due on ${tenant.revenue.renewalDate}. Revenue: ${formatCurrency(converted, baseCurrency)}.`,
+          type: 'reminder',
+          priority: daysRemaining <= 3 ? 'urgent' : 'high',
+          module: 'system',
+          relatedEntity: 'tenant_subscription',
+          relatedRecordId: tenant.id,
+          reference: tenant.revenue.renewalDate,
+          actionLabel: 'View billing',
+          actionUrl: '/settings',
+          createdAt,
+          sourceKey: `tenant:renewal:${tenant.id}:${tenant.revenue.renewalDate}`,
+        }));
+      }
+    }
+  }
   balances.filter((item) => item.alertStatus !== 'healthy').slice(0, 8).forEach((item) => records.push(operational({
     id: `inventory-${item.id}-${item.alertStatus}`, branchId: item.branchId, title: item.alertStatus === 'out_of_stock' ? `${item.productName} is out of stock` : `${item.productName} requires reorder attention`, message: `${item.quantityAvailable} available at ${item.warehouseName} / ${item.locationName}; low stock level ${item.reorderLevel}.`, type: 'alert', priority: item.alertStatus === 'out_of_stock' ? 'urgent' : 'high', module: 'inventory', relatedEntity: 'stock_balance', relatedRecordId: item.id, reference: item.sku, actionLabel: 'View stock', actionUrl: `/inventory/stock/${item.productId}`, requiredPermission: 'inventory.view', createdAt, sourceKey: `inventory:${item.id}:${item.alertStatus}`,
   })));

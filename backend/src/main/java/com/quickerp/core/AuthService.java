@@ -34,11 +34,17 @@ public final class AuthService {
     private final AccessRules access;
     private final CoreSettings settings;
     private final MfaService mfa;
+    private final MaintenanceService maintenanceService;
     private final RateLimiter loginAttempts = new RateLimiter(20, 15 * 60_000L);
     private final String dummyHash;
 
     public AuthService(Db db, ObjectMapper mapper, PasswordHasher hasher, TokenService tokens, AccessRules access, CoreSettings settings,
                        MfaService mfa) {
+        this(db, mapper, hasher, tokens, access, settings, mfa, null);
+    }
+
+    public AuthService(Db db, ObjectMapper mapper, PasswordHasher hasher, TokenService tokens, AccessRules access, CoreSettings settings,
+                       MfaService mfa, MaintenanceService maintenanceService) {
         this.db = db;
         this.mapper = mapper;
         this.hasher = hasher;
@@ -46,6 +52,7 @@ public final class AuthService {
         this.access = access;
         this.settings = settings;
         this.mfa = mfa;
+        this.maintenanceService = maintenanceService;
         this.dummyHash = hasher.hash("quick-erp-timing-protection");
     }
 
@@ -81,6 +88,10 @@ public final class AuthService {
         }
         return db.tx(connection -> {
             UserRow user = findUser(connection, "WHERE lower(u.email) = ?", normalized);
+            if (maintenanceService != null && maintenanceService.isMaintenanceActive() && (user == null || !user.superAdmin())) {
+                MaintenanceService.MaintenanceConfig config = maintenanceService.getConfig();
+                throw ApiException.platformMaintenance(config.message(), config.startAt(), config.endAt());
+            }
             if (user == null || user.passwordHash() == null) {
                 hasher.matches(password, dummyHash);
                 throw ApiException.unauthorized("Invalid email or password.");
@@ -105,6 +116,9 @@ public final class AuthService {
                 throw ApiException.forbidden("This account is inactive. Contact your administrator.");
             }
             if (!"active".equals(user.tenantStatus())) {
+                if ("pending".equals(user.tenantStatus())) {
+                    throw ApiException.forbidden("Your organization is pending activation. Please complete invoice payment and await Super Admin activation.");
+                }
                 throw ApiException.forbidden("Your organization's account is not active. Contact Quick ERP support.");
             }
             Sql.update(connection, "UPDATE app_users SET failed_logins = 0, locked_until = NULL, last_login_at = now() WHERE id = ?", user.id());
@@ -123,6 +137,10 @@ public final class AuthService {
     public LoginResult verifyMfaLogin(String challenge, String code) {
         TokenService.Claims claims = tokens.verifyChallenge(challenge);
         if (claims == null) throw ApiException.unauthorized("The sign-in request has expired. Sign in again.");
+        if (maintenanceService != null && maintenanceService.isMaintenanceActive() && !claims.superAdmin()) {
+            MaintenanceService.MaintenanceConfig config = maintenanceService.getConfig();
+            throw ApiException.platformMaintenance(config.message(), config.startAt(), config.endAt());
+        }
         return db.tx(connection -> {
             UserRow user = findUser(connection, "WHERE u.id = ?", claims.userId());
             if (user == null || !"active".equals(user.status()) || !"active".equals(user.tenantStatus())
@@ -298,12 +316,21 @@ public final class AuthService {
 
     private JsonNode tenantView(UserRow user) {
         if (user.superAdmin() || Principal.PLATFORM_TENANT.equals(user.tenantId())) return null;
-        ObjectNode view = user.tenantProfile() != null && user.tenantProfile().isObject()
-                ? ((ObjectNode) user.tenantProfile()).deepCopy()
-                : mapper.createObjectNode();
+        // Start with an empty node — do NOT expose the entire raw profile to the client.
+        ObjectNode view = mapper.createObjectNode();
         view.put("id", user.tenantId());
         view.put("name", user.tenantName());
         view.put("status", user.tenantStatus());
+        // Forward the entitlements and subscription blocks so the frontend can enforce
+        // module access, subscription status and limits on the client side.
+        // The backend still validates all of these independently on every request.
+        JsonNode tenantProfile = user.tenantProfile();
+        if (tenantProfile != null && tenantProfile.isObject()) {
+            JsonNode entitlements = tenantProfile.path("entitlements");
+            if (entitlements.isObject()) view.set("entitlements", entitlements.deepCopy());
+            JsonNode subscription = tenantProfile.path("subscription");
+            if (subscription.isObject()) view.set("subscription", subscription.deepCopy());
+        }
         return view;
     }
 }

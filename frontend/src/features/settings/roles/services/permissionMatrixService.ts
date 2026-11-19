@@ -1,6 +1,6 @@
 import { TENANT_PERMISSIONS, assertPermissionsInScope, isPermissionInScope, resolveScopedPermissions } from '@/core/permissions';
 import { roleService } from '@/core/permissions/roleService';
-import { tenantEntitlementService, isPermissionEnabled } from '@/core/tenant/tenantEntitlements';
+import { type TenantModule, tenantEntitlementService, isPermissionEnabled } from '@/core/tenant/tenantEntitlements';
 
 export type MatrixAction = string;
 export interface PermissionMatrixRow { id: string; label: string; permissions: Partial<Record<MatrixAction, string>> }
@@ -57,36 +57,35 @@ const matrixManagedPermissions = new Set(
 );
 
 export const permissionMatrixService = {
-  async getCatalog(tenantId: string): Promise<PermissionMatrixGroup[]> {
+  async getCatalog(tenantId: string, enabledModulesOverride?: readonly TenantModule[]): Promise<PermissionMatrixGroup[]> {
     await new Promise((resolve) => setTimeout(resolve, 120));
-    const enabled = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
+    const enabled = enabledModulesOverride ?? tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
     return tenantCatalog.map((group) => ({
       ...group,
       permissions: group.permissions.filter((permission) => isPermissionEnabled(permission, enabled)),
       rows: group.rows.map((row) => ({ ...row, permissions: Object.fromEntries(Object.entries(row.permissions).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && isPermissionEnabled(entry[1], enabled))) })).filter((row) => Object.keys(row.permissions).length > 0),
     })).filter((group) => group.permissions.length > 0);
   },
-  async getRolePermissions(tenantId: string, roleId: string): Promise<string[]> {
+  async getRolePermissions(tenantId: string, roleId: string, enabledModulesOverride?: readonly TenantModule[]): Promise<string[]> {
     if (tenantId === 'platform') throw new Error('The tenant Permission Matrix cannot manage platform roles.');
     const role = await roleService.getRoleById(tenantId, roleId);
     if (!role || role.scope !== 'tenant') throw new Error('Tenant role not found.');
+    const enabled = enabledModulesOverride ?? tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
     if (role.permissions.includes('*')) {
-      const enabled = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
       return tenantCatalog.flatMap((group) => group.permissions).filter((permission) => isPermissionEnabled(permission, enabled));
     }
-    const enabled = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
     return resolveScopedPermissions(role.permissions, 'tenant').filter((permission) => !permission.startsWith('audit.') && isPermissionEnabled(permission, enabled));
   },
-  async saveRolePermissions(tenantId: string, roleId: string, permissions: string[]) {
+  async saveRolePermissions(tenantId: string, roleId: string, permissions: string[], enabledModulesOverride?: readonly TenantModule[]) {
     if (tenantId === 'platform') throw new Error('The tenant Permission Matrix cannot manage platform roles.');
     const role = await roleService.getRoleById(tenantId, roleId); if (!role || role.scope !== 'tenant') throw new Error('Tenant role not found.');
     if (roleId !== 'role-001' && permissions.some((permission) => permission.startsWith('audit.'))) {
       throw new Error('Audit log access is reserved for the company tenant administrator.');
     }
     assertPermissionsInScope(permissions, 'tenant');
-    const enabled = tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
+    const enabled = enabledModulesOverride ?? tenantEntitlementService.get(tenantId)?.enabledModules ?? [];
     if (permissions.some((permission) => !isPermissionEnabled(permission, enabled))) {
-      throw new Error('A tenant role cannot receive permissions for a module disabled by Quick Solutions.');
+      throw new Error('A tenant role cannot receive permissions for a module disabled by Quick Solutions (Super Admin).');
     }
     const preserved = role.permissions.filter((permission) => {
       const parts = permission.split('.');

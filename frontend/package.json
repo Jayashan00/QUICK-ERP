@@ -32,11 +32,13 @@
     "qa:module-dashboards": "node scripts/run-module-dashboards-qa.mjs",
     "qa:auth": "node scripts/run-auth-qa.mjs",
     "qa:tenant-access": "node scripts/run-tenant-access-qa.mjs",
+    "qa:role-permissions": "node scripts/run-role-permissions-qa.mjs",
     "qa:tenant-routing": "node scripts/run-tenant-routing-qa.mjs",
     "qa:search": "node scripts/run-global-search-qa.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
     "qa:api": "node scripts/run-api-qa.mjs",
+    "qa:maintenance": "node scripts/run-maintenance-qa.mjs",
     "qa:all": "node scripts/run-all-qa.mjs",
     "seed:export": "node scripts/run-seed-export.mjs",
     "qa:backend": "node scripts/run-backend-e2e-qa.mjs"

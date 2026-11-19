@@ -210,6 +210,11 @@ class PersistenceBridge {
     const known = new Set(data.collections);
     const seeding: string[] = [];
     for (const accessor of getStateAccessors()) {
+      // Platform collections (platform.*) belong strictly to Super Admin ("platform" scope).
+      // Tenant accounts (tenant admin, managers, staff) must never seed or persist platform collections.
+      if (scopeId !== 'platform' && accessor.key.startsWith('platform.')) {
+        continue;
+      }
       this.loadedKeys.add(accessor.key);
       const stored = grouped.get(accessor.key);
       if (known.has(accessor.key) || stored) {
@@ -490,6 +495,17 @@ class PersistenceBridge {
   }
 
   private handleError(error: unknown) {
+    if (error instanceof ApiError && error.isMaintenance && this.mode === 'tenant') {
+      import('@/core/maintenance/maintenanceState').then(({ triggerMaintenance }) => {
+        triggerMaintenance({
+          message: error.message,
+          startAt: error.startAt,
+          endAt: error.endAt,
+        });
+      }).catch(() => undefined);
+      this.setStatus('offline');
+      return;
+    }
     if (error instanceof ApiError && error.status === 401 && this.mode === 'tenant') {
       this.unauthorizedHandler?.();
       return;
