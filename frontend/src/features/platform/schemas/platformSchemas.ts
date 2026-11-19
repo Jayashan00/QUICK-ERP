@@ -10,7 +10,11 @@ export const tenantConfigurationSchema = z.object({
   enabledModules: z.array(z.enum(TENANT_MODULES)).min(1, 'Enable at least one module.'),
   maxUsers: formNumber, maxBranches: formNumber,
   maxWarehouses: z.number().int().positive().optional(), maxStorageGb: z.number().positive().optional(),
+  revenueAmount: z.number().nonnegative('Enter a valid revenue amount.'),
+  revenueCurrency: z.enum(['USD', 'LKR']),
+  billingCycle: z.enum(['monthly', 'yearly']),
+  renewalDate: z.string().min(10, 'Select a renewal date.'),
 });
 export const platformUserSchema = z.object({ name: z.string().trim().min(2), email: z.email(), role: z.enum(['Platform Administrator', 'Operations', 'Support', 'Auditor']), permissions: z.string().min(1), status: z.enum(['active', 'inactive']) });
-export const platformSettingsSchema = z.object({ displayName: z.string().trim().min(2), supportEmail: z.email(), domain: z.string().trim().min(3) });
+export const platformSettingsSchema = z.object({ displayName: z.string().trim().min(2), supportEmail: z.email(), domain: z.string().trim().min(3), baseCurrency: z.enum(['USD', 'LKR']) });
 export const maintenanceSchema = z.object({ message: z.string().trim().min(10), startAt: z.string().optional(), endAt: z.string().optional() });

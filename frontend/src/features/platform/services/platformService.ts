@@ -20,11 +20,19 @@ function normalizeStore() {
     tenant.limits = tenant.limits ?? existing?.limits ?? { maxUsers: oldLimits?.maxUsers ?? Math.max(old.userCount ?? 1, 10), maxBranches: oldLimits?.maxBranches ?? Math.max(old.branchCount ?? 1, 2), maxStorageGb: oldLimits?.maxStorageGb };
     tenant.usage = tenant.usage ?? existing?.usage ?? { currentUsers: old.userCount ?? 1, currentBranches: old.branchCount ?? 1, storageGb: old.storageGb };
     tenant.admin = tenant.admin ?? existing?.admin ?? { name: tenant.contactName, email: tenant.ownerEmail, status: 'active' };
+    const oldTenant = tenant as typeof tenant & { revenueAmount?: number; revenueCurrency?: 'USD' | 'LKR'; billingCycle?: 'monthly' | 'yearly'; renewalDate?: string };
+    tenant.revenue = tenant.revenue ?? {
+      amount: oldTenant.revenueAmount ?? 0,
+      currency: oldTenant.revenueCurrency ?? 'USD',
+      billingCycle: oldTenant.billingCycle ?? 'monthly',
+      renewalDate: oldTenant.renewalDate ?? new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10),
+    };
     tenantEntitlementService.set(tenant.id, { enabledModules: tenant.enabledModules, limits: tenant.limits, usage: tenant.usage, admin: tenant.admin });
     delete old.planId; delete old.userCount; delete old.branchCount; delete old.storageGb;
   }
   delete legacy.plans; delete legacy.subscriptions; delete legacy.flags;
-  const oldSettings = store.settings as PlatformSettings & { currency?: string; defaultTrialDays?: number };
+  const oldSettings = store.settings as PlatformSettings & { currency?: 'USD' | 'LKR'; defaultTrialDays?: number };
+  store.settings.baseCurrency = store.settings.baseCurrency ?? oldSettings.currency ?? 'USD';
   delete oldSettings.currency; delete oldSettings.defaultTrialDays;
 }
 function audit(action: string, entityId: string, reference: string, description: string) {
@@ -39,7 +47,7 @@ export const platformService = {
     if (store.tenants.some((row) => row.subdomain === input.subdomain)) throw new Error('Subdomain is already in use.');
     const now = new Date().toISOString();
     const configuration = { enabledModules: ['settings'] as TenantModule[], limits: { maxUsers: 10, maxBranches: 2 }, usage: { currentUsers: 1, currentBranches: 1 }, admin: { name: input.adminName, email: input.adminEmail, status: 'invited' as const } };
-    const tenant = { id: id('tenant'), name: input.name, subdomain: input.subdomain, ownerEmail: input.ownerEmail, contactName: input.contactName, country: input.country, status: 'active' as const, enabledModules: [...configuration.enabledModules], limits: configuration.limits, usage: configuration.usage, admin: configuration.admin, createdAt: now, updatedAt: now, lastActivityAt: now };
+    const tenant = { id: id('tenant'), name: input.name, subdomain: input.subdomain, ownerEmail: input.ownerEmail, contactName: input.contactName, country: input.country, status: 'active' as const, enabledModules: [...configuration.enabledModules], limits: configuration.limits, usage: configuration.usage, admin: configuration.admin, revenue: { amount: 0, currency: store.settings.baseCurrency, billingCycle: 'monthly' as const, renewalDate: new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10) }, createdAt: now, updatedAt: now, lastActivityAt: now };
     store.tenants.unshift(tenant);
     tenantEntitlementService.set(tenant.id, configuration);
     audit('Tenant created', tenant.id, tenant.name, 'Company created with direct module access and resource limits.');
@@ -58,6 +66,7 @@ export const platformService = {
     const enabledModules = expandModuleDependencies(input.enabledModules);
     tenant.enabledModules = enabledModules;
     tenant.limits = { maxUsers: Number(input.maxUsers), maxBranches: Number(input.maxBranches), maxWarehouses: input.maxWarehouses ? Number(input.maxWarehouses) : undefined, maxStorageGb: input.maxStorageGb ? Number(input.maxStorageGb) : undefined };
+    tenant.revenue = { amount: Number(input.revenueAmount), currency: input.revenueCurrency, billingCycle: input.billingCycle, renewalDate: input.renewalDate };
     tenant.updatedAt = new Date().toISOString();
     tenantEntitlementService.set(tenant.id, { enabledModules, limits: tenant.limits, usage: tenant.usage, admin: tenant.admin });
     audit('Tenant configuration changed', tenant.id, tenant.name, 'Enabled modules and resource limits updated without deleting tenant data.'); return structuredClone(tenant);

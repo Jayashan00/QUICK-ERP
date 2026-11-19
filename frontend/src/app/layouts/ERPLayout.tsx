@@ -53,7 +53,7 @@ export function ERPLayout() {
     <AppShell navigationSections={ERP_NAVIGATION_SECTIONS} area="tenant">
       <Breadcrumbs />
       <Outlet />
-      <AiAssistantDrawer />
+      {currentTenant.entitlements.enabledModules.includes('chatbot') && <AiAssistantDrawer />}
     </AppShell>
   );
 }

@@ -18,8 +18,11 @@ import { LoadingSpinner } from '@/shared/components/feedback/LoadingSpinner';
 import { ConfirmDialog } from '@/shared/components/feedback/ConfirmDialog';
 import { TextInput } from '@/shared/components/forms/TextInput';
 import { FormField } from '@/shared/components/forms/FormField';
+import { Select } from '@/shared/components/forms/Select';
 import { Modal } from '@/shared/components/common/Modal';
 import { appToast } from '@/shared/utils/toast';
+import { convertPlatformCurrency } from '@/core/currency/platformCurrency';
+import { formatCurrency } from '@/shared/utils/formatters';
 
 const usageBar = (used: number, limit: number) => `${Math.min(100, Math.round((used / Math.max(limit, 1)) * 100))}%`;
 
@@ -28,14 +31,18 @@ export function TenantDetailPage() {
   const tenant = query.data?.tenants.find((item) => item.id === tenantId);
   const [pendingModules, setPendingModules] = useState<TenantModule[]>([]); const [statusConfirm, setStatusConfirm] = useState(false); const [resetConfirm, setResetConfirm] = useState(false); const [disableConfirm, setDisableConfirm] = useState<TenantModule | null>(null);
   const [editingCompany, setEditingCompany] = useState(false);
-  const form = useForm<TenantConfigurationInput>({ resolver: zodResolver(tenantConfigurationSchema), defaultValues: { enabledModules: [], maxUsers: 10, maxBranches: 2 } });
+  const form = useForm<TenantConfigurationInput>({ resolver: zodResolver(tenantConfigurationSchema), defaultValues: { enabledModules: [], maxUsers: 10, maxBranches: 2, revenueAmount: 0, revenueCurrency: 'USD', billingCycle: 'monthly', renewalDate: '' } });
   const editForm = useForm<PlatformTenantInput>({ resolver: zodResolver(platformTenantSchema), defaultValues: { name: '', subdomain: '', ownerEmail: '', contactName: '', country: '', adminName: '', adminEmail: '' } });
-  useEffect(() => { if (tenant) { setPendingModules(tenant.enabledModules); form.reset({ enabledModules: tenant.enabledModules, maxUsers: tenant.limits.maxUsers, maxBranches: tenant.limits.maxBranches, maxWarehouses: tenant.limits.maxWarehouses, maxStorageGb: tenant.limits.maxStorageGb }); } }, [form, tenant]);
+  useEffect(() => { if (tenant) { setPendingModules(tenant.enabledModules); form.reset({ enabledModules: tenant.enabledModules, maxUsers: tenant.limits.maxUsers, maxBranches: tenant.limits.maxBranches, maxWarehouses: tenant.limits.maxWarehouses, maxStorageGb: tenant.limits.maxStorageGb, revenueAmount: tenant.revenue.amount, revenueCurrency: tenant.revenue.currency, billingCycle: tenant.revenue.billingCycle, renewalDate: tenant.revenue.renewalDate }); } }, [form, tenant]);
   const configure = usePlatformMutation((input: TenantConfigurationInput) => platformService.configureTenant(tenantId, input));
   const status = usePlatformMutation(() => platformService.setTenantStatus(tenantId, tenant?.status === 'suspended' ? 'active' : 'suspended'));
   const resetAdmin = usePlatformMutation(() => platformService.resetTenantAdmin(tenantId));
   const updateCompany = usePlatformMutation((input: PlatformTenantInput) => platformService.updateTenant(tenantId, input));
   const grouped = useMemo(() => TENANT_MODULE_CATALOG.reduce<Record<string, typeof TENANT_MODULE_CATALOG>>((groups, module) => { (groups[module.group] ??= []).push(module); return groups; }, {}), []);
+  const baseCurrency = query.data?.settings.baseCurrency ?? 'USD';
+  const revenueAmount = form.watch('revenueAmount') ?? 0;
+  const revenueCurrency = form.watch('revenueCurrency') ?? 'USD';
+  const convertedRevenue = convertPlatformCurrency(revenueAmount, revenueCurrency, baseCurrency);
   if (query.isLoading) return <div className="flex h-64 items-center justify-center"><LoadingSpinner /></div>;
   if (!tenant) return <PageContainer><ErrorState title="Company not found" message="This tenant does not exist or is outside your platform access." onRetry={() => navigate('/super-admin/tenants')} /></PageContainer>;
   const toggleModule = (module: TenantModule) => {
@@ -55,6 +62,36 @@ export function TenantDetailPage() {
       <Card><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 font-semibold"><Settings2 size={18} />Module access</h2><p className="mt-1 text-sm text-slate-500">Disabled modules are hidden from navigation, blocked at routes, and removed from tenant role permissions. Data is retained.</p></div><div className="flex gap-2"><Button type="button" size="sm" variant="secondary" onClick={() => { const all = [...TENANT_MODULE_CATALOG.map((item) => item.id)]; setPendingModules(all); form.setValue('enabledModules', all, { shouldDirty: true }); }}>Select All</Button><Button type="button" size="sm" variant="ghost" onClick={() => { setPendingModules(['settings']); form.setValue('enabledModules', ['settings'], { shouldDirty: true }); }}>Clear Optional</Button></div></div>
         <div className="mt-5 space-y-5">{Object.entries(grouped).map(([group, modules]) => <section key={group}><h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{group}</h3><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{modules.map((module) => { const checked = pendingModules.includes(module.id); return <label key={module.id} className={`flex cursor-pointer gap-3 rounded-xl border p-4 ${checked ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'}`}><input type="checkbox" checked={checked} disabled={module.id === 'settings'} onChange={() => toggleModule(module.id)} /><span><span className="block text-sm font-semibold text-slate-900">{module.label}</span><span className="mt-1 block text-xs text-slate-500">{module.description}</span>{module.dependencies?.length ? <span className="mt-1 block text-[11px] text-blue-700">Requires: {module.dependencies.join(', ')}</span> : null}</span></label>; })}</div></section>)}</div>
       </Card>
+      <Card>
+        <h2 className="font-semibold">Revenue and billing</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Renewal revenue is recorded in the tenant currency and shown in the platform base currency.
+        </p>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <FormField label="Revenue amount" error={form.formState.errors.revenueAmount?.message}>
+            <TextInput type="number" min={0} step="0.01" {...form.register('revenueAmount', { valueAsNumber: true })} />
+          </FormField>
+          <FormField label="Revenue currency" error={form.formState.errors.revenueCurrency?.message}>
+            <Select {...form.register('revenueCurrency')} options={[{ value: 'USD', label: 'USD' }, { value: 'LKR', label: 'LKR' }]} />
+          </FormField>
+          <FormField label="Billing cycle" error={form.formState.errors.billingCycle?.message}>
+            <Select {...form.register('billingCycle')} options={[{ value: 'monthly', label: 'Monthly' }, { value: 'yearly', label: 'Yearly' }]} />
+          </FormField>
+          <FormField label="Renewal date" error={form.formState.errors.renewalDate?.message}>
+            <TextInput type="date" {...form.register('renewalDate')} />
+          </FormField>
+        </div>
+        <div className="mt-4 rounded-lg bg-slate-50 px-4 py-3 text-sm">
+          <span className="text-slate-500">Base currency revenue: </span>
+          <strong>{formatCurrency(convertedRevenue, baseCurrency)}</strong>
+        </div>
+        {isRenewalWithinSevenDays(tenant.revenue.renewalDate) && (
+          <div className="mt-3 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span>Renewal is due within 7 days on {tenant.revenue.renewalDate}.</span>
+            <StatusBadge status="warning" label="Renewal reminder" />
+          </div>
+        )}
+      </Card>
       <Card><h2 className="font-semibold">Tenant limits</h2><p className="mt-1 text-sm text-slate-500">Limits cannot be set below current usage.</p><div className="mt-5 grid gap-5 md:grid-cols-2"><Usage label="Users" used={tenant.usage.currentUsers} limit={tenant.limits.maxUsers} /><Usage label="Branches" used={tenant.usage.currentBranches} limit={tenant.limits.maxBranches} /></div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><FormField label="Maximum users" error={form.formState.errors.maxUsers?.message}><TextInput type="number" min={tenant.usage.currentUsers} {...form.register('maxUsers', { valueAsNumber: true })} /></FormField><FormField label="Maximum branches" error={form.formState.errors.maxBranches?.message}><TextInput type="number" min={tenant.usage.currentBranches} {...form.register('maxBranches', { valueAsNumber: true })} /></FormField><FormField label="Maximum warehouses (optional)" error={form.formState.errors.maxWarehouses?.message}><TextInput type="number" min={1} {...form.register('maxWarehouses', { setValueAs: (value) => value === '' ? undefined : Number(value) })} /></FormField><FormField label="Storage GB (optional)" error={form.formState.errors.maxStorageGb?.message}><TextInput type="number" min={1} {...form.register('maxStorageGb', { setValueAs: (value) => value === '' ? undefined : Number(value) })} /></FormField></div></Card>
       <div className="flex justify-end"><Button type="submit" leftIcon={<Save size={16} />} isLoading={configure.isPending}>Save Tenant Configuration</Button></div>
     </form>
@@ -66,3 +103,11 @@ export function TenantDetailPage() {
 }
 
 function Usage({ label, used, limit }: { label: string; used: number; limit: number }) { return <div><div className="flex justify-between text-sm"><span>{label}</span><strong>{used} / {limit}</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-blue-600" style={{ width: usageBar(used, limit) }} /></div></div>; }
+
+function isRenewalWithinSevenDays(renewalDate: string): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const renewal = new Date(`${renewalDate}T00:00:00`);
+  const days = Math.ceil((renewal.getTime() - today.getTime()) / 86_400_000);
+  return days >= 0 && days <= 7;
+}

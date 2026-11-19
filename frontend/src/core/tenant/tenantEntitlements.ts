@@ -1,7 +1,7 @@
 export const TENANT_MODULES = [
   'hr', 'inventory', 'stock', 'crm', 'customers', 'suppliers', 'products', 'sales',
   'purchases', 'finance', 'projects', 'pos', 'web_store', 'reports', 'documents',
-  'notifications', 'settings',
+  'notifications', 'chatbot', 'settings',
 ] as const;
 
 export type TenantModule = (typeof TENANT_MODULES)[number];
@@ -59,6 +59,7 @@ export const TENANT_MODULE_CATALOG: TenantModuleDefinition[] = [
   { id: 'reports', label: 'Reports', group: 'Workspace', description: 'Operational and analytical reporting.' },
   { id: 'documents', label: 'Documents', group: 'Workspace', description: 'Company documents and attachments.' },
   { id: 'notifications', label: 'Notifications', group: 'Workspace', description: 'Role-aware notifications, notices and delivery preferences.' },
+  { id: 'chatbot', label: 'AI Chatbot', group: 'Workspace', description: 'AI assistant access and conversational ERP help.' },
   { id: 'settings', label: 'Settings', group: 'Workspace', description: 'Tenant users, roles, branches and company settings.' },
 ];
 
@@ -84,6 +85,7 @@ const permissionModuleAliases: Record<string, TenantModule> = {
   pos: 'pos', purchases: 'purchases', purchasing: 'purchases', purchase: 'purchases', rfq: 'purchases', grn: 'purchases', purchaseInvoice: 'purchases',
   finance: 'finance', accounting: 'finance', projects: 'projects', storefront: 'web_store', reports: 'reports',
   documents: 'documents', notifications: 'notifications', notices: 'notifications', notificationPreferences: 'notifications',
+  ai_assistant: 'chatbot', chatbot: 'chatbot',
   settings: 'settings', users: 'settings', roles: 'settings', branches: 'settings',
 };
 
