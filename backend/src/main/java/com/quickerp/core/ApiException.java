@@ -10,16 +10,22 @@ public class ApiException extends RuntimeException {
     private final int status;
     private final String code;
     private final transient Map<String, java.util.List<String>> errors;
+    private final transient Map<String, Object> details;
 
     public ApiException(int status, String code, String message) {
-        this(status, code, message, null);
+        this(status, code, message, null, null);
     }
 
     public ApiException(int status, String code, String message, Map<String, java.util.List<String>> errors) {
+        this(status, code, message, errors, null);
+    }
+
+    public ApiException(int status, String code, String message, Map<String, java.util.List<String>> errors, Map<String, Object> details) {
         super(message);
         this.status = status;
         this.code = code;
         this.errors = errors;
+        this.details = details;
     }
 
     public int getStatus() {
@@ -32,6 +38,10 @@ public class ApiException extends RuntimeException {
 
     public Map<String, java.util.List<String>> getErrors() {
         return errors;
+    }
+
+    public Map<String, Object> getDetails() {
+        return details;
     }
 
     public static ApiException badRequest(String message) {
@@ -64,5 +74,18 @@ public class ApiException extends RuntimeException {
 
     public static ApiException serviceUnavailable(String code, String message) {
         return new ApiException(503, code, message);
+    }
+
+    public static ApiException platformMaintenance(String message, String startAt, String endAt) {
+        Map<String, Object> details = new java.util.LinkedHashMap<>();
+        if (startAt != null) {
+            details.put("expectedStartTime", startAt);
+            details.put("startAt", startAt);
+        }
+        if (endAt != null) {
+            details.put("expectedEndTime", endAt);
+            details.put("endAt", endAt);
+        }
+        return new ApiException(503, "PLATFORM_MAINTENANCE", message, null, details);
     }
 }

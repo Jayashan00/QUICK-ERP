@@ -24,7 +24,13 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<Map<String, Object>> handleApi(ApiException error) {
-        return body(error.getStatus(), error.getCode(), error.getMessage(), error.getErrors());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("status", error.getStatus());
+        payload.put("code", error.getCode());
+        payload.put("message", error.getMessage());
+        if (error.getErrors() != null) payload.put("errors", error.getErrors());
+        if (error.getDetails() != null) payload.putAll(error.getDetails());
+        return ResponseEntity.status(error.getStatus()).body(payload);
     }
 
     @ExceptionHandler({HttpMessageNotReadableException.class, MissingServletRequestParameterException.class, MethodArgumentTypeMismatchException.class})

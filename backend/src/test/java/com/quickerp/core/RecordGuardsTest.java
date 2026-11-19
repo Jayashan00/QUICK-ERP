@@ -245,4 +245,103 @@ class RecordGuardsTest {
         assertThrows(ApiException.class, () -> RecordGuards.checkRole(Permissions.everything(), "r1", "t2", "r9", null, cashier));
         assertDoesNotThrow(() -> RecordGuards.checkRole(Permissions.everything(), "r9", "t1", "r9", cashier, promoted));
     }
+
+    @Test
+    void stockTransferValidatesDifferencesPermissionsTenantsAndLocations() throws Exception {
+        Permissions transferUser = Permissions.of(List.of("stock.transfer"));
+        Permissions noTransferUser = Permissions.of(List.of("pos.sell"));
+        Principal user = new Principal("usr-1", "tenant-1", false, "role-1", "user@test");
+
+        java.util.Set<String> allowedBranches = java.util.Set.of("branch-1"); // User only assigned to branch-1!
+
+        java.util.Map<String, JsonNode> branches = java.util.Map.of(
+                "branch-1", mapper.readTree("{\"id\":\"branch-1\",\"tenantId\":\"tenant-1\",\"isActive\":true}"),
+                "branch-2", mapper.readTree("{\"id\":\"branch-2\",\"tenantId\":\"tenant-1\",\"isActive\":true}"),
+                "branch-other-tenant", mapper.readTree("{\"id\":\"branch-other-tenant\",\"tenantId\":\"tenant-2\",\"isActive\":true}")
+        );
+
+        java.util.Map<String, JsonNode> warehouses = java.util.Map.of(
+                "wh-1", mapper.readTree("{\"id\":\"wh-1\",\"tenantId\":\"tenant-1\",\"branchId\":\"branch-1\",\"isActive\":true}"),
+                "wh-2", mapper.readTree("{\"id\":\"wh-2\",\"tenantId\":\"tenant-1\",\"branchId\":\"branch-2\",\"isActive\":true}"),
+                "wh-inactive", mapper.readTree("{\"id\":\"wh-inactive\",\"tenantId\":\"tenant-1\",\"branchId\":\"branch-2\",\"isActive\":false}")
+        );
+
+        java.util.Map<String, JsonNode> locations = java.util.Map.of(
+                "loc-1", mapper.readTree("{\"id\":\"loc-1\",\"tenantId\":\"tenant-1\",\"branchId\":\"branch-1\",\"warehouseId\":\"wh-1\",\"isActive\":true}"),
+                "loc-2", mapper.readTree("{\"id\":\"loc-2\",\"tenantId\":\"tenant-1\",\"branchId\":\"branch-2\",\"warehouseId\":\"wh-2\",\"isActive\":true}")
+        );
+
+        java.util.function.Function<String, JsonNode> bLookup = branches::get;
+        java.util.function.Function<String, JsonNode> wLookup = warehouses::get;
+        java.util.function.Function<String, JsonNode> lLookup = locations::get;
+
+        // Valid cross-branch transfer: source branch-1 -> destination branch-2 (user only assigned to branch-1)
+        JsonNode validTransfer = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-2\",\"destinationWarehouseId\":\"wh-2\",\"destinationLocationId\":\"loc-2\"}");
+
+        assertDoesNotThrow(() -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, validTransfer, bLookup, wLookup, lLookup
+        ));
+
+        // 1. Same branch rejected
+        JsonNode sameBranch = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-1\",\"destinationWarehouseId\":\"wh-2\",\"destinationLocationId\":\"loc-2\"}");
+        ApiException e1 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, sameBranch, bLookup, wLookup, lLookup
+        ));
+        assertEquals("Source and destination branches must be different.", e1.getMessage());
+
+        // 2. Same warehouse rejected
+        JsonNode sameWarehouse = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-2\",\"destinationWarehouseId\":\"wh-1\",\"destinationLocationId\":\"loc-2\"}");
+        ApiException e2 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, sameWarehouse, bLookup, wLookup, lLookup
+        ));
+        assertEquals("Source and destination warehouses must be different.", e2.getMessage());
+
+        // 3. Same location rejected
+        JsonNode sameLocation = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-2\",\"destinationWarehouseId\":\"wh-2\",\"destinationLocationId\":\"loc-1\"}");
+        ApiException e3 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, sameLocation, bLookup, wLookup, lLookup
+        ));
+        assertEquals("Source and destination locations must be different.", e3.getMessage());
+
+        // 4. Missing permissions rejected
+        ApiException e4 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                noTransferUser, user, allowedBranches, "tenant-1", null, validTransfer, bLookup, wLookup, lLookup
+        ));
+        assertEquals("You do not have permission to initiate stock transfers.", e4.getMessage());
+
+        // 5. Unauthorized source branch rejected (user has branch-1, but source is branch-2)
+        JsonNode unauthorizedSource = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-2\",\"sourceWarehouseId\":\"wh-2\",\"sourceLocationId\":\"loc-2\","
+                + "\"destinationBranchId\":\"branch-1\",\"destinationWarehouseId\":\"wh-1\",\"destinationLocationId\":\"loc-1\"}");
+        ApiException e5 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, unauthorizedSource, bLookup, wLookup, lLookup
+        ));
+        assertEquals("You are not authorized to transfer stock from the selected source branch.", e5.getMessage());
+
+        // 6. Cross-tenant destination rejected
+        JsonNode crossTenant = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-other-tenant\",\"destinationWarehouseId\":\"wh-2\",\"destinationLocationId\":\"loc-2\"}");
+        ApiException e6 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, crossTenant, bLookup, wLookup, lLookup
+        ));
+        assertEquals("The destination branch belongs to another organization.", e6.getMessage());
+
+        // 7. Inactive warehouse rejected
+        JsonNode inactiveWh = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-2\",\"destinationWarehouseId\":\"wh-inactive\",\"destinationLocationId\":\"loc-2\"}");
+        ApiException e7 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, inactiveWh, bLookup, wLookup, lLookup
+        ));
+        assertEquals("The selected destination warehouse is invalid or inactive.", e7.getMessage());
+    }
 }
