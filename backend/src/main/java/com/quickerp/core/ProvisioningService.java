@@ -63,6 +63,9 @@ public final class ProvisioningService {
             if (Sql.queryLong(connection, "SELECT COUNT(*) FROM tenants WHERE id = ?", tenantId) > 0) {
                 throw ApiException.conflict("A tenant with this id already exists.");
             }
+            if (Sql.queryLong(connection, "SELECT COUNT(*) FROM tenants WHERE lower(trim(name)) = lower(trim(?))", name) > 0) {
+                throw ApiException.conflict("A company with this name already exists.");
+            }
             String templateProfileText = Sql.queryString(connection, "SELECT profile FROM tenants WHERE id = ?", template);
             if (templateProfileText == null) throw ApiException.notFound("The template tenant was not found.");
             if (Sql.queryLong(connection, "SELECT COUNT(*) FROM erp_records WHERE tenant_id = ? AND collection = 'core.roles' AND NOT deleted", template) == 0) {

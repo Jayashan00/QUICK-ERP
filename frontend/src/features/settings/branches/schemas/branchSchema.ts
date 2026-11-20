@@ -6,16 +6,16 @@ export const branchSchema = z.object({
   code: z
     .string()
     .trim()
-    .min(2, 'Branch code must be at least 2 characters.')
-    .max(20, 'Branch code must be 20 characters or less.')
-    .regex(/^[A-Za-z0-9_-]+$/, 'Branch code must contain only letters, numbers, hyphens or underscores.')
+    .min(2, 'Branch code must be at least 2 characters. Please enter a longer code.')
+    .max(20, 'Branch code cannot exceed 20 characters. Please shorten the code.')
+    .regex(/^[A-Za-z0-9_-]+$/, 'Branch code contains invalid characters. Please use only letters, numbers, hyphens, or underscores.')
     .transform((v) => v.toUpperCase()),
   isMain: z.boolean(),
   phone: optionalString('Phone number', 30),
   email: z
     .string()
     .trim()
-    .refine((val) => val === '' || z.email().safeParse(val).success, 'Enter a valid email address.')
+    .refine((val) => val === '' || z.email().safeParse(val).success, 'Please enter a valid email address in the format name@company.com.')
     .optional(),
   address: optionalString('Address line', 200),
   city: optionalString('City', 100),

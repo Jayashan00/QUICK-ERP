@@ -280,6 +280,9 @@ public class PlatformAdminController {
 
         String tenantId = "tenant-" + UUID.randomUUID().toString().substring(0, 8);
         return db.tx(conn -> {
+            if (Sql.queryLong(conn, "SELECT COUNT(*) FROM tenants WHERE lower(trim(name)) = lower(trim(?))", name) > 0) {
+                throw ApiException.conflict("A company with this name already exists.");
+            }
             if (Sql.queryLong(conn, "SELECT COUNT(*) FROM tenants WHERE lower(profile->>'subdomain') = lower(?) OR id = ?", subdomain, tenantId) > 0) {
                 throw ApiException.conflict("Subdomain is already in use.");
             }
@@ -355,9 +358,18 @@ public class PlatformAdminController {
             Sql.lock(conn, "t:" + tenantId);
             String profileText = Sql.queryString(conn, "SELECT profile FROM tenants WHERE id = ?", tenantId);
             if (profileText == null) throw ApiException.notFound("Tenant not found.");
+            if (Sql.queryLong(conn, "SELECT COUNT(*) FROM tenants WHERE lower(trim(name)) = lower(trim(?)) AND id <> ?", name, tenantId) > 0) {
+                throw ApiException.conflict("A company with this name already exists.");
+            }
             ObjectNode profile = (ObjectNode) Sql.readJson(mapper, profileText).deepCopy();
             profile.put("name", name);
-            if (body.subdomain() != null && !body.subdomain().isBlank()) profile.put("subdomain", body.subdomain().trim());
+            if (body.subdomain() != null && !body.subdomain().isBlank()) {
+                String sub = body.subdomain().trim();
+                if (Sql.queryLong(conn, "SELECT COUNT(*) FROM tenants WHERE (lower(profile->>'subdomain') = lower(?) OR id = ?) AND id <> ?", sub, sub, tenantId) > 0) {
+                    throw ApiException.conflict("Subdomain is already in use.");
+                }
+                profile.put("subdomain", sub);
+            }
             if (body.ownerEmail() != null && !body.ownerEmail().isBlank()) profile.put("ownerEmail", body.ownerEmail().trim());
             if (body.contactName() != null && !body.contactName().isBlank()) profile.put("contactName", body.contactName().trim());
             if (body.country() != null && !body.country().isBlank()) profile.put("country", body.country().trim());
@@ -875,6 +887,34 @@ public class PlatformAdminController {
             };
             recordPlatformAudit(conn, principal, action, tenantId,
                     "Tenant " + tenantName + " status set to " + body.status() + ".");
+            return null;
+        });
+        return ResponseEntity.noContent().build();
+    }
+
+    // ---------------------------------------------------------------- DELETE /platform/tenants/{tenantId}
+
+    @DeleteMapping("/tenants/{tenantId}")
+    public ResponseEntity<Void> deleteTenant(@PathVariable String tenantId, HttpServletRequest request) {
+        Principal principal = AuthInterceptor.principal(request);
+        requireSuperAdmin(principal);
+        if (Principal.PLATFORM_TENANT.equals(tenantId)) throw ApiException.forbidden("Cannot delete platform tenant.");
+        db.tx(conn -> {
+            Sql.lock(conn, "t:" + tenantId);
+            String status = Sql.queryString(conn, "SELECT status FROM tenants WHERE id = ?", tenantId);
+            if (status == null) throw ApiException.notFound("Tenant not found.");
+            if (!"suspended".equalsIgnoreCase(status)) {
+                throw ApiException.badRequest("A company must be suspended before it can be deleted.");
+            }
+            String tenantName = Sql.queryString(conn, "SELECT name FROM tenants WHERE id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM stored_files WHERE tenant_id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM ai_conversations WHERE tenant_id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM erp_records WHERE tenant_id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM erp_change_sequences WHERE tenant_id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM app_users WHERE tenant_id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM tenants WHERE id = ?", tenantId);
+            recordPlatformAudit(conn, principal, "Tenant deleted", tenantId,
+                    "Company " + tenantName + " (" + tenantId + ") was permanently deleted after being suspended.");
             return null;
         });
         return ResponseEntity.noContent().build();

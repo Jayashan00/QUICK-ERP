@@ -1,4 +1,5 @@
-import { useForm, Controller } from 'react-hook-form';
+import { Controller } from 'react-hook-form';
+import { useAppForm } from '@/shared/hooks';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Save } from 'lucide-react';
 import { Card } from '@/shared/components/common/Card';
@@ -51,7 +52,7 @@ export function DepartmentForm({
     control,
     setValue,
     formState: { errors, isSubmitting },
-  } = useForm<DepartmentFormValues>({
+  } = useAppForm<DepartmentFormValues>({
     resolver: zodResolver(departmentSchema),
     defaultValues: {
       name: initialData?.name || '',
