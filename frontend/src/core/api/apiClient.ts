@@ -5,7 +5,11 @@ import { APP_CONSTANTS } from '@/shared/constants/appConstants';
 import { triggerMaintenance } from '@/core/maintenance/maintenanceState';
 
 function getAuthToken(): string | null {
-  return localStorage.getItem(APP_CONSTANTS.STORAGE_KEYS.AUTH_TOKEN);
+  try {
+    return localStorage.getItem(APP_CONSTANTS.STORAGE_KEYS.AUTH_TOKEN) ?? sessionStorage.getItem(APP_CONSTANTS.STORAGE_KEYS.AUTH_TOKEN);
+  } catch {
+    return null;
+  }
 }
 
 function buildUrl(path: string, params?: Record<string, string | number | boolean>): string {

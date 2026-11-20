@@ -43,7 +43,7 @@ export function isBackendEnabled(): boolean {
 
 function readJson<T>(key: string): T | null {
   try {
-    const value = localStorage.getItem(key);
+    const value = localStorage.getItem(key) ?? sessionStorage.getItem(key);
     return value ? (JSON.parse(value) as T) : null;
   } catch {
     return null;
@@ -52,7 +52,7 @@ function readJson<T>(key: string): T | null {
 
 export function getBackendToken(): string | null {
   try {
-    return localStorage.getItem(KEYS.AUTH_TOKEN);
+    return localStorage.getItem(KEYS.AUTH_TOKEN) ?? sessionStorage.getItem(KEYS.AUTH_TOKEN);
   } catch {
     return null;
   }
@@ -123,15 +123,30 @@ export function upsertIdentity(user: User, tenant: Tenant | null): void {
   }
 }
 
-export function storeBackendSession(response: BackendLoginResponse): User {
+export function storeBackendSession(response: BackendLoginResponse, remember: boolean = true): User {
   if (!response.token) throw new Error('The server did not return a session.');
   const user = normalizeBackendUser(response.user);
-  localStorage.setItem(KEYS.AUTH_TOKEN, response.token);
-  localStorage.setItem(KEYS.USER, JSON.stringify(user));
-  if (response.tenant) localStorage.setItem(KEYS.TENANT, JSON.stringify(response.tenant));
-  else localStorage.removeItem(KEYS.TENANT);
+  const target = remember ? localStorage : sessionStorage;
+  const other = remember ? sessionStorage : localStorage;
+  [KEYS.AUTH_TOKEN, KEYS.USER, KEYS.TENANT].forEach((key) => other.removeItem(key));
+  target.setItem(KEYS.AUTH_TOKEN, response.token);
+  target.setItem(KEYS.USER, JSON.stringify(user));
+  if (response.tenant) target.setItem(KEYS.TENANT, JSON.stringify(response.tenant));
+  else target.removeItem(KEYS.TENANT);
   upsertIdentity(user, response.tenant);
   return user;
+}
+
+export function updateBackendSessionPersistence(remember: boolean): void {
+  const source = remember ? sessionStorage : localStorage;
+  const target = remember ? localStorage : sessionStorage;
+  [KEYS.AUTH_TOKEN, KEYS.USER, KEYS.TENANT].forEach((key) => {
+    const value = source.getItem(key);
+    if (value !== null) {
+      target.setItem(key, value);
+      source.removeItem(key);
+    }
+  });
 }
 
 /** Called once before the React tree renders, so a refresh restores the signed-in identity. */

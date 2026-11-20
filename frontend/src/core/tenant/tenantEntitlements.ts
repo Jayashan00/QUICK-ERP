@@ -84,6 +84,7 @@ const clone = (value: TenantEntitlements): TenantEntitlements => structuredClone
 export const tenantEntitlementService = {
   get(tenantId: string): TenantEntitlements | null { const value = records.get(tenantId); return value ? clone(value) : null; },
   set(tenantId: string, value: TenantEntitlements): TenantEntitlements { records.set(tenantId, clone(value)); return clone(value); },
+  delete(tenantId: string) { records.delete(tenantId); },
   updateUsage(tenantId: string, usage: Partial<TenantUsage>) { const current = records.get(tenantId); if (current) current.usage = { ...current.usage, ...usage }; },
   isModuleEnabled(tenantId: string, module: TenantModule) { return records.get(tenantId)?.enabledModules.includes(module) ?? false; },
 };

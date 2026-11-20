@@ -305,6 +305,13 @@ class PersistenceBridge {
     }, MUTATION_DEBOUNCE_MS);
   }
 
+  /** Manually flushes local changes and pulls latest server changes. */
+  async sync(): Promise<void> {
+    if (this.mode === 'idle') return;
+    await this.flush();
+    if (this.mode === 'tenant') await this.pull();
+  }
+
   private async tick() {
     if (this.mode === 'idle') return;
     await this.flush();
@@ -333,6 +340,7 @@ class PersistenceBridge {
       let changed = false;
       for (const [recordId, json] of upserts) {
         if (isPublic && (recordId === ORDER_RECORD || recordId === ALL_RECORD || recordId === VALUE_RECORD)) continue;
+        if (accessor.key === 'core.auditEvents' && (recordId === ORDER_RECORD || recordId === ALL_RECORD || recordId === VALUE_RECORD)) continue;
         changes.push({ collection: accessor.key, recordId, data: JSON.parse(json) as unknown, deleted: false, baseVersion: this.baseVersionOf(accessor.key, recordId) });
         changed = true;
       }
