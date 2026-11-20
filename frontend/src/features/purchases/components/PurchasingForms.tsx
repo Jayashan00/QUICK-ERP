@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Controller } from "react-hook-form";
+import { useAppForm } from "@/shared/hooks";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, Trash2 } from "lucide-react";
 import { useBranch } from "@/core/branch/branch-context";
@@ -336,7 +337,7 @@ export function PurchaseRequestFormModal({
   const { permissions, hasPermission } = usePermissions();
   const [branchOptions, setBranchOptions] = useState(branches);
   const mutations = usePurchasingMutations();
-  const form = useForm<PurchaseRequestFormValues>({
+  const form = useAppForm<PurchaseRequestFormValues>({
     resolver: zodResolver(purchaseRequestSchema),
     defaultValues: {
       branchId: branchId ?? "",
@@ -548,7 +549,7 @@ export function RfqFormModal({ isOpen, onClose, initialRequestId }: RfqProps) {
   });
   const suppliers = usePurchasingSupplierOptions();
   const mutations = usePurchasingMutations();
-  const form = useForm<RfqFormValues>({
+  const form = useAppForm<RfqFormValues>({
     resolver: zodResolver(rfqSchema),
     defaultValues: {
       purchaseRequestId: "",
@@ -638,7 +639,7 @@ export function SupplierQuotationFormModal({ isOpen, onClose }: Props) {
   const suppliers = usePurchasingSupplierOptions();
   const mutations = usePurchasingMutations();
   const tenantCurrency = useTenantCurrency();
-  const form = useForm<SupplierQuotationFormValues>({
+  const form = useAppForm<SupplierQuotationFormValues>({
     resolver: zodResolver(supplierQuotationSchema),
     defaultValues: {
       rfqId: "",
@@ -782,7 +783,7 @@ export function PurchaseOrderFormModal({
   const suppliers = usePurchasingSupplierOptions();
   const mutations = usePurchasingMutations();
   const tenantCurrency = useTenantCurrency();
-  const form = useForm<PurchaseOrderFormValues>({
+  const form = useAppForm<PurchaseOrderFormValues>({
     resolver: zodResolver(purchaseOrderSchema),
     defaultValues: {
       supplierId: "",
@@ -989,7 +990,7 @@ export function PurchaseOrderFormModal({
 export function GrnFormModal({ isOpen, onClose }: Props) {
   const orders = usePurchaseOrders({ branchId: "all", pageSize: 100 });
   const mutations = usePurchasingMutations();
-  const form = useForm<GrnFormValues>({
+  const form = useAppForm<GrnFormValues>({
     resolver: zodResolver(grnSchema),
     defaultValues: {
       purchaseOrderId: "",
@@ -1183,7 +1184,7 @@ export function PurchaseInvoiceFormModal({ isOpen, onClose }: Props) {
   const mutations = usePurchasingMutations();
   const { terms } = usePaymentTerms();
   const tenantCurrency = useTenantCurrency();
-  const form = useForm<PurchaseInvoiceFormValues>({
+  const form = useAppForm<PurchaseInvoiceFormValues>({
     resolver: zodResolver(purchaseInvoiceSchema),
     defaultValues: {
       purchaseOrderId: "",
@@ -1314,7 +1315,7 @@ export function PurchaseInvoiceFormModal({ isOpen, onClose }: Props) {
 export function PurchaseReturnFormModal({ isOpen, onClose }: Props) {
   const receipts = useGoodsReceipts({ branchId: "all", pageSize: 100 });
   const mutations = usePurchasingMutations();
-  const form = useForm<PurchaseReturnFormValues>({
+  const form = useAppForm<PurchaseReturnFormValues>({
     resolver: zodResolver(purchaseReturnSchema),
     defaultValues: {
       purchaseOrderId: "",

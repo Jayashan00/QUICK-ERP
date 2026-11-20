@@ -206,35 +206,43 @@ function list<T extends PurchaseDocument>(
   records: T[],
   scope: TenantBranchScope,
   params: PurchasingListParams,
-  supplier: (item: T) => string | undefined = () => undefined,
+  supplier: (item: T) => string | string[] | undefined = () => undefined,
   warehouse: (item: T) => string | undefined = () => undefined,
 ): PurchasingListResult<T> {
   const query = params.search?.trim().toLowerCase();
   let rows = records.filter(
-    (item) =>
-      item.tenantId === scope.tenantId &&
-      params.permittedBranchIds.includes(item.branchId) &&
-      (!params.branchId ||
-        params.branchId === "all" ||
-        item.branchId === params.branchId) &&
-      (!params.supplierId ||
+    (item) => {
+      const itemSupplier = supplier(item);
+      const supplierMatches =
+        !params.supplierId ||
         params.supplierId === "all" ||
-        supplier(item) === params.supplierId) &&
-      (!params.warehouseId ||
-        params.warehouseId === "all" ||
-        warehouse(item) === params.warehouseId) &&
-      (!params.status ||
-        params.status === "all" ||
-        ("status" in item && item.status === params.status)) &&
-      (!params.approvalStatus ||
-        params.approvalStatus === "all" ||
-        item.approval.status === params.approvalStatus) &&
-      (!params.dateFrom || item.createdAt.slice(0, 10) >= params.dateFrom) &&
-      (!params.dateTo || item.createdAt.slice(0, 10) <= params.dateTo) &&
-      (!query ||
-        `${item.referenceNumber} ${item.notes ?? ""}`
-          .toLowerCase()
-          .includes(query)),
+        (Array.isArray(itemSupplier)
+          ? itemSupplier.includes(params.supplierId)
+          : itemSupplier === params.supplierId);
+      return (
+        item.tenantId === scope.tenantId &&
+        params.permittedBranchIds.includes(item.branchId) &&
+        (!params.branchId ||
+          params.branchId === "all" ||
+          item.branchId === params.branchId) &&
+        supplierMatches &&
+        (!params.warehouseId ||
+          params.warehouseId === "all" ||
+          warehouse(item) === params.warehouseId) &&
+        (!params.status ||
+          params.status === "all" ||
+          ("status" in item && item.status === params.status)) &&
+        (!params.approvalStatus ||
+          params.approvalStatus === "all" ||
+          item.approval.status === params.approvalStatus) &&
+        (!params.dateFrom || item.createdAt.slice(0, 10) >= params.dateFrom) &&
+        (!params.dateTo || item.createdAt.slice(0, 10) <= params.dateTo) &&
+        (!query ||
+          `${item.referenceNumber} ${item.notes ?? ""}`
+            .toLowerCase()
+            .includes(query))
+      );
+    },
   );
   if (params.sortField)
     rows = [...rows].sort(
@@ -315,7 +323,12 @@ export const purchasingService = {
   async listRfqs(scope: TenantBranchScope, params: PurchasingListParams) {
     requireScope(scope, params.permittedBranchIds);
     await wait();
-    return list(purchasingStore.rfqs(), scope, params);
+    return list(
+      purchasingStore.rfqs(),
+      scope,
+      params,
+      (item) => item.supplierIds?.length ? item.supplierIds : (item as { supplierId?: string }).supplierId,
+    );
   },
   async listQuotations(scope: TenantBranchScope, params: PurchasingListParams) {
     requireScope(scope, params.permittedBranchIds);
