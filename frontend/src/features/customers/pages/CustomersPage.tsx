@@ -376,7 +376,7 @@ export function CustomersPage() {
       {canDelete && <ConfirmDialog
         isOpen={!!deletingId}
         title="Delete Customer"
-        message="Are you sure you want to delete this customer? All associated history in mock storage will be removed. This action cannot be undone."
+        message="Are you sure you want to delete this customer? All associated history will be permanently deleted. This action cannot be undone."
         variant="danger"
         confirmLabel="Delete"
         isLoading={isDeleting}
