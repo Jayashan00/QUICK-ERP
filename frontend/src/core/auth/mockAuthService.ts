@@ -16,7 +16,7 @@ export const mockAuthService: AuthService = {
     try { return await authenticateMockUser(email, password); }
     catch (error) {
       const candidate = mockUsers.find(user => !user.isSuperAdmin && user.email.toLowerCase() === email.trim().toLowerCase());
-      if (candidate) recordSession(candidate, 'Login failed', 'A mock login attempt failed for a known tenant user.');
+      if (candidate) recordSession(candidate, 'Login failed', 'A login attempt failed for a known tenant user.');
       throw error;
     }
   },
@@ -33,11 +33,11 @@ export const mockAuthService: AuthService = {
   },
   completeLogin(user, remember) {
     writeMockSession(user, remember);
-    recordSession(user, 'Logged in', 'User completed the frontend mock authentication flow.');
+    recordSession(user, 'Logged in', 'User completed the authentication flow.');
   },
   logout(user) {
     clearMockSession();
-    if (user) recordSession(user, 'Logged out', 'User ended the frontend mock session.');
+    if (user) recordSession(user, 'Logged out', 'User ended the session.');
   },
   requiresCaptcha: user => securityService.requiresCaptcha(user),
   requiresMfa: user => securityService.getProfile(user.id).mfaEnabled,
