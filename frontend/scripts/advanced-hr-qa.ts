@@ -16,7 +16,8 @@ assert.throws(() => hr.setCandidateStage(scope, actor, candidate.id, 'interview'
 hr.setCandidateStage(scope, actor, candidate.id, 'interview', '2026-10-10');
 hr.setCandidateStage(scope, actor, candidate.id, 'shortlisted');
 hr.setCandidateStage(scope, actor, candidate.id, 'selected');
-const employee = await hr.convertCandidate(scope, actor, candidate.id, { employeeCode: 'QA-ADV-001', phone: '123456789', salary: 3000, dateOfJoining: '2026-10-15' });
+const todayStr = new Date().toISOString().slice(0, 10);
+const employee = await hr.convertCandidate(scope, actor, candidate.id, { employeeCode: 'QA-ADV-001', phone: '123456789', salary: 3000, dateOfJoining: todayStr });
 assert.equal(hrService.employee(scope, employee.id).employeeCode, 'QA-ADV-001');
 assert.equal(hr.onboardings(scope).find((row) => row.employeeId === employee.id)?.status, 'open');
 const onboarding = hr.onboardings(scope).find((row) => row.employeeId === employee.id)!;
@@ -41,4 +42,30 @@ await assert.rejects(() => hr.completeExit(scope, actor, exit.id));
 hr.returnAsset(scope, actor, asset.id, '2026-11-30', 'Good'); await hr.completeExit(scope, actor, exit.id);
 assert.equal(hrService.employee(scope, employee.id).status, 'resigned');
 assert.ok(hr.audit(scope).some((row) => row.action === 'Exit completed'));
+
+// Validate restricting job opening on a previous date
+assert.throws(() => hr.addJob(scope, actor, { branchId: scope.branchId, title: 'Old job', departmentId: 'dept-001', designationId: 'des-005', openedOn: '2020-01-01', closesOn: '2026-11-30' }), /previous date/);
+
+// Validate restricting interview date before job opening date
+const jobWithDate = hr.addJob(scope, actor, { branchId: scope.branchId, title: 'Dated job', departmentId: 'dept-001', designationId: 'des-005', openedOn: '2026-11-20', closesOn: '2026-11-30' });
+const cand = hr.addCandidate(scope, actor, { jobId: jobWithDate.id, name: 'Date cand', email: 'dc@qa.test', appliedOn: '2026-11-20' });
+assert.throws(() => hr.setCandidateStage(scope, actor, cand.id, 'interview', '2026-11-19'), /on or after the job opening date/);
+
+// Validate preventing same employee from being selected as both Employee and Reviewer
+assert.throws(() => hr.addReview(scope, actor, { employeeId: employee.id, reviewerId: employee.id, period: '2026-11', goals: 'Self review' }), /cannot be the same person/);
+
+// Validate preventing candidate joining date as past date
+const candPast = hr.addCandidate(scope, actor, { jobId: jobWithDate.id, name: 'Past joining cand', email: 'pjc@qa.test', appliedOn: '2026-11-20' });
+hr.setCandidateStage(scope, actor, candPast.id, 'interview', '2026-11-20');
+hr.setCandidateStage(scope, actor, candPast.id, 'shortlisted');
+hr.setCandidateStage(scope, actor, candPast.id, 'selected');
+await assert.rejects(() => hr.convertCandidate(scope, actor, candPast.id, { employeeCode: 'QA-ADV-002', phone: '123456789', salary: 3000, dateOfJoining: '2020-01-01' }), /past date/);
+
+// Validate preventing candidate to job opening after its closing date
+const closingJob = hr.addJob(scope, actor, { branchId: scope.branchId, title: 'Closing job', departmentId: 'dept-001', designationId: 'des-005', openedOn: todayStr, closesOn: todayStr });
+assert.throws(() => hr.addCandidate(scope, actor, { jobId: closingJob.id, name: 'Late Cand', email: 'late@qa.test', appliedOn: '2099-01-01' }), /after its closing date/);
+
+// Validate preventing employee who is already resigned from submitting another resignation
+assert.throws(() => hr.startExit(scope, actor, { employeeId: employee.id, type: 'resignation', lastDay: '2027-01-01', reason: 'Resign again' }), /already in Resigned status/);
+
 console.log('Advanced HR recruitment, onboarding, training, review, OKR, policy, ticket, asset, exit, scope and permission checks passed.');

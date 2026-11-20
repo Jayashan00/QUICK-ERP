@@ -20,8 +20,20 @@ import { FormField } from '@/shared/components/forms/FormField';
 import { TextInput } from '@/shared/components/forms/TextInput';
 import { Select } from '@/shared/components/forms/Select';
 import { ErrorState } from '@/shared/components/feedback/ErrorState';
+import { ConfirmDialog } from '@/shared/components/feedback/ConfirmDialog';
 import { appToast } from '@/shared/utils/toast';
+import { getErrorMessage } from '@/shared/utils/errors';
 import type { PlatformTenant } from '@/features/platform/types/platform';
+
+const fieldLabels: Record<keyof PlatformTenantInput, string> = {
+  name: 'Company Name',
+  subdomain: 'Subdomain',
+  ownerEmail: 'Owner Email',
+  contactName: 'Contact Name',
+  country: 'Country',
+  adminName: 'Admin Name',
+  adminEmail: 'Admin Email',
+};
 
 const emptyTenant: PlatformTenantInput = {
   name: '',
@@ -41,11 +53,17 @@ export function TenantsPage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
   const [creating, setCreating] = useState(false);
+  const [tenantToDelete, setTenantToDelete] = useState<PlatformTenant | null>(null);
+  const [tenantNeedingSuspension, setTenantNeedingSuspension] = useState<PlatformTenant | null>(null);
   const form = useForm<PlatformTenantInput>({
     resolver: zodResolver(platformTenantSchema),
     defaultValues: emptyTenant,
   });
   const create = usePlatformMutation(platformService.createTenant);
+  const deleteMutation = usePlatformMutation((tenantId: string) => platformService.deleteTenant(tenantId));
+  const statusMutation = usePlatformMutation(({ id, status }: { id: string; status: 'active' | 'suspended' }) =>
+    platformService.setTenantStatus(id, status),
+  );
 
   const rows = useMemo(
     () =>
@@ -211,6 +229,44 @@ export function TenantsPage() {
             label: 'View and configure',
             onClick: () => navigate(`/super-admin/tenants/${tenant.id}`),
           },
+          ...(tenant.status === 'active'
+            ? [
+                {
+                  key: 'suspend',
+                  label: 'Suspend company',
+                  onClick: () => setTenantNeedingSuspension(tenant),
+                },
+              ]
+            : []),
+          ...(tenant.status === 'suspended'
+            ? [
+                {
+                  key: 'reactivate',
+                  label: 'Reactivate company',
+                  onClick: async () => {
+                    try {
+                      await statusMutation.mutateAsync({ id: tenant.id, status: 'active' });
+                      appToast.success(`"${tenant.name}" has been reactivated.`);
+                    } catch (err) {
+                      appToast.error(getErrorMessage(err, 'Unable to reactivate company.'));
+                    }
+                  },
+                },
+                {
+                  key: 'delete',
+                  label: 'Delete company',
+                  danger: true,
+                  onClick: () => setTenantToDelete(tenant),
+                },
+              ]
+            : [
+                {
+                  key: 'delete-disabled',
+                  label: 'Delete company',
+                  danger: true,
+                  onClick: () => setTenantNeedingSuspension(tenant),
+                },
+              ]),
         ]}
       />
 
@@ -218,13 +274,49 @@ export function TenantsPage() {
         <form
           className="space-y-4"
           onSubmit={form.handleSubmit(async (values) => {
+            const trimmedName = values.name.trim().toLowerCase();
+            const isDuplicateName = (query.data?.tenants ?? []).some(
+              (t) => t.name.trim().toLowerCase() === trimmedName,
+            );
+            if (isDuplicateName) {
+              form.setError('name', {
+                type: 'validate',
+                message: 'A company with this name already exists.',
+              });
+              appToast.error('A company with this name already exists.');
+              return;
+            }
+
+            const trimmedSubdomain = values.subdomain.trim().toLowerCase();
+            const isDuplicateSubdomain = (query.data?.tenants ?? []).some(
+              (t) => t.subdomain.trim().toLowerCase() === trimmedSubdomain,
+            );
+            if (isDuplicateSubdomain) {
+              form.setError('subdomain', {
+                type: 'validate',
+                message: 'Subdomain is already in use.',
+              });
+              appToast.error('Subdomain is already in use.');
+              return;
+            }
+
             try {
               const tenant = await create.mutateAsync(values);
               appToast.success('Company created in pending status. Please configure subscription and generate invoice.');
               setCreating(false);
               navigate(`/super-admin/tenants/${tenant.id}`);
             } catch (error) {
-              appToast.error(error instanceof Error ? error.message : 'Unable to create company.');
+              const message = getErrorMessage(error, 'Unable to create company.');
+              if (
+                message.toLowerCase().includes('company') ||
+                message.toLowerCase().includes('name already exists') ||
+                message.toLowerCase().includes('name is already in use')
+              ) {
+                form.setError('name', { type: 'validate', message });
+              } else if (message.toLowerCase().includes('subdomain')) {
+                form.setError('subdomain', { type: 'validate', message });
+              }
+              appToast.error(message);
             }
           })}
         >
@@ -233,7 +325,7 @@ export function TenantsPage() {
               (name) => (
                 <FormField
                   key={name}
-                  label={name.replace(/([A-Z])/g, ' $1')}
+                  label={fieldLabels[name] || name}
                   error={form.formState.errors[name]?.message}
                 >
                   <TextInput {...form.register(name)} />
@@ -254,6 +346,52 @@ export function TenantsPage() {
           </div>
         </form>
       </Modal>
+
+      {/* Prompt to suspend before deletion */}
+      <ConfirmDialog
+        isOpen={Boolean(tenantNeedingSuspension)}
+        title="Company Must Be Suspended"
+        message={`"${tenantNeedingSuspension?.name}" is currently ${tenantNeedingSuspension?.status.toUpperCase()}. A company must be suspended before it can be deleted. Would you like to suspend this company now?`}
+        confirmLabel="Suspend Company"
+        cancelLabel="Cancel"
+        variant="warning"
+        isLoading={statusMutation.isPending}
+        onConfirm={async () => {
+          if (!tenantNeedingSuspension) return;
+          try {
+            await statusMutation.mutateAsync({ id: tenantNeedingSuspension.id, status: 'suspended' });
+            appToast.success(`"${tenantNeedingSuspension.name}" has been suspended. You may now delete the company.`);
+            const suspendedTenant = { ...tenantNeedingSuspension, status: 'suspended' as const };
+            setTenantNeedingSuspension(null);
+            setTenantToDelete(suspendedTenant);
+          } catch (error) {
+            appToast.error(getErrorMessage(error, 'Unable to suspend company.'));
+          }
+        }}
+        onCancel={() => setTenantNeedingSuspension(null)}
+      />
+
+      {/* Confirm Permanent Deletion */}
+      <ConfirmDialog
+        isOpen={Boolean(tenantToDelete)}
+        title={`Delete "${tenantToDelete?.name}"?`}
+        message={`Are you sure you want to permanently delete "${tenantToDelete?.name}" (${tenantToDelete?.subdomain}.vyro.cloud)? All tenant data, configurations, and user accounts will be permanently removed. This action cannot be undone.`}
+        confirmLabel="Delete Company"
+        cancelLabel="Cancel"
+        variant="danger"
+        isLoading={deleteMutation.isPending}
+        onConfirm={async () => {
+          if (!tenantToDelete) return;
+          try {
+            await deleteMutation.mutateAsync(tenantToDelete.id);
+            appToast.success(`Company "${tenantToDelete.name}" was permanently deleted.`);
+            setTenantToDelete(null);
+          } catch (error) {
+            appToast.error(getErrorMessage(error, 'Unable to delete company.'));
+          }
+        }}
+        onCancel={() => setTenantToDelete(null)}
+      />
     </PageContainer>
   );
 }

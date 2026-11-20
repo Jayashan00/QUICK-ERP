@@ -14,6 +14,7 @@ import { stockWorkflowService } from "../src/features/inventory/services/stockWo
 import { inventorySettingsService } from "../src/features/inventory/services/inventorySettingsService";
 import { stockVelocityService } from "../src/features/inventory/services/stockVelocityService";
 import { stockLocationService } from "../src/features/inventory/services/stockLocationService";
+import { stockLocationSchema } from "../src/features/inventory/schemas/inventorySchemas";
 import { warehouseService } from "../src/features/inventory/services/warehouseService";
 import {
   calculateAvailableQuantity,
@@ -30,6 +31,10 @@ assert.ok(inventoryReportService.aging(reportScope, { asOf: "2026-10-05" }).ever
 assert.ok(inventoryReportService.expiry(reportScope, { asOf: "2026-10-05" }).every((row) => row.branchId === "branch-001"));
 assert.ok(inventoryReportService.deadStock(reportScope, { asOf: "2026-10-05", thresholdDays: 90 }).every((row) => row.branchId === "branch-001"));
 assert.ok(inventoryReportService.wastage(reportScope).every((row) => row.branchId === "branch-001"));
+const wastageRows = inventoryReportService.wastage(reportScope);
+assert(wastageRows.length > 0);
+assert.equal(wastageRows[0].products, "24-inch IPS Office Monitor");
+assert.notEqual(wastageRows[0].products, "prod-002");
 assert.equal(inventoryReportService.aging(otherReportScope).length, 0);
 assert.equal(inventoryReportService.inTransit(otherReportScope).length, 0);
 const margins = inventoryReportService.margins(reportScope);
@@ -142,6 +147,44 @@ assert(
       item.branchId === "branch-001" &&
       item.warehouseId === "warehouse-hq-main",
   ),
+);
+
+// Stock location name validation: reject names with only numbers, only special characters, or numbers and symbols
+assert.equal(
+  stockLocationSchema.safeParse({
+    name: "12345",
+    code: "LOC-01",
+    warehouseId: "warehouse-hq-main",
+    isActive: true,
+  }).success,
+  false,
+);
+assert.equal(
+  stockLocationSchema.safeParse({
+    name: "!@#$%",
+    code: "LOC-02",
+    warehouseId: "warehouse-hq-main",
+    isActive: true,
+  }).success,
+  false,
+);
+assert.equal(
+  stockLocationSchema.safeParse({
+    name: "123-456",
+    code: "LOC-03",
+    warehouseId: "warehouse-hq-main",
+    isActive: true,
+  }).success,
+  false,
+);
+assert.equal(
+  stockLocationSchema.safeParse({
+    name: "Main Storage B",
+    code: "LOC-04",
+    warehouseId: "warehouse-hq-main",
+    isActive: true,
+  }).success,
+  true,
 );
 
 const batches = await inventoryTrackingService.listBatches(mainScope, {

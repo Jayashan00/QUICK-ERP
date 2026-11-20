@@ -10,6 +10,7 @@ assert.equal(hasPermission([P.PROJECTS.PROJECTS_VIEW], P.PROJECTS.PROJECTS_EDIT)
 assert.equal(svc.projects({ ...scope, tenantId: 'other' }).length, 0);
 assert.equal(svc.projects({ ...scope, branchId: 'branch-002', permittedBranchIds: ['branch-002'] }).length, 0);
 await assert.rejects(() => svc.saveProject(scope, actor, { branchId: 'branch-002', code: 'QA-WRONG', name: 'Wrong branch', customerId: 'cust-001', managerId: 'emp-001', startDate: '2026-10-01', endDate: '2026-12-01', budget: 1000, billingMethod: 'fixed', description: 'QA', notes: '' }));
+await assert.rejects(() => svc.saveProject(scope, actor, { branchId: 'branch-001', code: 'QA-INACTIVE', name: 'Non active manager', customerId: 'cust-001', managerId: 'emp-004', startDate: '2026-10-01', endDate: '2026-12-01', budget: 1000, billingMethod: 'fixed', description: 'QA', notes: '' }), /active employee/);
 await assert.rejects(() => svc.saveProject(scope, actor, { branchId: 'branch-001', code: 'QA-BAD', name: 'Bad date', customerId: 'cust-001', managerId: 'emp-001', startDate: '2026-12-01', endDate: '2026-10-01', budget: 1000, billingMethod: 'fixed', description: 'QA', notes: '' }));
 const project = await svc.saveProject(scope, actor, { branchId: 'branch-001', code: 'QA-PROJECT', name: 'QA project', customerId: 'cust-001', managerId: 'emp-001', startDate: '2026-10-01', endDate: '2026-12-01', budget: 3200, billingMethod: 'time_and_materials', description: 'QA', notes: '' });
 assert.equal(project.status, 'planning');
@@ -17,6 +18,7 @@ assert.throws(() => svc.status(scope, actor, project.id, 'completed'));
 svc.status(scope, actor, project.id, 'active');
 const milestone = svc.addMilestone(scope, actor, { projectId: project.id, name: 'Delivery', dueDate: '2026-11-01', ownerId: 'emp-001', amount: 500 });
 assert.throws(() => svc.addMilestone(scope, actor, { projectId: project.id, name: 'Outside', dueDate: '2027-01-01', ownerId: 'emp-001', amount: 500 }));
+assert.throws(() => svc.addTask(scope, actor, { projectId: project.id, title: 'Non member task', milestoneId: milestone.id, sprint: 'Sprint 1', assigneeId: 'emp-002', priority: 'high', dueDate: '2026-10-20', estimatedHours: 10, notes: '' }), /Assign the employee to the project team first/);
 svc.assignTeam(scope, actor, { projectId: project.id, employeeId: 'emp-001', role: 'Lead', allocation: 50 });
 const task = svc.addTask(scope, actor, { projectId: project.id, title: 'QA task', milestoneId: milestone.id, sprint: 'Sprint 1', assigneeId: 'emp-001', priority: 'high', dueDate: '2026-10-20', estimatedHours: 10, notes: '' });
 assert.throws(() => svc.setTaskStatus(scope, actor, task.id, 'done'));

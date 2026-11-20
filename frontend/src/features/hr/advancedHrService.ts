@@ -2,7 +2,7 @@ import { hrService, type HrActor, type HrScope } from './hrService';
 import { registerList, replaceArray } from '@/core/persistence/stateRegistry';
 
 type Base = { id: string; tenantId: string; branchId: string; createdAt: string };
-export type Job = Base & { title: string; departmentId: string; designationId: string; closesOn: string; status: 'open' | 'closed' };
+export type Job = Base & { title: string; departmentId: string; designationId: string; openedOn?: string; closesOn: string; status: 'open' | 'closed' };
 export type Candidate = Base & { jobId: string; name: string; email: string; appliedOn: string; stage: 'applied' | 'interview' | 'shortlisted' | 'rejected' | 'selected' | 'converted'; interviewOn?: string; notes?: string; employeeId?: string };
 export type Onboarding = Base & { employeeId: string; tasks: { label: string; done: boolean }[]; status: 'open' | 'complete' };
 export type Training = Base & { title: string; employeeId: string; startsOn: string; endsOn: string; status: 'assigned' | 'complete'; result?: string; certificate?: string };
@@ -20,7 +20,7 @@ const now = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 const today = () => now().slice(0, 10);
 const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
-const jobs: Job[] = [{ id: 'job-001', tenantId: 'tenant-001', branchId: 'branch-001', createdAt: now(), title: 'Sales associate', departmentId: 'dept-001', designationId: 'des-005', closesOn: '2026-11-30', status: 'open' }];
+const jobs: Job[] = [{ id: 'job-001', tenantId: 'tenant-001', branchId: 'branch-001', createdAt: now(), title: 'Sales associate', departmentId: 'dept-001', designationId: 'des-005', openedOn: '2026-09-01', closesOn: '2026-11-30', status: 'open' }];
 const candidates: Candidate[] = [{ id: 'candidate-001', tenantId: 'tenant-001', branchId: 'branch-001', createdAt: now(), jobId: 'job-001', name: 'Nimal Silva', email: 'nimal@example.com', appliedOn: '2026-09-25', stage: 'interview', interviewOn: '2026-10-05' }];
 const onboarding: Onboarding[] = [];
 const training: Training[] = [];
@@ -52,18 +52,63 @@ export const advancedHrService = {
   onboardings: (scope: HrScope, branchId?: string) => rows(onboarding, scope, branchId), trainings: (scope: HrScope, branchId?: string) => rows(training, scope, branchId),
   reviews: (scope: HrScope, branchId?: string) => rows(reviews, scope, branchId), okrs: (scope: HrScope, branchId?: string) => rows(okrs, scope, branchId), feedback: (scope: HrScope, branchId?: string) => rows(feedback, scope, branchId),
   policies: (scope: HrScope, branchId?: string) => rows(policies, scope, branchId), tickets: (scope: HrScope, branchId?: string) => rows(tickets, scope, branchId), assets: (scope: HrScope, branchId?: string) => rows(assets, scope, branchId), exits: (scope: HrScope, branchId?: string) => rows(exits, scope, branchId), audit: (scope: HrScope) => rows(logs, scope),
-  addJob(scope: HrScope, actor: HrActor, input: Pick<Job, 'branchId' | 'title' | 'departmentId' | 'designationId' | 'closesOn'>) { if (!input.title.trim() || !input.departmentId || !input.designationId || !validDate(input.closesOn)) throw new Error('Enter a title, department, designation and valid closing date.'); return create(jobs, scope, actor, 'job', 'Job opened', { ...input, status: 'open' }, input.title); },
+  addJob(scope: HrScope, actor: HrActor, input: Pick<Job, 'branchId' | 'title' | 'departmentId' | 'designationId' | 'closesOn'> & { openedOn?: string }) {
+    if (!input.title.trim() || !input.departmentId || !input.designationId || !validDate(input.closesOn)) throw new Error('Enter a title, department, designation and valid closing date.');
+    if (input.openedOn && input.openedOn < today()) throw new Error('Job opening date cannot be a previous date.');
+    if (input.openedOn && input.closesOn < input.openedOn) throw new Error('Closing date cannot precede opening date.');
+    return create(jobs, scope, actor, 'job', 'Job opened', { ...input, openedOn: input.openedOn, status: 'open' }, input.title);
+  },
   closeJob(scope: HrScope, actor: HrActor, itemId: string) { return transition(jobs, scope, actor, itemId, 'Job closed', (item) => { if (item.status !== 'open') throw new Error('Job is already closed.'); item.status = 'closed'; }); },
-  addCandidate(scope: HrScope, actor: HrActor, input: Pick<Candidate, 'jobId' | 'name' | 'email' | 'appliedOn'>) { const job = find(jobs, scope, input.jobId); if (job.status !== 'open' || !input.name.trim() || !/^\S+@\S+\.\S+$/.test(input.email) || !validDate(input.appliedOn)) throw new Error('Choose an open job and enter valid candidate details.'); return create(candidates, scope, actor, 'candidate', 'Candidate applied', { ...input, branchId: job.branchId, stage: 'applied' }, input.name); },
-  setCandidateStage(scope: HrScope, actor: HrActor, itemId: string, stage: Candidate['stage'], interviewOn?: string) { return transition(candidates, scope, actor, itemId, `Candidate ${stage}`, (item) => { const allowed: Record<Candidate['stage'], Candidate['stage'][]> = { applied: ['interview', 'rejected'], interview: ['shortlisted', 'rejected'], shortlisted: ['selected', 'rejected'], selected: ['rejected'], rejected: [], converted: [] }; if (!allowed[item.stage].includes(stage) || (stage === 'interview' && (!interviewOn || !validDate(interviewOn)))) throw new Error('Candidate stage change is not allowed.'); item.stage = stage; if (stage === 'interview') item.interviewOn = interviewOn; }); },
+  addCandidate(scope: HrScope, actor: HrActor, input: Pick<Candidate, 'jobId' | 'name' | 'email' | 'appliedOn'>) {
+    const job = find(jobs, scope, input.jobId);
+    if (job.status !== 'open' || !input.name.trim() || !/^\S+@\S+\.\S+$/.test(input.email) || !validDate(input.appliedOn)) throw new Error('Choose an open job and enter valid candidate details.');
+    if (job.closesOn && (job.closesOn < today() || input.appliedOn > job.closesOn)) {
+      throw new Error('Cannot add candidates to a job opening after its closing date.');
+    }
+    return create(candidates, scope, actor, 'candidate', 'Candidate applied', { ...input, branchId: job.branchId, stage: 'applied' }, input.name);
+  },
+  setCandidateStage(scope: HrScope, actor: HrActor, itemId: string, stage: Candidate['stage'], interviewOn?: string) {
+    return transition(candidates, scope, actor, itemId, `Candidate ${stage}`, (item) => {
+      const allowed: Record<Candidate['stage'], Candidate['stage'][]> = { applied: ['interview', 'rejected'], interview: ['shortlisted', 'rejected'], shortlisted: ['selected', 'rejected'], selected: ['rejected'], rejected: [], converted: [] };
+      if (!allowed[item.stage].includes(stage) || (stage === 'interview' && (!interviewOn || !validDate(interviewOn)))) throw new Error('Candidate stage change is not allowed.');
+      if (stage === 'interview' && interviewOn) {
+        const job = jobs.find((j) => j.id === item.jobId);
+        if (job?.openedOn && interviewOn < job.openedOn) {
+          throw new Error(`Interview date must be on or after the job opening date (${job.openedOn}).`);
+        }
+      }
+      item.stage = stage;
+      if (stage === 'interview') item.interviewOn = interviewOn;
+    });
+  },
   addCandidateNote(scope: HrScope, actor: HrActor, itemId: string, note: string) { return transition(candidates, scope, actor, itemId, 'Candidate note added', (item) => { if (!note.trim()) throw new Error('Interview note is required.'); item.notes = [item.notes, note.trim()].filter(Boolean).join('\n'); }); },
-  async convertCandidate(scope: HrScope, actor: HrActor, itemId: string, input: { employeeCode: string; phone: string; salary: number; dateOfJoining: string; reportingManagerId?: string }) { const candidate = find(candidates, scope, itemId); const job = find(jobs, scope, candidate.jobId); if (candidate.stage !== 'selected' || !validDate(input.dateOfJoining)) throw new Error('Select the candidate and enter a valid joining date first.'); const [firstName, ...rest] = candidate.name.trim().split(/\s+/); const employee = await hrService.saveEmployee(scope, actor, { employeeCode: input.employeeCode, firstName, lastName: rest.join(' ') || firstName, email: candidate.email, phone: input.phone, branchId: candidate.branchId, departmentId: job.departmentId, designationId: job.designationId, employmentType: 'full_time', status: 'active', dateOfJoining: input.dateOfJoining, reportingManagerId: input.reportingManagerId, salary: input.salary, currency: 'LKR' }); candidate.stage = 'converted'; candidate.employeeId = employee.id; create(onboarding, scope, actor, 'onboarding', 'Onboarding started', { branchId: employee.branchId, employeeId: employee.id, tasks: [{ label: 'Verify required documents', done: false }, { label: 'Confirm department, designation and manager', done: false }, { label: 'Acknowledge company policies', done: false }, { label: 'Assign required assets', done: false }], status: 'open' }, employee.employeeCode); log(scope, actor, 'Candidate converted', candidate.name, candidate.branchId); return employee; },
+  async convertCandidate(scope: HrScope, actor: HrActor, itemId: string, input: { employeeCode: string; phone: string; salary: number; dateOfJoining: string; reportingManagerId?: string }) {
+    const candidate = find(candidates, scope, itemId);
+    const job = find(jobs, scope, candidate.jobId);
+    if (candidate.stage !== 'selected' || !validDate(input.dateOfJoining)) throw new Error('Select the candidate and enter a valid joining date first.');
+    if (input.dateOfJoining < today()) {
+      throw new Error('Joining date cannot be a past date.');
+    }
+    const [firstName, ...rest] = candidate.name.trim().split(/\s+/);
+    const employee = await hrService.saveEmployee(scope, actor, { employeeCode: input.employeeCode, firstName, lastName: rest.join(' ') || firstName, email: candidate.email, phone: input.phone, branchId: candidate.branchId, departmentId: job.departmentId, designationId: job.designationId, employmentType: 'full_time', status: 'active', dateOfJoining: input.dateOfJoining, reportingManagerId: input.reportingManagerId, salary: input.salary, currency: 'LKR' });
+    candidate.stage = 'converted';
+    candidate.employeeId = employee.id;
+    create(onboarding, scope, actor, 'onboarding', 'Onboarding started', { branchId: employee.branchId, employeeId: employee.id, tasks: [{ label: 'Verify required documents', done: false }, { label: 'Confirm department, designation and manager', done: false }, { label: 'Acknowledge company policies', done: false }, { label: 'Assign required assets', done: false }], status: 'open' }, employee.employeeCode);
+    log(scope, actor, 'Candidate converted', candidate.name, candidate.branchId);
+    return employee;
+  },
   startOnboarding(scope: HrScope, actor: HrActor, employeeId: string) { const employee = worker(scope, employeeId); if (rows(onboarding, scope).some((row) => row.employeeId === employeeId)) throw new Error('Onboarding already exists.'); return create(onboarding, scope, actor, 'onboarding', 'Onboarding started', { branchId: employee.branchId, employeeId, tasks: [{ label: 'Verify required documents', done: false }, { label: 'Confirm job and manager assignment', done: false }, { label: 'Acknowledge company policies', done: false }, { label: 'Assign required assets', done: false }], status: 'open' }, employee.employeeCode); },
   addOnboardingTask(scope: HrScope, actor: HrActor, itemId: string, label: string) { return transition(onboarding, scope, actor, itemId, 'Onboarding task added', (item) => { if (item.status !== 'open' || !label.trim()) throw new Error('Enter a task for an open onboarding.'); item.tasks.push({ label: label.trim(), done: false }); }); },
   setOnboardingTask(scope: HrScope, actor: HrActor, itemId: string, index: number, done: boolean) { return transition(onboarding, scope, actor, itemId, 'Onboarding task updated', (item) => { if (item.status !== 'open' || !item.tasks[index]) throw new Error('Onboarding task is unavailable.'); item.tasks[index].done = done; item.status = item.tasks.every((task) => task.done) ? 'complete' : 'open'; }); },
   addTraining(scope: HrScope, actor: HrActor, input: Pick<Training, 'employeeId' | 'title' | 'startsOn' | 'endsOn'>) { const employee = worker(scope, input.employeeId); if (!input.title.trim() || !validDate(input.startsOn) || !validDate(input.endsOn) || input.endsOn < input.startsOn) throw new Error('Enter a title and valid training dates.'); return create(training, scope, actor, 'training', 'Training assigned', { ...input, branchId: employee.branchId, status: 'assigned' }, input.title); },
   completeTraining(scope: HrScope, actor: HrActor, itemId: string, result: string, certificate?: string) { return transition(training, scope, actor, itemId, 'Training completed', (item) => { if (item.status !== 'assigned' || !result.trim()) throw new Error('Enter a result for assigned training.'); item.status = 'complete'; item.result = result; item.certificate = certificate; }); },
-  addReview(scope: HrScope, actor: HrActor, input: Pick<Review, 'employeeId' | 'reviewerId' | 'period' | 'goals'>) { const employee = worker(scope, input.employeeId); worker(scope, input.reviewerId); if (!/^\d{4}-\d{2}$/.test(input.period) || !input.goals.trim()) throw new Error('Enter a valid review period and goals.'); return create(reviews, scope, actor, 'review', 'Review created', { ...input, branchId: employee.branchId, status: 'draft' }, employee.employeeCode); },
+  addReview(scope: HrScope, actor: HrActor, input: Pick<Review, 'employeeId' | 'reviewerId' | 'period' | 'goals'>) {
+    const employee = worker(scope, input.employeeId);
+    worker(scope, input.reviewerId);
+    if (input.employeeId === input.reviewerId) throw new Error('The employee and reviewer cannot be the same person. Please select a different reviewer.');
+    if (!/^\d{4}-\d{2}$/.test(input.period) || !input.goals.trim()) throw new Error('Enter a valid review period and goals.');
+    return create(reviews, scope, actor, 'review', 'Review created', { ...input, branchId: employee.branchId, status: 'draft' }, employee.employeeCode);
+  },
   submitReview(scope: HrScope, actor: HrActor, itemId: string, rating: number, remarks: string) { return transition(reviews, scope, actor, itemId, 'Review submitted', (item) => { if (item.status !== 'draft' || !Number.isInteger(rating) || rating < 1 || rating > 5 || !remarks.trim()) throw new Error('Enter a rating from 1 to 5 and remarks.'); item.rating = rating; item.remarks = remarks; item.status = 'submitted'; }); },
   completeReview(scope: HrScope, actor: HrActor, itemId: string) { return transition(reviews, scope, actor, itemId, 'Review completed', (item) => { if (item.status !== 'submitted') throw new Error('Submit the review first.'); item.status = 'complete'; }); },
   addOkr(scope: HrScope, actor: HrActor, input: Pick<Okr, 'employeeId' | 'objective' | 'keyResult' | 'period'>) { const employee = worker(scope, input.employeeId); if (!input.objective.trim() || !input.keyResult.trim() || !/^\d{4}-\d{2}$/.test(input.period)) throw new Error('Enter an objective, key result and period.'); return create(okrs, scope, actor, 'okr', 'OKR created', { ...input, branchId: employee.branchId, progress: 0, status: 'active' }, input.objective); },
@@ -76,7 +121,15 @@ export const advancedHrService = {
   commentTicket(scope: HrScope, actor: HrActor, itemId: string, text: string) { return transition(tickets, scope, actor, itemId, 'Ticket comment added', (item) => { if (item.status === 'closed' || !text.trim()) throw new Error('Enter a comment on an open ticket.'); item.comments.push({ author: actor.name, text: text.trim(), at: now() }); }); },
   issueAsset(scope: HrScope, actor: HrActor, input: Pick<Asset, 'employeeId' | 'name' | 'issuedOn' | 'condition'>) { const employee = worker(scope, input.employeeId); if (!input.name.trim() || !input.condition.trim() || !validDate(input.issuedOn)) throw new Error('Enter an asset, condition and issue date.'); return create(assets, scope, actor, 'asset', 'Asset issued', { ...input, branchId: employee.branchId, status: 'issued' }, input.name); },
   returnAsset(scope: HrScope, actor: HrActor, itemId: string, returnedOn: string, condition: string) { return transition(assets, scope, actor, itemId, 'Asset returned', (item) => { if (item.status !== 'issued' || !validDate(returnedOn) || returnedOn < item.issuedOn || !condition.trim()) throw new Error('Enter a valid return date and condition.'); item.status = 'returned'; item.returnedOn = returnedOn; item.condition = condition; }); },
-  startExit(scope: HrScope, actor: HrActor, input: Pick<Exit, 'employeeId' | 'type' | 'lastDay' | 'reason'>) { const employee = worker(scope, input.employeeId); if (!validDate(input.lastDay) || input.lastDay < employee.dateOfJoining || !input.reason.trim()) throw new Error('Enter a valid last day and reason.'); if (rows(exits, scope).some((row) => row.employeeId === input.employeeId && row.status === 'open')) throw new Error('An exit is already open.'); return create(exits, scope, actor, 'exit', 'Exit started', { ...input, branchId: employee.branchId, status: 'open', clearance: [{ label: 'Return assigned assets', done: false }, { label: 'Complete document clearance', done: false }, { label: 'Complete final HR review', done: false }] }, employee.employeeCode); },
+  startExit(scope: HrScope, actor: HrActor, input: Pick<Exit, 'employeeId' | 'type' | 'lastDay' | 'reason'>) {
+    const employee = worker(scope, input.employeeId);
+    if (!validDate(input.lastDay) || input.lastDay < employee.dateOfJoining || !input.reason.trim()) throw new Error('Enter a valid last day and reason.');
+    if (employee.status === 'resigned' && input.type === 'resignation') {
+      throw new Error('Employee is already in Resigned status.');
+    }
+    if (rows(exits, scope).some((row) => row.employeeId === input.employeeId && row.status === 'open')) throw new Error('An exit is already open.');
+    return create(exits, scope, actor, 'exit', 'Exit started', { ...input, branchId: employee.branchId, status: 'open', clearance: [{ label: 'Return assigned assets', done: false }, { label: 'Complete document clearance', done: false }, { label: 'Complete final HR review', done: false }] }, employee.employeeCode);
+  },
   setExitTask(scope: HrScope, actor: HrActor, itemId: string, index: number, done: boolean) { return transition(exits, scope, actor, itemId, 'Exit clearance updated', (item) => { if (item.status !== 'open' || !item.clearance[index]) throw new Error('Exit task is unavailable.'); item.clearance[index].done = done; }); },
   async completeExit(scope: HrScope, actor: HrActor, itemId: string) { const item = find(exits, scope, itemId); if (item.status !== 'open' || !item.clearance.every((task) => task.done) || rows(assets, scope).some((row) => row.employeeId === item.employeeId && row.status === 'issued')) throw new Error('Complete clearance and return all assets first.'); const employee = worker(scope, item.employeeId); await hrService.saveEmployee(scope, actor, { ...employee, status: item.type === 'resignation' ? 'resigned' : 'terminated', exitDate: item.lastDay }); return transition(exits, scope, actor, itemId, 'Exit completed', (row) => { row.status = 'complete'; }); },
 };

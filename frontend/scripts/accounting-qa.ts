@@ -106,6 +106,9 @@ assert.ok(accountingService.cashFlow(scope).rows.every((row) => row.branchId ===
 assert.equal(accountingService.cashFlow(other).rows.length, 0);
 assert.throws(() => accountingService.saveJournal(scope, actor, { branchId: 'branch-002', date: '2026-09-28', reference: 'QA-INVALID', notes: '', attachments: [], lines: [] }));
 assert.throws(() => accountingService.saveJournal(scope, actor, { branchId: scope.branchId, date: '2026-09-28', reference: 'QA-INVALID', notes: '', attachments: [], lines: [{ accountId: 'acct-1200', debit: 100, credit: 0 }, { accountId: 'acct-3000', debit: 0, credit: 99 }] }));
+assert.throws(() => accountingService.saveJournal(scope, actor, { branchId: scope.branchId, date: '2026-09-28', reference: 'QA-DUP-ACCT', notes: '', attachments: [], lines: [{ accountId: 'acct-1200', debit: 100, credit: 0 }, { accountId: 'acct-1200', debit: 0, credit: 100 }] }), /same account cannot be selected for both Debit and Credit/);
+assert.throws(() => accountingService.saveJournal(scope, actor, { branchId: scope.branchId, date: '2026-09-28', reference: 'QA-EXCEED-BAL', notes: '', attachments: [], lines: [{ accountId: 'acct-1100', debit: 100000, credit: 0 }, { accountId: 'acct-1200', debit: 0, credit: 100000 }] }), /Insufficient balance/);
+assert.throws(() => accountingService.saveJournal(scope, actor, { branchId: scope.branchId, date: '2026-09-28', reference: 'QA-ZERO-BAL', notes: '', attachments: [], lines: [{ accountId: 'acct-1200', debit: 500, credit: 0 }, { accountId: 'acct-1100', debit: 0, credit: 500 }] }), /Insufficient balance/);
 
 const journal = accountingService.saveJournal(scope, actor, { branchId: scope.branchId, date: '2026-09-28', reference: 'QA-JOURNAL', notes: 'Workflow QA', attachments: [], lines: [{ accountId: 'acct-1200', debit: 100, credit: 0 }, { accountId: 'acct-3000', debit: 0, credit: 100 }] });
 assert.equal(journal.status, 'draft');
@@ -134,4 +137,29 @@ assert.equal(receipt.reference, 'R-00001');
 assert.ok(accountingService.receivables(scope).find((row) => row.id === receivable.id)!.outstanding < receivable.outstanding);
 assert.throws(() => accountingService.matchBankLine(scope, actor, 'bank-001', receipt.id));
 assert.ok(accountingService.audit(scope).length > 0);
+
+// Opening balances: create, view, and edit/update
+const createdOpening = accountingService.saveOpeningBalance(scope, actor, { branchId: scope.branchId, date: '2026-09-28', reference: 'QA-OPENING-01', accountId: 'acct-1100', amount: 15000, side: 'debit' });
+assert.equal(createdOpening.amount, 15000);
+assert.equal(createdOpening.history.length, 1);
+assert.equal(createdOpening.history[0].action, 'Opening balance entered');
+assert.ok(accountingService.openingBalances(scope).some((row) => row.id === createdOpening.id));
+
+const updatedOpening = accountingService.saveOpeningBalance(scope, actor, { id: createdOpening.id, branchId: scope.branchId, date: '2026-09-28', reference: 'QA-OPENING-01', accountId: 'acct-1100', amount: 20000, side: 'debit' });
+assert.equal(updatedOpening.id, createdOpening.id);
+assert.equal(updatedOpening.amount, 20000);
+assert.equal(updatedOpening.history.length, 2);
+assert.equal(updatedOpening.history[1].action, 'Opening balance edited');
+assert.equal(accountingService.openingBalances(scope).find((row) => row.id === createdOpening.id)?.amount, 20000);
+
+// Validation errors
+assert.throws(() => accountingService.saveOpeningBalance(scope, actor, { branchId: scope.branchId, date: '2026-09-28', reference: 'QA-OP-ERR', accountId: 'non-existent', amount: 1000, side: 'debit' }), /Please select an account\./);
+assert.throws(() => accountingService.saveOpeningBalance(scope, actor, { branchId: scope.branchId, date: '2026-09-28', reference: '', accountId: 'acct-1100', amount: 1000, side: 'debit' }), /Please enter a reference\./);
+assert.throws(() => accountingService.saveOpeningBalance(scope, actor, { branchId: scope.branchId, date: '2026-09-28', reference: 'QA-OP-ERR', accountId: 'acct-1100', amount: 0, side: 'debit' }), /Please enter a valid amount\./);
+
+// Delete opening balance
+accountingService.deleteOpeningBalance(scope, actor, createdOpening.id);
+assert.equal(accountingService.openingBalances(scope).some((row) => row.id === createdOpening.id), false);
+assert.ok(accountingService.audit(scope).some((row) => row.action === 'Opening balance deleted'));
+
 console.log('Accounting scope, permissions, journal transitions, ledger, settlement and reconciliation checks passed.');

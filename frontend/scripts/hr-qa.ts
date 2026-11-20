@@ -76,4 +76,142 @@ assert.equal(handoff.commission, commission.amount);
 assert.equal((await salesService.getCommissions(scope, scope.permittedBranchIds)).find(row => row.salespersonId === commission.salespersonId)?.payrollStatus, 'included');
 assert.equal(hrService.payrollHandoffs(other).length, 0);
 assert.ok(hrService.audit(scope, worker.id).length > 0);
+
+// Validate alphanumeric phone rejection
+await assert.rejects(() => hrService.saveEmployee(scope, actor, { branchId: scope.branchId, firstName: 'Invalid', lastName: 'Phone', email: 'inv@phone.test', phone: '0771234abc', departmentId: 'dept-001', designationId: 'des-005', employmentType: 'full_time', status: 'active', dateOfJoining: '2026-09-01', salary: 3000, currency: 'USD' }), /Phone number cannot contain letters/);
+
+// Validate night shift addition
+const nightShift = hrService.saveShift(scope, actor, { branchId: scope.branchId, name: 'Night shift', start: '22:00', end: '06:00', breakMinutes: 60, active: true });
+assert.equal(nightShift.name, 'Night shift');
+
+// Validate all employees have generated payslips
+const allWorkers = hrService.employees(scope);
+const allSlips = hrService.payslips(scope);
+assert.ok(allWorkers.every((w) => allSlips.some((s) => s.employeeId === w.id)));
+
+// Validate send payslip email
+const emailResult = hrService.sendPayslipEmail(scope, actor, allSlips[0].id);
+assert.equal(emailResult.success, true);
+assert.ok(emailResult.email);
+
+// Validate attendance calculation considering shift (late & overtime)
+const dayShift = hrService.saveShift(scope, actor, { branchId: scope.branchId, name: 'Standard shift', start: '09:00', end: '17:00', breakMinutes: 60, active: true });
+const shiftAtt = hrService.recordAttendance(scope, actor, {
+  branchId: scope.branchId,
+  employeeId: worker.id,
+  shiftId: dayShift.id,
+  date: '2026-09-30',
+  checkIn: '09:10',
+  checkOut: '17:00',
+  source: 'manual',
+});
+assert.equal(shiftAtt.status, 'late');
+assert.equal(shiftAtt.overtimeHours, 0);
+
+const otAtt = hrService.recordAttendance(scope, actor, {
+  branchId: scope.branchId,
+  employeeId: worker.id,
+  shiftId: dayShift.id,
+  date: '2026-10-03',
+  checkIn: '09:00',
+  checkOut: '19:00',
+  source: 'manual',
+});
+assert.equal(otAtt.status, 'present');
+assert.equal(otAtt.overtimeHours, 2);
+
+// Validate preventing attendance marking for resigned employee after effective exit date
+const resignedWorker = await hrService.saveEmployee(scope, actor, {
+  branchId: scope.branchId,
+  firstName: 'Resigned',
+  lastName: 'Person',
+  email: 'resigned@test.com',
+  phone: '0771234567',
+  departmentId: 'dept-001',
+  designationId: 'des-005',
+  employmentType: 'full_time',
+  status: 'resigned',
+  dateOfJoining: '2026-01-01',
+  exitDate: '2026-06-30',
+  salary: 2000,
+  currency: 'USD',
+});
+assert.throws(
+  () => hrService.recordAttendance(scope, actor, {
+    branchId: scope.branchId,
+    employeeId: resignedWorker.id,
+    date: '2026-07-01',
+    checkIn: '09:00',
+    checkOut: '17:00',
+    source: 'manual',
+  }),
+  /after their effective resignation date/
+);
+
+// Validate preventing leave applications for resigned and terminated employees
+assert.throws(
+  () => hrService.requestLeave(scope, actor, {
+    employeeId: resignedWorker.id,
+    typeId: 'leave-annual',
+    startDate: '2026-05-01',
+    endDate: '2026-05-02',
+    reason: 'Resigned leave',
+  }),
+  /not allowed for resigned or terminated employees/
+);
+
+const terminatedWorker = await hrService.saveEmployee(scope, actor, {
+  branchId: scope.branchId,
+  firstName: 'Terminated',
+  lastName: 'Worker',
+  email: 'term@test.com',
+  phone: '0777654321',
+  departmentId: 'dept-001',
+  designationId: 'des-005',
+  employmentType: 'full_time',
+  status: 'terminated',
+  dateOfJoining: '2026-01-01',
+  exitDate: '2026-05-31',
+  salary: 2500,
+  currency: 'USD',
+});
+assert.throws(
+  () => hrService.requestLeave(scope, actor, {
+    employeeId: terminatedWorker.id,
+    typeId: 'leave-annual',
+    startDate: '2026-04-01',
+    endDate: '2026-04-02',
+    reason: 'Terminated leave',
+  }),
+  /not allowed for resigned or terminated employees/
+);
+
+// Validate preventing multiple overlapping leaves for the same employee
+const firstLeave = hrService.requestLeave(scope, actor, {
+  employeeId: worker.id,
+  typeId: 'leave-sick',
+  startDate: '2026-11-10',
+  endDate: '2026-11-12',
+  reason: 'First leave',
+});
+assert.ok(firstLeave.id);
+assert.throws(
+  () => hrService.requestLeave(scope, actor, {
+    employeeId: worker.id,
+    typeId: 'leave-annual',
+    startDate: '2026-11-11',
+    endDate: '2026-11-15',
+    reason: 'Overlapping leave',
+  }),
+  /overlaps with an existing leave/
+);
+
+// Validate payslips department filtering
+const deptSlips = hrService.payslips(scope, undefined, 'dept-001');
+assert.ok(deptSlips.length > 0);
+assert.ok(deptSlips.every((slip) => {
+  const emp = hrService.employees(scope).find((e) => e.id === slip.employeeId);
+  return emp?.departmentId === 'dept-001';
+}));
+
 console.log('HR scope, organization, attendance, leave, overtime, payroll and handoff checks passed.');
