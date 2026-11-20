@@ -6,9 +6,24 @@ import type { StockMovement } from '@/features/inventory/types/inventory';
 import { customerService } from '@/features/customers/services/customerService';
 import { registerList, replaceArray } from '@/core/persistence/stateRegistry';
 
-export const webOrderSchema = z.object({ customerId: z.string().min(1), productId: z.string().min(1), quantity: z.number().int().positive(), locationId: z.string().min(1), paymentStatus: z.enum(['pending', 'paid']) });
+export const webOrderSchema = z.object({
+  customerId: z.string().trim().min(1, 'Please select a customer to continue.'),
+  productId: z.string().trim().min(1, 'Please select a product to continue.'),
+  quantity: z.number().int().positive('Quantity must be greater than zero.'),
+  locationId: z.string().trim().min(1, 'Please select a stock location to continue.'),
+  paymentStatus: z.enum(['pending', 'paid']),
+});
 export type WebOrderInput = z.infer<typeof webOrderSchema>;
-export type WebOrder = WebOrderInput & { id: string; scope: TenantBranchScope; status: 'new' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled'; createdAt: string; notifiedAt?: string; completedAt?: string };
+export type WebOrder = WebOrderInput & {
+  id: string;
+  scope: TenantBranchScope;
+  customerName?: string;
+  productName?: string;
+  status: 'new' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled';
+  createdAt: string;
+  notifiedAt?: string;
+  completedAt?: string;
+};
 const orders: WebOrder[] = [];
 const scoped = (a: TenantBranchScope, b: TenantBranchScope) => a.tenantId === b.tenantId && a.branchId === b.branchId;
 function balanceFor(order: WebOrder) { return inventoryStore.balances().findIndex(b => scoped(b, order.scope) && b.locationId === order.locationId && b.productId === order.productId); }
@@ -17,12 +32,21 @@ export const posWebOrders = {
   create(scope: TenantBranchScope, permittedBranches: string[], input: WebOrderInput) {
     if (!scope.tenantId || !permittedBranches.includes(scope.branchId)) throw new Error('Branch access is required.');
     const data = webOrderSchema.parse(input);
-    if (!customerService.getCachedCustomerById(scope, data.customerId)) throw new Error('Choose a customer in this branch.');
+    const customer = customerService.getCachedCustomerById(scope, data.customerId);
+    if (!customer) throw new Error('Choose a customer in this branch.');
     const location = inventoryStore.locations().find(l => l.id === data.locationId && scoped(l, scope));
     const product = productStore.all().find(p => p.id === data.productId && p.tenantId === scope.tenantId && p.isSellable && p.status === 'active' && p.type !== 'service');
     if (!location || !product) throw new Error('Choose a product and location in this branch.');
     if (product.trackByBatch || product.trackBySerialNumber) throw new Error('Tracked items need batch or serial selection before web order confirmation.');
-    const order: WebOrder = { ...data, id: crypto.randomUUID(), scope, status: 'new', createdAt: new Date().toISOString() };
+    const order: WebOrder = {
+      ...data,
+      id: crypto.randomUUID(),
+      customerName: customer.name,
+      productName: product.name,
+      scope,
+      status: 'new',
+      createdAt: new Date().toISOString(),
+    };
     orders.unshift(order); return order;
   },
   confirm(order: WebOrder) {
