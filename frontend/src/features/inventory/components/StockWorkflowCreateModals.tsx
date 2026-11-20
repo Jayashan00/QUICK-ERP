@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { Controller, useFieldArray, useForm } from "react-hook-form";
+import { Controller, useFieldArray } from "react-hook-form";
+import { useAppForm } from "@/shared/hooks";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useBranch } from "@/core/branch/branch-context";
 import { useTenant } from "@/core/tenant/tenant-context";
@@ -80,7 +81,7 @@ function FormActions({ formId, busy, onClose, submitLabel = "Submit for approval
 export function StockAdjustmentCreateModal({ isOpen, onClose }: ModalProps) {
   const { branches, branchId } = useBranch();
   const mutations = useStockWorkflowMutations();
-  const form = useForm<StockAdjustmentFormValues>({ resolver: zodResolver(stockAdjustmentSchema), defaultValues: { branchId: branchId ?? "", warehouseId: "", locationId: "", direction: "increase", reason: "", notes: "", lines: [{ ...lineDefaults }] } });
+  const form = useAppForm<StockAdjustmentFormValues>({ resolver: zodResolver(stockAdjustmentSchema), defaultValues: { branchId: branchId ?? "", warehouseId: "", locationId: "", direction: "increase", reason: "", notes: "", lines: [{ ...lineDefaults }] } });
   const selectedBranch = form.watch("branchId"); const warehouseId = form.watch("warehouseId"); const locationId = form.watch("locationId"); const productId = form.watch("lines.0.productId");
   const warehouses = useWarehouseOptions(selectedBranch); const locations = useStockLocationOptions(warehouseId); const products = useInventoryProductOptions("all");
   const submit = form.handleSubmit(async (values) => { try { await mutations.createAdjustment(values); appToast.success("Stock adjustment submitted for approval."); form.reset(); onClose(); } catch (error) { appToast.error(getErrorMessage(error, "Unable to create stock adjustment.")); } });
@@ -102,7 +103,7 @@ export function StockTransferCreateModal({ isOpen, onClose }: ModalProps) {
   const { branches, branchId } = useBranch();
   const mutations = useStockWorkflowMutations();
 
-  const form = useForm<StockTransferFormValues>({
+  const form = useAppForm<StockTransferFormValues>({
     resolver: zodResolver(stockTransferSchema),
     defaultValues: {
       sourceBranchId: branchId ?? "",
@@ -437,7 +438,7 @@ export function StockTransferCreateModal({ isOpen, onClose }: ModalProps) {
 
 export function BranchStockRequestCreateModal({ isOpen, onClose }: ModalProps) {
   const { branches, branchId } = useBranch(); const mutations = useStockWorkflowMutations();
-  const form = useForm<BranchStockRequestFormValues>({ resolver: zodResolver(branchStockRequestSchema), defaultValues: { requestingBranchId: branchId ?? "", requestedFromBranchId: "", destinationWarehouseId: "", destinationLocationId: "", reason: "", notes: "", lines: [{ ...lineDefaults }] } });
+  const form = useAppForm<BranchStockRequestFormValues>({ resolver: zodResolver(branchStockRequestSchema), defaultValues: { requestingBranchId: branchId ?? "", requestedFromBranchId: "", destinationWarehouseId: "", destinationLocationId: "", reason: "", notes: "", lines: [{ ...lineDefaults }] } });
   const lineFields = useFieldArray({ control: form.control, name: "lines" });
   const requestingBranch = form.watch("requestingBranchId"), warehouseId = form.watch("destinationWarehouseId"); const warehouses = useWarehouseOptions(requestingBranch), locations = useStockLocationOptions(warehouseId), products = useInventoryProductOptions("all");
   const submit = form.handleSubmit(async (values) => { try { await mutations.createRequest(values); appToast.success("Branch stock request submitted for review."); form.reset(); onClose(); } catch (error) { appToast.error(getErrorMessage(error, "Unable to create stock request.")); } });
@@ -448,7 +449,7 @@ export function BranchStockRequestCreateModal({ isOpen, onClose }: ModalProps) {
 
 export function StockCountCreateModal({ isOpen, onClose }: ModalProps) {
   const { branches, branchId } = useBranch(); const mutations = useStockWorkflowMutations();
-  const form = useForm<StockCountFormValues>({ resolver: zodResolver(stockCountSchema), defaultValues: { branchId: branchId ?? "", warehouseId: "", locationId: "", reason: "Cycle count", notes: "", lines: [{ ...lineDefaults, systemQuantity: 0, physicalQuantity: 0 }] } });
+  const form = useAppForm<StockCountFormValues>({ resolver: zodResolver(stockCountSchema), defaultValues: { branchId: branchId ?? "", warehouseId: "", locationId: "", reason: "Cycle count", notes: "", lines: [{ ...lineDefaults, systemQuantity: 0, physicalQuantity: 0 }] } });
   const selectedBranch = form.watch("branchId"), warehouseId = form.watch("warehouseId"), locationId = form.watch("locationId"), productId = form.watch("lines.0.productId"); const warehouses = useWarehouseOptions(selectedBranch), locations = useStockLocationOptions(warehouseId), products = useInventoryProductOptions("all");
   const balances = useStockBalances({ branchId: selectedBranch || "__none__", warehouseId: warehouseId || "__none__", locationId: locationId || "__none__", permittedBranchIds: branches.map((branch) => branch.id) });
   const systemQuantity = (balances.data ?? []).filter((balance) => balance.productId === productId).reduce((sum, balance) => sum + balance.quantityOnHand, 0);
@@ -463,7 +464,7 @@ export function StockCountCreateModal({ isOpen, onClose }: ModalProps) {
 
 export function StockReturnWastageCreateModal({ isOpen, onClose }: ModalProps) {
   const { branches, branchId } = useBranch(); const mutations = useStockWorkflowMutations();
-  const form = useForm<StockReturnWastageFormValues>({ resolver: zodResolver(stockReturnWastageSchema), defaultValues: { branchId: branchId ?? "", warehouseId: "", locationId: "", workflowType: "return", condition: "usable", reason: "", notes: "", lines: [{ ...lineDefaults }] } });
+  const form = useAppForm<StockReturnWastageFormValues>({ resolver: zodResolver(stockReturnWastageSchema), defaultValues: { branchId: branchId ?? "", warehouseId: "", locationId: "", workflowType: "return", condition: "usable", reason: "", notes: "", lines: [{ ...lineDefaults }] } });
   const selectedBranch = form.watch("branchId"), warehouseId = form.watch("warehouseId"), locationId = form.watch("locationId"), productId = form.watch("lines.0.productId"); const warehouses = useWarehouseOptions(selectedBranch), locations = useStockLocationOptions(warehouseId), products = useInventoryProductOptions("all");
   const submit = form.handleSubmit(async (values) => { try { await mutations.createReturnWastage(values); appToast.success("Stock return or wastage submitted for approval."); form.reset(); onClose(); } catch (error) { appToast.error(getErrorMessage(error, "Unable to create stock return or wastage.")); } });
   return <Modal isOpen={isOpen} onClose={onClose} title="New Return / Wastage" maxWidth="820px" footer={<FormActions formId="return-form" busy={form.formState.isSubmitting} onClose={onClose} />}><form id="return-form" onSubmit={submit} className="grid gap-4 sm:grid-cols-2" noValidate>
