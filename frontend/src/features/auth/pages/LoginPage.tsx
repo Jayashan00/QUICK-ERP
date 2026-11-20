@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
+import { useAppForm } from '@/shared/hooks';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Eye, EyeOff, LogIn } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff, LogIn } from 'lucide-react';
 import { useAuth } from '@/core/auth/auth-context';
 import { isBackendEnabled } from '@/core/persistence/backendSession';
 import { ApiError } from '@/core/api';
@@ -20,7 +20,7 @@ export function LoginPage() {
   const { login, status } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const demo = import.meta.env.DEV && !isBackendEnabled();
-  const { register, handleSubmit, setError, formState: { errors, isSubmitting } } = useForm<LoginValues>({
+  const { register, handleSubmit, setError, formState: { errors, isSubmitting } } = useAppForm<LoginValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: demo ? 'admin@quickerp.test' : '', password: '', remember: true },
   });
@@ -54,14 +54,23 @@ export function LoginPage() {
       <p className="mt-1.5 text-[15px] text-slate-500">Use the email address your company registered for you.</p>
 
       {errors.root?.message && (
-        <div role="alert" className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {errors.root.message}
+        <div role="alert" className="mt-6 flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <AlertCircle size={18} className="mt-0.5 shrink-0 text-red-600" aria-hidden="true" />
+          <span>{errors.root.message}</span>
         </div>
       )}
 
       <form className="mt-8 space-y-5" onSubmit={handleSubmit(submit)} noValidate>
         <FormField label="Email address" htmlFor="login-email" required error={errors.email?.message}>
-          <TextInput id="login-email" type="email" autoComplete="email" autoFocus placeholder="name@company.lk" error={Boolean(errors.email)} {...register('email')} />
+          <TextInput
+            id="login-email"
+            type="email"
+            autoComplete="email"
+            autoFocus
+            placeholder="name@company.lk"
+            error={Boolean(errors.email || errors.root)}
+            {...register('email')}
+          />
         </FormField>
 
         <FormField label="Password" htmlFor="login-password" required error={errors.password?.message}>
@@ -71,7 +80,7 @@ export function LoginPage() {
               type={showPassword ? 'text' : 'password'}
               autoComplete="current-password"
               className="pr-11"
-              error={Boolean(errors.password)}
+              error={Boolean(errors.password || errors.root)}
               {...register('password')}
             />
             <button

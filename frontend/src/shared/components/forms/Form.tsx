@@ -4,6 +4,10 @@ export interface FormProps extends FormHTMLAttributes<HTMLFormElement> {
   children: ReactNode;
 }
 
-export function Form({ children, ...props }: FormProps) {
-  return <form {...props}>{children}</form>;
+export function Form({ children, noValidate = true, ...props }: FormProps) {
+  return (
+    <form noValidate={noValidate} {...props}>
+      {children}
+    </form>
+  );
 }

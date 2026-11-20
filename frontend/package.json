@@ -35,6 +35,7 @@
     "qa:role-permissions": "node scripts/run-role-permissions-qa.mjs",
     "qa:tenant-routing": "node scripts/run-tenant-routing-qa.mjs",
     "qa:search": "node scripts/run-global-search-qa.mjs",
+    "qa:validation": "node scripts/run-validation-qa.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
     "qa:api": "node scripts/run-api-qa.mjs",

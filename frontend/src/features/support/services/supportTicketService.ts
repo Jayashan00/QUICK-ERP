@@ -155,7 +155,7 @@ export const supportTicketService = {
     if (ticket.status === 'closed') throw new Error('Closed tickets cannot receive responses.');
     const timestamp = now(); const supportActor: SupportActor = ticket.assignedSupportUser ?? { id: 'support-mock', name: 'Quick ERP Support' };
     ticket.conversation.push({ id: uid('support-message'), author: supportActor, authorType: 'quick_erp_support', message: parsed.message, attachmentIds: [], createdAt: timestamp }); ticket.updatedAt = timestamp;
-    recordAudit(scope, ticket, 'Support response added', `A mock Quick ERP support response was added to ${ticket.ticketNumber}.`);
+    recordAudit(scope, ticket, 'Support response added', `A Quick ERP support response was added to ${ticket.ticketNumber}.`);
     await notifyTicketOwner(ticket, `Reply received for ${ticket.ticketNumber}`, parsed.message, 'info'); return clone(ticket);
   },
 

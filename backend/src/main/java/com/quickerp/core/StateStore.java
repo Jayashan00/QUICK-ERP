@@ -484,7 +484,7 @@ public final class StateStore {
         // Feature services may add richer workflow context even when the actor cannot view the audit screen.
         // Accept only new append-only events and overwrite all identity/time fields from the authenticated session.
         if (AUDIT_COLLECTION.equals(collection)) {
-            if (change.isDelete()) return Decision.ignored();
+            if (change.isDelete() || isReserved(recordId)) return Decision.ignored();
             JsonNode storedAudit = storedData(connection, tenant, collection, recordId);
             if (storedAudit != null && !storedAudit.isNull()) {
                 if (storedAudit.equals(change.data())) return Decision.ignored();

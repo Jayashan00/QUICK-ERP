@@ -69,7 +69,7 @@ const phoneCharacters = /^\+?[0-9()\-\s.]+$/;
 const optionalPhoneSchema = z
   .string()
   .trim()
-  .max(30, 'Phone number must be 30 characters or less.')
+  .max(30, 'Phone number cannot exceed 30 characters. Please check the number and re-enter.')
   .refine(
     (phone) => {
       if (!phone) return true;
@@ -77,16 +77,16 @@ const optionalPhoneSchema = z
       const digitCount = phone.replace(/\D/g, '').length;
       return digitCount >= 7 && digitCount <= 15;
     },
-    'Enter a valid phone number (7–15 digits).',
+    'Please enter a valid phone number with 7 to 15 digits (e.g., +1 555-123-4567).',
   );
 
 const optionalWebsite = z
   .string()
   .trim()
-  .max(200, 'Website must be 200 characters or less.')
+  .max(200, 'Website URL cannot exceed 200 characters. Please shorten it to continue.')
   .refine(
     (value) => value === '' || /^https?:\/\/.+/i.test(value),
-    'Enter a valid website URL, including http:// or https://.',
+    'Please enter a valid website URL starting with http:// or https:// (e.g., https://example.com).',
   );
 
 export const supplierAddressSchema = z.object({
@@ -130,9 +130,9 @@ export const supplierBankDetailsSchema = z.object({
   accountNumber: z
     .string()
     .trim()
-    .max(50, 'Account number must be 50 characters or less.')
+    .max(50, 'Account number cannot exceed 50 characters. Please shorten it to proceed.')
     .refine((val) => !val || /^[A-Za-z0-9\-\s]+$/.test(val), {
-      message: 'Account number should contain only letters, numbers, hyphens, and spaces.',
+      message: 'Account number should contain only letters, numbers, hyphens, and spaces. Please check and re-enter.',
     })
     .optional()
     .or(z.literal('')),
@@ -141,18 +141,18 @@ export const supplierBankDetailsSchema = z.object({
   swiftCode: z
     .string()
     .trim()
-    .max(20, 'SWIFT/BIC must be 20 characters or less.')
+    .max(20, 'SWIFT/BIC code cannot exceed 20 characters. Please check the code.')
     .refine((val) => !val || /^[A-Za-z0-9]+$/.test(val), {
-      message: 'SWIFT/BIC code must be alphanumeric.',
+      message: 'SWIFT/BIC code must be alphanumeric (letters and numbers only). Please remove spaces or special characters.',
     })
     .optional()
     .or(z.literal('')),
   iban: z
     .string()
     .trim()
-    .max(40, 'IBAN must be 40 characters or less.')
+    .max(40, 'IBAN cannot exceed 40 characters. Please check the code.')
     .refine((val) => !val || /^[A-Za-z0-9\s]+$/.test(val), {
-      message: 'IBAN must be alphanumeric.',
+      message: 'IBAN must be alphanumeric (letters, numbers, and spaces only). Please check and re-enter.',
     })
     .optional()
     .or(z.literal('')),
@@ -167,7 +167,7 @@ export const supplierSchema = z.object({
     .max(50)
     .refine(
       (value) => value === '' || (SUPPLIER_CATEGORIES as readonly string[]).includes(value),
-      'Select a valid supplier category.',
+      'Please select a valid supplier category from the available options.',
     ),
   contactPerson: requiredString('Contact person', 120),
   email: emailSchema,
@@ -180,8 +180,8 @@ export const supplierSchema = z.object({
   currency: requiredString('Currency', 10),
   paymentTermCode: optionalString('Payment term', 50).optional(),
   paymentTermsDays: nonNegativeNumber('Payment terms')
-    .int('Payment terms must be a whole number of days.')
-    .max(365, 'Payment terms cannot exceed 365 days.')
+    .int('Payment terms must be a whole number of days. Please enter a valid integer.')
+    .max(365, 'Payment terms cannot exceed 365 days. Please enter a valid number of days between 0 and 365.')
     .optional(),
   paymentMethod: z
     .string()
@@ -189,12 +189,12 @@ export const supplierSchema = z.object({
     .max(50)
     .refine(
       (value) => value === '' || (SUPPLIER_PAYMENT_METHODS as readonly string[]).includes(value),
-      'Select a valid payment method.',
+      'Please select a valid payment method from the available options.',
     )
     .optional(),
   bankDetails: supplierBankDetailsSchema.optional(),
   status: z.enum(['active', 'inactive', 'pending'] as const, {
-    error: 'Select a valid supplier status.',
+    error: 'Please select a valid supplier status from the options.',
   }),
   address: supplierAddressSchema,
   notes: optionalString('Notes', 2000),
@@ -202,9 +202,9 @@ export const supplierSchema = z.object({
   if (value.paymentMethod !== 'bank_transfer') return;
 
   const requiredBankFields = [
-    ['bankName', 'Bank name is required for bank transfers.'],
-    ['accountName', 'Account name is required for bank transfers.'],
-    ['accountNumber', 'Account number is required for bank transfers.'],
+    ['bankName', 'Bank name is required for bank transfers. Please enter the bank name to continue.'],
+    ['accountName', 'Account name is required for bank transfers. Please enter the account holder name.'],
+    ['accountNumber', 'Account number is required for bank transfers. Please enter the bank account number.'],
   ] as const;
 
   for (const [field, message] of requiredBankFields) {

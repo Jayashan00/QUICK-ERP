@@ -1,5 +1,5 @@
 import { ModuleDashboardPage } from "@/features/dashboard/components/ModuleDashboard";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Download,
   Plus,
@@ -66,6 +66,7 @@ import type {
   PurchaseDocument,
   PurchaseOrder,
   PurchaseRequest,
+  RequestForQuotation,
   SupplierQuotation,
 } from "../types/purchasing";
 
@@ -83,6 +84,13 @@ interface ListDocument extends PurchaseDocument {
   status: string;
   items: ListItem[];
   supplierId?: string;
+  supplierIds?: string[];
+  invitations?: Array<{
+    id: string;
+    supplierId: string;
+    supplierName?: string;
+    status: string;
+  }>;
   warehouseId?: string;
   totalAmount?: number;
 }
@@ -158,6 +166,7 @@ function PurchasingDetail({
   const { user } = useAuth();
   const { permissions, hasPermission } = usePermissions();
   const products = usePurchasingProductOptions();
+  const suppliers = usePurchasingSupplierOptions();
   const mutations = usePurchasingMutations();
   const canEdit = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.EDIT);
   const download = (document: DocumentRecord) => {
@@ -198,6 +207,37 @@ function PurchasingDetail({
                 <div><span className="block text-xs uppercase text-slate-500">Required date</span>{request.requiredDate}</div>
                 <div className="sm:col-span-2 lg:col-span-4"><span className="block text-xs uppercase text-slate-500">Business reason</span>{request.reason}</div>
                 {request.returnReason && <div className="rounded border border-amber-200 bg-amber-50 p-3 text-amber-900 sm:col-span-2 lg:col-span-4"><span className="block text-xs font-semibold uppercase">Returned for correction</span>{request.returnReason}</div>}
+              </div>
+            );
+          })()}
+          {kind === "rfqs" && (() => {
+            const rfq = row as unknown as RequestForQuotation;
+            const rfqSupplierIds = rfq.supplierIds?.length
+              ? rfq.supplierIds
+              : (rfq as unknown as { supplierId?: string }).supplierId
+                ? [(rfq as unknown as { supplierId?: string }).supplierId!]
+                : [];
+            const supplierNames = rfqSupplierIds
+              .map((id) => suppliers.data?.find((s) => s.id === id)?.name ?? id)
+              .filter(Boolean);
+            return (
+              <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                <div>
+                  <span className="block text-xs uppercase text-slate-500">Selected Suppliers</span>
+                  <span className="font-medium text-slate-900">
+                    {supplierNames.length > 0 ? supplierNames.join(", ") : "—"}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-xs uppercase text-slate-500">Required Delivery Date</span>
+                  <span className="font-medium text-slate-900">{rfq.requiredDeliveryDate || "—"}</span>
+                </div>
+                {rfq.notes && (
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <span className="block text-xs uppercase text-slate-500">Notes</span>
+                    <span className="text-slate-800">{rfq.notes}</span>
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -337,11 +377,26 @@ function PurchasingListPage<T extends ListDocument>(props: ListPageProps<T>) {
     {
       key: "supplierId",
       header: "Supplier",
-      render: (row) =>
-        row.supplierId
-          ? (suppliers.data?.find((supplier) => supplier.id === row.supplierId)
-              ?.name ?? row.supplierId)
-          : "—",
+      render: (row) => {
+        const ids = row.supplierIds && row.supplierIds.length > 0
+          ? row.supplierIds
+          : row.supplierId
+            ? [row.supplierId]
+            : [];
+        if (ids.length > 0) {
+          const names = ids
+            .map((id) => suppliers.data?.find((supplier) => supplier.id === id)?.name ?? id)
+            .filter(Boolean);
+          if (names.length > 0) return names.join(", ");
+        }
+        if (row.invitations && row.invitations.length > 0) {
+          const names = row.invitations
+            .map((inv) => inv.supplierName || (suppliers.data?.find((s) => s.id === inv.supplierId)?.name ?? inv.supplierId))
+            .filter(Boolean);
+          if (names.length > 0) return names.join(", ");
+        }
+        return "—";
+      },
     },
     {
       key: "items",
@@ -762,7 +817,7 @@ function QuotationActions({ row }: { row: SupplierQuotation }) {
   const warehouses = useWarehouseOptions(row.branchId);
   const canCreate = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.CREATE);
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       {row.status === "received" && (
         <Button
           size="sm"
@@ -796,6 +851,34 @@ function QuotationActions({ row }: { row: SupplierQuotation }) {
           }}
         />
       )}
+      {row.status === "preferred" && !canCreate && (
+        <span className="inline-flex items-center rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+          Preferred
+        </span>
+      )}
+      {row.status === "converted" && (
+        <span className="inline-flex items-center text-xs font-medium text-slate-500">
+          Converted to PO
+        </span>
+      )}
+      {row.status === "rejected" && (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={async () => {
+            try {
+              await mutations.selectQuotation(row.id);
+              appToast.success("Quotation selected as preferred.");
+            } catch (error) {
+              appToast.error(
+                getErrorMessage(error, "Unable to select quotation."),
+              );
+            }
+          }}
+        >
+          Re-select
+        </Button>
+      )}
     </div>
   );
 }
@@ -827,19 +910,62 @@ export function SupplierQuotationsPage() {
 }
 export function QuotationComparisonPage() {
   const quotations = useSupplierQuotations({ branchId: "all", pageSize: 100 }),
+    rfqsQuery = useRfqs({ branchId: "all", pageSize: 100 }),
     suppliers = usePurchasingSupplierOptions(),
-    currency = useTenantCurrency(),
-    mutations = usePurchasingMutations();
+    currency = useTenantCurrency();
   const [rfqId, setRfqId] = useState("all");
+  const [detail, setDetail] = useState<SupplierQuotation | null>(null);
+
   const rows = (quotations.data?.data ?? []).filter(
     (item) => rfqId === "all" || item.rfqId === rfqId,
   );
-  const rfqs = [
-    ...new Map(
-      (quotations.data?.data ?? []).map((item) => [item.rfqId, item.rfqId]),
-    ).values(),
-  ];
+
+  const rfqOptions = useMemo(() => {
+    const list = rfqsQuery.data?.data ?? [];
+    const map = new Map<string, string>();
+    list.forEach((rfq) => {
+      map.set(rfq.id, rfq.referenceNumber);
+    });
+    (quotations.data?.data ?? []).forEach((item) => {
+      if (item.rfqId && !map.has(item.rfqId)) {
+        map.set(item.rfqId, item.rfqId);
+      }
+    });
+    return [
+      { value: "all", label: "All RFQs" },
+      ...Array.from(map.entries()).map(([id, label]) => ({
+        value: id,
+        label,
+      })),
+    ];
+  }, [rfqsQuery.data?.data, quotations.data?.data]);
+
   const columns: Column<SupplierQuotation>[] = [
+    {
+      key: "referenceNumber",
+      header: "Reference",
+      render: (row) => (
+        <button
+          type="button"
+          className="font-mono text-xs font-semibold text-blue-700 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500"
+          onClick={() => setDetail(row)}
+        >
+          {row.referenceNumber}
+        </button>
+      ),
+    },
+    {
+      key: "rfqId",
+      header: "RFQ",
+      render: (row) => {
+        const rfq = rfqsQuery.data?.data.find((item) => item.id === row.rfqId);
+        return (
+          <span className="font-mono text-xs text-slate-600">
+            {rfq?.referenceNumber ?? row.rfqId}
+          </span>
+        );
+      },
+    },
     {
       key: "supplierId",
       header: "Supplier",
@@ -874,22 +1000,13 @@ export function QuotationComparisonPage() {
       render: (row) => <StatusBadge status={row.status} />,
     },
     {
-      key: "action",
-      header: "Action",
-      render: (row) =>
-        row.status === "received" ? (
-          <Button
-            size="sm"
-            onClick={async () => {
-              await mutations.selectQuotation(row.id);
-              appToast.success("Preferred quotation selected.");
-            }}
-          >
-            Select
-          </Button>
-        ) : (
-          "—"
-        ),
+      key: "actions",
+      header: "Actions",
+      render: (row) => (
+        <div onClick={(event) => event.stopPropagation()}>
+          <QuotationActions row={row} />
+        </div>
+      ),
     },
   ];
   return (
@@ -909,9 +1026,10 @@ export function QuotationComparisonPage() {
           columns={columns}
           data={rows}
           keyField="id"
-          isLoading={quotations.isLoading}
+          isLoading={quotations.isLoading || rfqsQuery.isLoading}
           emptyTitle="No quotations to compare"
           emptyMessage="Capture supplier responses for an RFQ first."
+          onRowClick={setDetail}
           toolbar={
             <TableToolbar
               filters={
@@ -920,16 +1038,18 @@ export function QuotationComparisonPage() {
                   className="w-full sm:w-52"
                   value={rfqId}
                   onChange={(event) => setRfqId(event.target.value)}
-                  options={[
-                    { value: "all", label: "All RFQs" },
-                    ...rfqs.map((id) => ({ value: id, label: id })),
-                  ]}
+                  options={rfqOptions}
                 />
               }
             />
           }
         />
       )}
+      <PurchasingDetail
+        kind="quotations"
+        row={detail as unknown as ListDocument}
+        onClose={() => setDetail(null)}
+      />
     </PageContainer>
   );
 }

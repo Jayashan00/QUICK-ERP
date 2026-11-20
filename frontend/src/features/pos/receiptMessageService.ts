@@ -22,7 +22,7 @@ export const receiptMessageService = {
     if (source === 'pos') {
       const sale = posService.sales(scope).find(row => row.id === saleId);
       if (!sale) throw new Error('Receipt is unavailable in this branch.');
-      return `Receipt ${saleId.slice(0, 8)} | ${new Date(sale.at).toLocaleString()}\n${sale.lines.map(row => `${row.name} x ${row.quantity}`).join('\n')}\nTotal: ${formatMoney(sale.total + sale.giftUsed + sale.loyaltyUsed)}`;
+      return `Receipt ${posService.getReceiptNumber(sale)} | ${new Date(sale.at).toLocaleString()}\n${sale.lines.map(row => `${row.name} x ${row.quantity}`).join('\n')}\nTotal: ${formatMoney(sale.total + sale.giftUsed + sale.loyaltyUsed)}`;
     }
     const order = storefrontService.listForStaff(scope).find(row => row.id === saleId);
     if (!order) throw new Error('Receipt is unavailable in this branch.');

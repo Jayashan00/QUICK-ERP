@@ -1,10 +1,14 @@
 import { useState, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { TenantLink as Link } from '@/core/routing';
 import { BarChart3 } from 'lucide-react';
 import { useBranch } from '@/core/branch/branch-context';
 import { useTenant } from '@/core/tenant/tenant-context';
 import { useTenantCurrency } from '@/features/settings/finance/currency';
 import { usePosCurrency } from '@/features/pos/posCurrency';
+import { isBackendEnabled } from '@/core/persistence/backendSession';
+import { persistenceBridge } from '@/core/persistence/persistenceBridge';
+import { appToast } from '@/shared/utils/toast';
 import { PageContainer } from '@/shared/components/layout/PageContainer';
 import { PageHeader } from '@/shared/components/layout/PageHeader';
 import { StatCard } from '@/shared/components/cards/StatCard';
@@ -26,16 +30,35 @@ const moduleDashboardTitles: Record<DashboardModule, string> = {
   finance: 'Finance & Accounting', hr: 'HR & Payroll', projects: 'Project Overview', pos: 'POS Analytics',
   documents: 'Document Overview', support: 'Support Overview', reports: 'Business Snapshot',
 };
-export function ModuleDashboardPanel({ module, after }: { module: DashboardModule; after?: (overview: ModuleDashboardOverview) => ReactNode }) {
+export function ModuleDashboardPanel({ module, after, showWorkflow = true }: { module: DashboardModule; after?: (overview: ModuleDashboardOverview) => ReactNode; showWorkflow?: boolean }) {
   const { currentBranch } = useBranch(); const { currentTenant } = useTenant();
   const [period, setPeriod] = useState<DashboardPeriod>('month');
   const [custom, setCustom] = useState(() => periodRange('month'));
   const range = period === 'custom' ? custom : periodRange(period, new Date(), currentTenant?.id);
   const query = useModuleDashboard(module, range);
+  const queryClient = useQueryClient();
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const tenantCurrency = useTenantCurrency();
   const posCurrency = usePosCurrency(currentTenant?.id ?? '', currentBranch?.id ?? '');
   const { formatMoney, currencyCode } = module === 'pos' ? posCurrency : tenantCurrency;
   const data = query.data;
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      if (isBackendEnabled()) {
+        await persistenceBridge.sync().catch(() => undefined);
+      }
+      await queryClient.invalidateQueries();
+      await query.refetch();
+      appToast.success('Dashboard refreshed.');
+    } catch (error) {
+      appToast.error(error instanceof Error ? error.message : 'Unable to refresh dashboard.');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   const formatMetricValue = (metric: NonNullable<typeof data>['metrics'][number]) => {
     if (metric.format === 'percent') return `${metric.value.toFixed(1)}%`;
     if (metric.format !== 'currency') return metric.value.toLocaleString();
@@ -49,7 +72,7 @@ export function ModuleDashboardPanel({ module, after }: { module: DashboardModul
     return tenantCurrency.formatWholeMoneyInCurrency(total, tenantCurrency.currencyCode);
   };
   return <div className="min-w-0 space-y-6">
-    <DashboardFilterBar id={`${module}-dashboard-period`} period={period} onPeriodChange={setPeriod} range={range} onRangeChange={setCustom} refreshing={query.isFetching} onRefresh={() => void query.refetch()} scopeLabel={`${currentTenant?.name ?? 'Company'} / ${currentBranch?.name ?? 'Active branch'}`} />
+    <DashboardFilterBar id={`${module}-dashboard-period`} period={period} onPeriodChange={setPeriod} range={range} onRangeChange={setCustom} refreshing={query.isFetching || isRefreshing} onRefresh={handleRefresh} scopeLabel={`${currentTenant?.name ?? 'Company'} / ${currentBranch?.name ?? 'Active branch'}`} />
     {query.isLoading ? <div role="status" aria-label={`Loading ${moduleDashboardTitles[module]}`} className="space-y-6"><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[0, 1, 2, 3].map(index => <Skeleton key={index} height={144} />)}</div><div className="grid gap-6 lg:grid-cols-2"><Skeleton height={340} /><Skeleton height={340} /></div></div> : query.isError ? <ErrorState message={query.error instanceof Error ? query.error.message : 'Unable to load module analytics.'} onRetry={() => void query.refetch()} /> : !data || !data.metrics.length && !data.charts.length && !data.lists.length ? <EmptyState title="No overview available" message="Select a permitted branch. Overview sections appear according to your module permissions." /> : <div className="space-y-6" aria-busy={query.isFetching}>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-6">{data.metrics.slice(0, 6).map(metric => {
         const card = <StatCard title={metric.label} value={formatMetricValue(metric)} description={metric.description} change={metric.change} icon={<BarChart3 size={20} aria-hidden="true" />} />;
@@ -60,10 +83,10 @@ export function ModuleDashboardPanel({ module, after }: { module: DashboardModul
         {list.records.length ? <ul className="divide-y divide-slate-100">{list.records.map(row => <li key={row.id} className="py-3"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1">{row.to ? <Link className={`${dashboardLinkClass} break-words`} to={row.to}>{row.title}</Link> : <p className="text-sm font-semibold text-slate-900">{row.title}</p>}{row.description && <p className="mt-1 break-words text-xs leading-5 text-slate-500">{row.description}</p>}{row.date && <time dateTime={row.date} className="mt-1 block text-xs text-slate-500">{new Date(row.date.length === 10 ? `${row.date}T00:00:00` : row.date).toLocaleDateString()}</time>}</div><div className="shrink-0 text-right">{row.amount !== undefined && <p className="mb-1 text-sm font-semibold text-slate-900">{row.currency && module !== 'pos' ? tenantCurrency.formatWholeMoneyInCurrency(row.amount, row.currency) : formatMoney(row.amount)}</p>}{row.status && <StatusBadge status={row.status} />}</div></div></li>)}</ul> : <EmptyState title="No records" message={list.emptyMessage} />}
       </SummaryCard>)}</div>
       {after?.(data)}
-      {data.workflow.length > 0 && <SummaryCard title={`${moduleDashboardTitles[module]} Workflow`} subtitle={data.workflowDescription ?? 'Continue to your permitted workspaces'}><nav aria-label={`${module} workflow`} className="flex flex-wrap gap-2">{data.workflow.map(item => <Link key={item.to} to={item.to} className="inline-flex min-h-10 items-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-blue-600">{item.label}</Link>)}</nav></SummaryCard>}
+      {showWorkflow && data.workflow.length > 0 && <SummaryCard title={`${moduleDashboardTitles[module]} Workflow`} subtitle={data.workflowDescription ?? 'Continue to your permitted workspaces'}><nav aria-label={`${module} workflow`} className="flex flex-wrap gap-2">{data.workflow.map(item => <Link key={item.to} to={item.to} className="inline-flex min-h-10 items-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-blue-600">{item.label}</Link>)}</nav></SummaryCard>}
     </div>}
   </div>;
 }
-export function ModuleDashboardPage({ module }: { module: DashboardModule }) {
-  return <PageContainer><PageHeader title={moduleDashboardTitles[module]} description="Business activity for your active branch. Charts use the selected period; balances and pending work show current state." /><ModuleDashboardPanel module={module} /></PageContainer>;
+export function ModuleDashboardPage({ module, showWorkflow = true }: { module: DashboardModule; showWorkflow?: boolean }) {
+  return <PageContainer><PageHeader title={moduleDashboardTitles[module]} description="Business activity for your active branch. Charts use the selected period; balances and pending work show current state." /><ModuleDashboardPanel module={module} showWorkflow={showWorkflow} /></PageContainer>;
 }

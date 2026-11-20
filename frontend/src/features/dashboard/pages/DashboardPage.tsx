@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { TenantLink as Link } from '@/core/routing';
 import { RefreshCw, CircleDollarSign, ShoppingCart, Users, Boxes, ClipboardCheck, Target, BriefcaseBusiness } from 'lucide-react';
 import { PageContainer } from '@/shared/components/layout/PageContainer';
@@ -16,6 +17,9 @@ import { useBranch } from '@/core/branch/branch-context';
 import { useTenant } from '@/core/tenant/tenant-context';
 import { usePermissions } from '@/core/permissions/permission-context';
 import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { isBackendEnabled } from '@/core/persistence/backendSession';
+import { persistenceBridge } from '@/core/persistence/persistenceBridge';
+import { appToast } from '@/shared/utils/toast';
 import { useDashboard } from '../hooks/useDashboard';
 import { DashboardChartCard } from '../components/DashboardChartCard';
 import { DashboardApprovals, DashboardAttention, DashboardTransactions, dashboardLinkClass } from '../components/DashboardOperationalWidgets';
@@ -29,15 +33,34 @@ export function DashboardPage() {
   const [custom, setCustom] = useState(() => periodRange('month'));
   const query = useDashboard(period, custom);
   const { data, isLoading, error, refetch, isFetching } = query;
+  const queryClient = useQueryClient();
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { formatMoney, currencyCode } = useTenantCurrency();
   const range = period === 'custom' ? custom : periodRange(period, new Date(), currentTenant?.id);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      if (isBackendEnabled()) {
+        await persistenceBridge.sync().catch(() => undefined);
+      }
+      await queryClient.invalidateQueries();
+      await refetch();
+      appToast.success('Dashboard refreshed.');
+    } catch (err) {
+      appToast.error(err instanceof Error ? err.message : 'Unable to refresh dashboard.');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   const link = (to: string, label: string, permission: string) => hasPermission(permission) ? <Link to={to} className={dashboardLinkClass}>{label}</Link> : undefined;
   const canApprove = [['sales.view', 'quotation.approve'], ['purchase.view', 'purchase.approve'], ['finance.expenses.view', 'finance.expenses.approve'], ['finance.journals.view', 'finance.journals.approve'], ['hr.leave.view', 'hr.leave.approve'], ['hr.attendance.view', 'hr.attendance.approve'], ['hr.payroll.view', 'hr.payroll.approve'], ['projects.timesheets.view', 'projects.timesheets.approve'], ['projects.expenses.view', 'projects.expenses.approve'], ['inventory.view', 'inventory.adjustments.view', 'stock.approve'], ['pos.view', 'pos.shift.approve']].some(hasAllPermissions);
   return <PageContainer>
     <PageHeader title={`Welcome back, ${user?.name ?? 'User'}`} description={`${currentTenant?.name ?? 'Company'} overview for ${currentBranch?.name ?? 'your active branch'} · ${range.dateFrom} to ${range.dateTo}`} actions={<>
       <label htmlFor="dashboard-period" className="sr-only">Dashboard period</label>
       <select id="dashboard-period" value={period} onChange={event => setPeriod(event.target.value as DashboardPeriod)} className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm focus-visible:outline-blue-600">{dashboardPeriods.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
-      <Button variant="secondary" onClick={() => void refetch()} disabled={isFetching} leftIcon={<RefreshCw size={16} aria-hidden="true" />}>Refresh</Button>
+      <Button variant="secondary" onClick={() => void handleRefresh()} disabled={isFetching || isRefreshing} isLoading={isRefreshing} leftIcon={<RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} aria-hidden="true" />}>Refresh</Button>
     </>} />
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500"><p>Active branch scope · Change branch using the global branch selector. Balances and approvals show current state.</p>{period === 'custom' && <DateRangePicker startDate={custom.dateFrom} endDate={custom.dateTo} onStartDateChange={dateFrom => setCustom(value => ({ ...value, dateFrom }))} onEndDateChange={dateTo => setCustom(value => ({ ...value, dateTo }))} />}</div>
     {isLoading ? <div role="status" aria-label="Loading dashboard" className="space-y-6"><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} height={144} />)}</div><div className="grid gap-6 lg:grid-cols-2"><Skeleton height={340} /><Skeleton height={340} /><Skeleton height={280} /><Skeleton height={280} /></div></div> : error ? <ErrorState message={error instanceof Error ? error.message : 'Unable to load the dashboard.'} onRetry={() => void refetch()} /> : !data ? <EmptyState title="No dashboard data" message="Select an available tenant branch to view your dashboard." /> : <div className="space-y-6" aria-busy={isFetching}>

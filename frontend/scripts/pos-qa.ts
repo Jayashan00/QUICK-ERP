@@ -62,6 +62,12 @@ posService.countShift(shift, posService.expectedCash(shift));
 assert.throws(() => posService.approveShift(shift, 'qa-cashier'), /Another/);
 posService.approveShift(shift, 'manager'); assert.equal(shift.status, 'closed');
 
+const adminShift = posService.openShift(scope, branches, 'admin-user', 'Admin', 10);
+posService.confirmDrawer(adminShift);
+posService.countShift(adminShift, 10);
+posService.approveShift(adminShift, 'admin-user', true);
+assert.equal(adminShift.status, 'closed');
+
 const westShift = posService.openShift(west, branches, 'qa-cashier', 'QA', 0); posService.confirmDrawer(westShift);
 const paperBefore = inventoryStore.balances().find(b => b.branchId === west.branchId && b.productId === 'prod-006')!.quantityOnHand;
 const bundle = await posService.checkout(west, branches, 'qa-cashier', 'QA', { discount: 0, lines: [{ productId: 'prod-009', quantity: 1, componentTracking: [{ productId: 'prod-006', batchReference: 'PAPER-2026-08-A' }] }], payments: [{ method: 'cash', amount: 1000 }] }, 'warehouse-west-main', 'loc-west-main');

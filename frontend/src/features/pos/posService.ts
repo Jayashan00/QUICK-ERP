@@ -26,7 +26,7 @@ export const checkoutSchema = z.object({
   lines: z.array(z.object({ productId: z.string().min(1), quantity: z.number().int().positive(), batchReference: z.string().optional(), serialReferences: z.array(z.string()).optional(), componentTracking: z.array(z.object({ productId: z.string(), batchReference: z.string().optional(), serialReferences: z.array(z.string()).optional() })).optional() })).min(1),
 });
 export type Checkout = z.infer<typeof checkoutSchema>;
-export type PosSale = { id: string; scope: TenantBranchScope; shiftId: string; cashierId: string; customerId?: string; at: string; lines: { productId: string; name: string; quantity: number; unitPrice: number; regularUnitPrice?: number; promotionId?: string; taxCode?: string; taxPercent: number; tax: number; discount: number; warehouseId?: string; locationId?: string; batchReference?: string; serialReferences?: string[]; componentTracking?: Checkout['lines'][number]['componentTracking']; bundleComponents?: { productId: string; quantity: number }[]; returned: number }[]; payments: Checkout['payments']; discount: number; couponDiscount: number; couponCode?: string; giftUsed: number; loyaltyUsed: number; tax: number; subtotal: number; total: number; change: number; accountingStatus: 'pending'; };
+export type PosSale = { id: string; receiptNumber?: string; scope: TenantBranchScope; shiftId: string; cashierId: string; customerId?: string; customerName?: string; at: string; lines: { productId: string; name: string; quantity: number; unitPrice: number; regularUnitPrice?: number; promotionId?: string; taxCode?: string; taxPercent: number; tax: number; discount: number; warehouseId?: string; locationId?: string; batchReference?: string; serialReferences?: string[]; componentTracking?: Checkout['lines'][number]['componentTracking']; bundleComponents?: { productId: string; quantity: number }[]; returned: number }[]; payments: Checkout['payments']; discount: number; couponDiscount: number; couponCode?: string; giftUsed: number; loyaltyUsed: number; tax: number; subtotal: number; total: number; change: number; accountingStatus: 'pending'; };
 export type PosRefund = { id: string; saleId: string; scope: TenantBranchScope; productId: string; quantity: number; amount: number; reason: string; method: Checkout['payments'][number]['method']; restocked: boolean; at: string; userId: string };
 export type PosShift = { id: string; scope: TenantBranchScope; cashierId: string; cashierName: string; openedAt: string; openingCash: number; cashIn: number; cashOut: number; drawerConfirmed: boolean; status: 'open' | 'pending_approval' | 'closed'; countedCash?: number; approvedBy?: string; closedAt?: string };
 const shifts: PosShift[] = [];
@@ -50,7 +50,29 @@ function move(scope: TenantBranchScope, productId: string, warehouseId: string, 
   const movement: StockMovement = { id: crypto.randomUUID(), tenantId: scope.tenantId, branchId: scope.branchId, warehouseId, locationId, productId, type: quantity < 0 ? 'sale' : 'return_in', quantity, quantityBefore: balance.quantityOnHand, quantityAfter: after, referenceNumber, batchReference, serialReferences, movementDate: now, createdById: userId, createdByName: userName, createdAt: now, updatedAt: now };
   inventoryStore.insertMovement(movement);
 }
+function nextReceiptNumber(tenantId: string): string {
+  const tenantSales = sales.filter(s => s.scope.tenantId === tenantId);
+  const highestSequence = tenantSales.reduce((highest, s) => {
+    if (s.receiptNumber) {
+      const match = s.receiptNumber.match(/(\d+)$/);
+      if (match) return Math.max(highest, parseInt(match[1], 10));
+    }
+    return highest;
+  }, 0);
+  return `REC-${String(highestSequence + 1).padStart(5, '0')}`;
+}
+
+export function getReceiptNumber(sale: PosSale): string {
+  if (sale.receiptNumber) return sale.receiptNumber;
+  const tenantSales = sales.filter(s => s.scope.tenantId === sale.scope.tenantId);
+  const sorted = [...tenantSales].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  const index = sorted.findIndex(s => s.id === sale.id);
+  const num = index >= 0 ? index + 1 : 1;
+  return `REC-${String(num).padStart(5, '0')}`;
+}
+
 export const posService = {
+  getReceiptNumber: (sale: PosSale) => getReceiptNumber(sale),
   shifts: (scope: TenantBranchScope) => shifts.filter(s => sameScope(s.scope, scope)),
   sales: (scope: TenantBranchScope) => sales.filter(s => sameScope(s.scope, scope)),
   refunds: (scope: TenantBranchScope) => refunds.filter(r => sameScope(r.scope, scope)),
@@ -67,7 +89,7 @@ export const posService = {
   cashMovement(shift: PosShift, kind: 'in' | 'out', value: number) { if (shift.status !== 'open') throw new Error('Shift is not open.'); amount.positive().parse(value); if (kind === 'out' && value > this.expectedCash(shift)) throw new Error('Cash out exceeds the expected drawer balance.'); shift[kind === 'in' ? 'cashIn' : 'cashOut'] += value; },
   expectedCash(shift: PosShift) { return money(shift.openingCash + shift.cashIn - shift.cashOut + sales.filter(s => s.shiftId === shift.id).reduce((sum, s) => sum + s.payments.filter(p => p.method === 'cash').reduce((n, p) => n + p.amount, 0) - s.change, 0) - refunds.filter(r => r.method === 'cash' && sales.some(s => s.id === r.saleId && s.shiftId === shift.id)).reduce((n,r) => n + r.amount,0)); },
   countShift(shift: PosShift, value: number) { amount.parse(value); if (shift.status !== 'open') throw new Error('Shift is not open.'); shift.countedCash = value; shift.status = 'pending_approval'; },
-  approveShift(shift: PosShift, approverId: string) { if (shift.status !== 'pending_approval' || shift.cashierId === approverId) throw new Error('Another authorized user must approve this shift.'); shift.approvedBy = approverId; shift.status = 'closed'; shift.closedAt = new Date().toISOString(); },
+  approveShift(shift: PosShift, approverId: string, isAdministrator = false) { if (shift.status !== 'pending_approval' || (!isAdministrator && shift.cashierId === approverId)) throw new Error('Another authorized user must approve this shift.'); shift.approvedBy = approverId; shift.status = 'closed'; shift.closedAt = new Date().toISOString(); },
   async checkout(scope: TenantBranchScope, branches: string[], cashierId: string, cashierName: string, input: Checkout, warehouseId: string, locationId: string) {
     requireBranch(scope, branches); const parsed = checkoutSchema.parse(input);
     assertOpenAccountingPeriod(scope.tenantId, new Date().toISOString().slice(0, 10), 'complete this POS sale');
@@ -125,7 +147,10 @@ export const posService = {
       }
       if (effect.serialReferences?.length && (new Set(effect.serialReferences).size !== effect.serialReferences.length || effect.serialReferences.some(reference => !inventoryStore.serialNumbers().some(s => sameScope(s, scope) && s.locationId === locationId && s.productId === effect.productId && s.serialNumber === reference && (s.status === 'available' || s.status === 'returned'))))) throw new Error(`${product.name} has unavailable serial numbers.`);
     }
-    const sale: PosSale = { id: crypto.randomUUID(), scope, shiftId: shift.id, cashierId, customerId: parsed.customerId, at: new Date().toISOString(), lines: lines.map(({ product: _product, bundle, ...line }) => { void _product; return { ...line, bundleComponents: bundle?.components.map(component => ({ ...component })) }; }), payments: parsed.payments, discount: parsed.discount, couponDiscount: pricing.couponDiscount, couponCode: parsed.couponCode, giftUsed: pricing.giftUsed, loyaltyUsed: pricing.loyaltyUsed, tax: pricing.tax, subtotal: pricing.subtotal, total, change: money(paid - total), accountingStatus: 'pending' };
+    const customer = parsed.customerId ? customerService.getCachedCustomerById(scope, parsed.customerId) : null;
+    const customerName = customer?.name;
+    const receiptNumber = nextReceiptNumber(scope.tenantId);
+    const sale: PosSale = { id: crypto.randomUUID(), receiptNumber, scope, shiftId: shift.id, cashierId, customerId: parsed.customerId, customerName, at: new Date().toISOString(), lines: lines.map(({ product: _product, bundle, ...line }) => { void _product; return { ...line, bundleComponents: bundle?.components.map(component => ({ ...component })) }; }), payments: parsed.payments, discount: parsed.discount, couponDiscount: pricing.couponDiscount, couponCode: parsed.couponCode, giftUsed: pricing.giftUsed, loyaltyUsed: pricing.loyaltyUsed, tax: pricing.tax, subtotal: pricing.subtotal, total, change: money(paid - total), accountingStatus: 'pending' };
     for (const effect of effects) {
       const product = productStore.all().find(p => p.id === effect.productId && p.tenantId === scope.tenantId)!;
       if (!product.trackInventory) continue;

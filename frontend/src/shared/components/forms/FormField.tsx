@@ -1,5 +1,7 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
+import { AlertCircle } from 'lucide-react';
 import { cn } from '@/shared/utils/cn';
+import { formatUserFriendlyValidationError } from '@/shared/validation/formatError';
 
 export interface FormFieldProps {
   label?: string;
@@ -20,14 +22,21 @@ export function FormField({
   children,
   className,
 }: FormFieldProps) {
-  const errorId = htmlFor ? `${htmlFor}-error` : undefined;
-  const hintId = htmlFor ? `${htmlFor}-hint` : undefined;
+  const reactId = useId();
+  const effectiveId = htmlFor || `field-${reactId}`;
+  const errorId = `${effectiveId}-error`;
+  const hintId = `${effectiveId}-hint`;
+
+  const friendlyError = error ? formatUserFriendlyValidationError(error, label) : undefined;
 
   return (
     <div
       className={cn(
         "space-y-1.5",
-        error && "[&_input]:border-red-500 [&_input]:focus:border-red-500 [&_input]:focus:ring-red-100 [&_select]:border-red-500 [&_select]:focus:border-red-500 [&_select]:focus:ring-red-100 [&_textarea]:border-red-500 [&_textarea]:focus:border-red-500 [&_textarea]:focus:ring-red-100",
+        friendlyError &&
+          "[&_input]:border-red-500 [&_input]:focus:border-red-500 [&_input]:focus:ring-red-100 " +
+          "[&_select]:border-red-500 [&_select]:focus:border-red-500 [&_select]:focus:ring-red-100 " +
+          "[&_textarea]:border-red-500 [&_textarea]:focus:border-red-500 [&_textarea]:focus:ring-red-100",
         className,
       )}
     >
@@ -50,8 +59,18 @@ export function FormField({
       ) : (
         children
       )}
-      {error && <p id={errorId} className="text-xs text-red-600" role="alert">{error}</p>}
-      {hint && !error && <p id={hintId} className="text-xs text-slate-500">{hint}</p>}
+      {friendlyError && (
+        <p
+          id={errorId}
+          role="alert"
+          aria-live="polite"
+          className="flex items-start gap-1.5 text-xs font-medium text-red-600 dark:text-red-400 mt-1 animate-fadeIn"
+        >
+          <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-red-500 dark:text-red-400" aria-hidden="true" />
+          <span className="leading-relaxed">{friendlyError}</span>
+        </p>
+      )}
+      {hint && !friendlyError && <p id={hintId} className="text-xs text-slate-500">{hint}</p>}
     </div>
   );
 }

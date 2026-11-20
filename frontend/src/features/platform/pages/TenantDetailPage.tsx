@@ -19,6 +19,7 @@ import {
   Send,
   Settings2,
   ShieldCheck,
+  Trash2,
   Users,
 } from 'lucide-react';
 import {
@@ -53,6 +54,7 @@ import { FormField } from '@/shared/components/forms/FormField';
 import { Select } from '@/shared/components/forms/Select';
 import { Modal } from '@/shared/components/common/Modal';
 import { appToast } from '@/shared/utils/toast';
+import { getErrorMessage } from '@/shared/utils/errors';
 import { convertPlatformCurrency } from '@/core/currency/platformCurrency';
 import { formatCurrency } from '@/shared/utils/formatters';
 
@@ -90,6 +92,8 @@ export function TenantDetailPage() {
   const [pendingModules, setPendingModules] = useState<TenantModule[]>([]);
   const [statusConfirm, setStatusConfirm] = useState(false);
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [suspendPromptModal, setSuspendPromptModal] = useState(false);
   const [disableConfirm, setDisableConfirm] = useState<TenantModule | null>(null);
   const [editingCompany, setEditingCompany] = useState(false);
 
@@ -190,6 +194,9 @@ export function TenantDetailPage() {
   const resetAdmin = usePlatformMutation(() => platformService.resetTenantAdmin(tenantId));
   const updateCompany = usePlatformMutation((input: PlatformTenantInput) =>
     platformService.updateTenant(tenantId, input),
+  );
+  const deleteMutation = usePlatformMutation(() =>
+    platformService.deleteTenant(tenantId),
   );
 
   // Workflow mutations
@@ -502,12 +509,31 @@ export function TenantDetailPage() {
               </Button>
             )}
             {tenant.status === 'suspended' && (
+              <>
+                <Button
+                  variant="primary"
+                  leftIcon={<Power size={15} />}
+                  onClick={() => setStatusConfirm(true)}
+                >
+                  Reactivate
+                </Button>
+                <Button
+                  variant="danger"
+                  leftIcon={<Trash2 size={15} />}
+                  onClick={() => setDeleteConfirm(true)}
+                >
+                  Delete Company
+                </Button>
+              </>
+            )}
+            {tenant.status !== 'suspended' && (
               <Button
-                variant="primary"
-                leftIcon={<Power size={15} />}
-                onClick={() => setStatusConfirm(true)}
+                variant="secondary"
+                leftIcon={<Trash2 size={15} />}
+                onClick={() => setSuspendPromptModal(true)}
+                title="Company must be suspended before deletion"
               >
-                Reactivate
+                Delete Company
               </Button>
             )}
           </div>
@@ -1095,6 +1121,43 @@ export function TenantDetailPage() {
           </div>
         </Card>
 
+        {/* Danger Zone */}
+        <Card className="mt-6 border-red-200 bg-red-50/20">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-red-900">Danger Zone</h3>
+              <p className="mt-1 text-xs text-red-700">
+                {tenant.status === 'suspended'
+                  ? 'Permanently delete this company, its user accounts, and all tenant records. This cannot be undone.'
+                  : 'A company must be suspended before it can be deleted.'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {tenant.status !== 'suspended' ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={<Power size={14} />}
+                  onClick={() => setStatusConfirm(true)}
+                >
+                  Suspend Company
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  leftIcon={<Trash2 size={14} />}
+                  onClick={() => setDeleteConfirm(true)}
+                >
+                  Delete Company
+                </Button>
+              )}
+            </div>
+          </div>
+        </Card>
+
         {/* Submit */}
         <div className="flex justify-end gap-3">
           <Button type="button" variant="secondary" onClick={() => form.reset()}>
@@ -1159,17 +1222,97 @@ export function TenantDetailPage() {
         onCancel={() => setDisableConfirm(null)}
       />
 
+      {/* Suspend Prompt Before Deletion */}
+      <ConfirmDialog
+        isOpen={suspendPromptModal}
+        title="Company Must Be Suspended"
+        message={`"${tenant.name}" is currently ${tenant.status.toUpperCase()}. A company must be suspended before it can be deleted. Would you like to suspend this company now?`}
+        confirmLabel="Suspend Company"
+        cancelLabel="Cancel"
+        variant="warning"
+        isLoading={status.isPending}
+        onConfirm={async () => {
+          try {
+            await status.mutateAsync();
+            appToast.success(`"${tenant.name}" has been suspended. You can now delete the company.`);
+            setSuspendPromptModal(false);
+            setDeleteConfirm(true);
+          } catch (error) {
+            appToast.error(getErrorMessage(error, 'Unable to suspend company.'));
+          }
+        }}
+        onCancel={() => setSuspendPromptModal(false)}
+      />
+
+      {/* Confirm Permanent Deletion */}
+      <ConfirmDialog
+        isOpen={deleteConfirm}
+        title={`Delete "${tenant.name}"?`}
+        message="Are you sure you want to permanently delete this company? All tenant data, configurations, and user accounts will be permanently removed. This action cannot be undone."
+        confirmLabel="Delete Company"
+        cancelLabel="Cancel"
+        variant="danger"
+        isLoading={deleteMutation.isPending}
+        onConfirm={async () => {
+          try {
+            await deleteMutation.mutateAsync();
+            appToast.success(`Company "${tenant.name}" was permanently deleted.`);
+            setDeleteConfirm(false);
+            navigate('/super-admin/tenants');
+          } catch (error) {
+            appToast.error(getErrorMessage(error, 'Unable to delete company.'));
+          }
+        }}
+        onCancel={() => setDeleteConfirm(false)}
+      />
+
       {/* Edit Company Modal */}
       <Modal isOpen={editingCompany} title="Edit company details" onClose={() => setEditingCompany(false)}>
         <form
           className="space-y-4"
           onSubmit={editForm.handleSubmit(async (values) => {
+            const trimmedName = values.name.trim().toLowerCase();
+            const existingName = (query.data?.tenants ?? []).some(
+              (t) => t.id !== tenantId && t.name.trim().toLowerCase() === trimmedName,
+            );
+            if (existingName) {
+              editForm.setError('name', {
+                type: 'validate',
+                message: 'A company with this name already exists.',
+              });
+              appToast.error('A company with this name already exists.');
+              return;
+            }
+
+            const trimmedSubdomain = values.subdomain.trim().toLowerCase();
+            const existingSubdomain = (query.data?.tenants ?? []).some(
+              (t) => t.id !== tenantId && t.subdomain.trim().toLowerCase() === trimmedSubdomain,
+            );
+            if (existingSubdomain) {
+              editForm.setError('subdomain', {
+                type: 'validate',
+                message: 'Subdomain is already in use.',
+              });
+              appToast.error('Subdomain is already in use.');
+              return;
+            }
+
             try {
               await updateCompany.mutateAsync(values);
               appToast.success('Company details updated.');
               setEditingCompany(false);
             } catch (error) {
-              appToast.error(error instanceof Error ? error.message : 'Unable to update company.');
+              const message = getErrorMessage(error, 'Unable to update company.');
+              if (
+                message.toLowerCase().includes('company') ||
+                message.toLowerCase().includes('name already exists') ||
+                message.toLowerCase().includes('name is already in use')
+              ) {
+                editForm.setError('name', { type: 'validate', message });
+              } else if (message.toLowerCase().includes('subdomain')) {
+                editForm.setError('subdomain', { type: 'validate', message });
+              }
+              appToast.error(message);
             }
           })}
         >

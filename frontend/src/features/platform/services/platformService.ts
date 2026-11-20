@@ -133,7 +133,14 @@ export const platformService = {
 
   async createTenant(input: PlatformTenantInput) {
     await wait();
-    if (store.tenants.some((row) => row.subdomain === input.subdomain)) throw new Error('Subdomain is already in use.');
+    const trimmedName = input.name.trim().toLowerCase();
+    if (store.tenants.some((row) => row.name.trim().toLowerCase() === trimmedName)) {
+      throw new Error('A company with this name already exists.');
+    }
+    const trimmedSubdomain = input.subdomain.trim().toLowerCase();
+    if (store.tenants.some((row) => row.subdomain.trim().toLowerCase() === trimmedSubdomain)) {
+      throw new Error('Subdomain is already in use.');
+    }
     const now = new Date().toISOString();
     const configuration = {
       enabledModules: ['settings'] as TenantModule[],
@@ -180,8 +187,18 @@ export const platformService = {
   },
 
   async updateTenant(tenantId: string, input: PlatformTenantInput) {
-    await wait(); const tenant = store.tenants.find((row) => row.id === tenantId); if (!tenant) throw new Error('Tenant not found.');
-    Object.assign(tenant, { name: input.name, subdomain: input.subdomain, ownerEmail: input.ownerEmail, contactName: input.contactName, country: input.country, admin: { ...tenant.admin, name: input.adminName, email: input.adminEmail }, updatedAt: new Date().toISOString() });
+    await wait();
+    const tenant = store.tenants.find((row) => row.id === tenantId);
+    if (!tenant) throw new Error('Tenant not found.');
+    const trimmedName = input.name.trim().toLowerCase();
+    if (store.tenants.some((row) => row.id !== tenantId && row.name.trim().toLowerCase() === trimmedName)) {
+      throw new Error('A company with this name already exists.');
+    }
+    const trimmedSubdomain = input.subdomain.trim().toLowerCase();
+    if (store.tenants.some((row) => row.id !== tenantId && row.subdomain.trim().toLowerCase() === trimmedSubdomain)) {
+      throw new Error('Subdomain is already in use.');
+    }
+    Object.assign(tenant, { name: input.name.trim(), subdomain: input.subdomain.trim(), ownerEmail: input.ownerEmail.trim(), contactName: input.contactName.trim(), country: input.country.trim(), admin: { ...tenant.admin, name: input.adminName.trim(), email: input.adminEmail.trim() }, updatedAt: new Date().toISOString() });
     tenantEntitlementService.set(tenant.id, { enabledModules: tenant.enabledModules, limits: tenant.limits, usage: tenant.usage, admin: tenant.admin });
     audit('Tenant updated', tenant.id, tenant.name, 'Company and tenant administrator details updated.'); return structuredClone(tenant);
   },
@@ -427,6 +444,30 @@ export const platformService = {
     tenant.updatedAt = new Date().toISOString();
     audit(status === 'active' ? 'Tenant activated' : `Tenant status set to ${status}`, tenant.id, tenant.name, `Tenant status changed to ${status}.`);
     return structuredClone(tenant);
+  },
+
+  async deleteTenant(tenantId: string) {
+    try {
+      const rawUser = typeof localStorage !== 'undefined' ? localStorage.getItem(APP_CONSTANTS.STORAGE_KEYS.USER) : null;
+      const user = rawUser ? JSON.parse(rawUser) : null;
+      const isSuper = Boolean(user?.isSuperAdmin || user?.roleId === 'role-super-admin');
+      if (isSuper) {
+        await apiClient.delete(`/platform/tenants/${tenantId}`);
+      }
+    } catch {
+      // In mock mode or offline, fallback to store
+    }
+    await wait();
+    const index = store.tenants.findIndex((row) => row.id === tenantId);
+    if (index === -1) throw new Error('Tenant not found.');
+    const tenant = store.tenants[index]!;
+    if (tenant.status !== 'suspended') {
+      throw new Error('A company must be suspended before it can be deleted.');
+    }
+    store.tenants.splice(index, 1);
+    tenantEntitlementService.delete(tenantId);
+    audit('Tenant deleted', tenantId, tenant.name, `Company ${tenant.name} was permanently deleted after being suspended.`);
+    return { success: true };
   },
 
   async resetTenantAdmin(tenantId: string) {

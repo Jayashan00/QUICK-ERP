@@ -22,7 +22,7 @@ export const mockTenantAuditEvents: TenantAuditEntry[] = [
   {
     id: 'tenant-audit-004', tenantId: 'tenant-001', branchId: 'branch-001', actorId: 'user-003', actorName: 'Senior Accountant',
     module: 'accounting', entityType: 'Journal', entityId: 'journal-001', reference: 'JV-2026-0042', action: 'Posted',
-    description: 'Approved journal was posted to the mock ledger.', previousValues: { status: 'approved' }, newValues: { status: 'posted' },
+    description: 'Approved journal was posted to the general ledger.', previousValues: { status: 'approved' }, newValues: { status: 'posted' },
     createdAt: '2026-10-01T11:10:00.000Z', relatedRoute: '/finance/journals', sensitivity: 'sensitive',
   },
   {
@@ -34,7 +34,7 @@ export const mockTenantAuditEvents: TenantAuditEntry[] = [
   {
     id: 'tenant-audit-006', tenantId: 'tenant-001', branchId: 'branch-001', actorId: 'user-001', actorName: 'Admin User',
     module: 'security', entityType: 'User Session', entityId: 'session-current', reference: 'Admin User', action: 'Logged in',
-    description: 'User authenticated through the frontend mock session.', createdAt: '2026-10-01T04:10:00.000Z', relatedRoute: '/settings/login-activity', sensitivity: 'security',
+    description: 'User authenticated through the session.', createdAt: '2026-10-01T04:10:00.000Z', relatedRoute: '/settings/login-activity', sensitivity: 'security',
   },
   {
     id: 'tenant-audit-isolation', tenantId: 'tenant-002', branchId: 'branch-004', actorId: 'user-other', actorName: 'Other Tenant User',

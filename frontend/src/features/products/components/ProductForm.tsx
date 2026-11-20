@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Controller, useFieldArray, useForm } from 'react-hook-form';
+import { Controller, useFieldArray } from 'react-hook-form';
+import { useAppForm } from '@/shared/hooks';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus, Save, Trash2 } from 'lucide-react';
 import { useTenantCurrency } from '@/features/settings/finance/currency';
@@ -134,7 +135,7 @@ export function ProductForm({
     clearErrors,
     watch,
     formState: { errors, isDirty, isSubmitting },
-  } = useForm<ProductFormValues>({
+  } = useAppForm<ProductFormValues>({
     resolver: zodResolver(productFormSchema),
     defaultValues: defaultValues(initialData),
   });

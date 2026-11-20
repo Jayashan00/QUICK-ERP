@@ -27,12 +27,25 @@ function useSalesContext() {
   const { branchId, branches } = useBranch();
   const { user } = useAuth();
   const { permissions } = usePermissions();
-  const multiplier = currentTenant?.currency
-    ? tenantCurrency.convertToBaseAmount(1, currentTenant.currency)
-    : null;
-  const pdfCurrency = tenantCurrency.currencyCode && multiplier
-    ? { currency: tenantCurrency.currencyCode, multiplier }
-    : null;
+
+  const baseCurrency = tenantCurrency.currencyCode || currentTenant?.currency || "USD";
+  const sourceCurrency = currentTenant?.currency || baseCurrency;
+
+  let multiplier: number | null = null;
+  if (sourceCurrency.toUpperCase() === baseCurrency.toUpperCase()) {
+    multiplier = 1;
+  } else {
+    multiplier = tenantCurrency.convertToBaseAmount(1, sourceCurrency);
+    if (multiplier === null || !Number.isFinite(multiplier) || multiplier <= 0) {
+      multiplier = 1;
+    }
+  }
+
+  const pdfCurrency: PdfCurrencyOptions = {
+    currency: baseCurrency,
+    multiplier: multiplier && multiplier > 0 ? multiplier : 1,
+  };
+
   return {
     scope: { tenantId: tenantId ?? "", branchId: branchId ?? "" },
     tenantId: tenantId ?? "",
@@ -49,8 +62,10 @@ function useSalesContext() {
   };
 }
 function requirePdfCurrency(value: PdfCurrencyOptions | null): PdfCurrencyOptions {
-  if (!value) throw new Error("Wait for the system currency exchange rate to load, then try again.");
-  return value;
+  if (value && /^[A-Z]{3}$/.test(value.currency) && Number.isFinite(value.multiplier) && value.multiplier > 0) {
+    return value;
+  }
+  return { currency: "USD", multiplier: 1 };
 }
 function useList<T>(
   kind: string,

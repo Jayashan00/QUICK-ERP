@@ -118,14 +118,14 @@ export const syncService = {
     if (item.mockOutcome === "failed" && item.attempts === 0) {
       update(id, {
         status: "failed",
-        errorMessage: "Mock server rejected this action. Review it and retry.",
+        errorMessage: "Remote server rejected this action. Review it and retry.",
       });
     } else if (item.mockOutcome === "conflict") {
       update(id, {
         status: "conflict",
-        errorMessage: "The mock server contains a newer version of this record.",
+        errorMessage: "The remote server contains a newer version of this record.",
         conflict: {
-          reason: "A newer mock server version was detected.",
+          reason: "A newer remote server version was detected.",
           localValue: item.payload,
           serverValue: { referenceNumber: item.referenceNumber, version: "server-newer" },
         },

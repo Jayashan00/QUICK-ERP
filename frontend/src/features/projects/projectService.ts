@@ -44,7 +44,7 @@ function assertBranch(scope: ProjectScope, branchId: string) { if (!scope.tenant
 function visible<T extends Base>(rows: T[], scope: ProjectScope, branchId?: string) { return rows.filter((row) => row.tenantId === scope.tenantId && scope.permittedBranchIds.includes(row.branchId) && (!branchId || row.branchId === branchId)); }
 function find<T extends Base>(rows: T[], scope: ProjectScope, id: string) { const row = visible(rows, scope).find((item) => item.id === id); if (!row) throw new Error('Record is not available in permitted branches.'); return row; }
 function project(scope: ProjectScope, id: string) { return find(projects, scope, id); }
-function worker(scope: ProjectScope, id: string, branchId: string) { const employee = hrService.employee(scope, id); if (employee.branchId !== branchId || !['active', 'on_leave'].includes(employee.status)) throw new Error('Choose an active employee in the project branch.'); return employee; }
+function worker(scope: ProjectScope, id: string, branchId: string) { const employee = hrService.employee(scope, id); if (employee.branchId !== branchId || employee.status !== 'active') throw new Error('Choose an active employee in the project branch.'); return employee; }
 function audit(scope: ProjectScope, actor: ProjectActor, branchId: string, action: string, reference: string, note?: string, before?: string, after?: string, projectId?: string) {
   const event: ProjectAudit = { id: uid('project-audit'), tenantId: scope.tenantId, branchId, projectId, actor: actor.name, action, reference, at: now(), note, before, after };
   auditLog.unshift(event);

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { Controller } from 'react-hook-form';
+import { useAppForm } from '@/shared/hooks';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Save, RotateCcw } from 'lucide-react';
 import { Card } from '@/shared/components/common/Card';
@@ -30,7 +31,7 @@ export function CompanyProfileForm({
     control,
     reset,
     formState: { errors, isDirty, isSubmitting },
-  } = useForm<CompanyFormValues>({
+  } = useAppForm<CompanyFormValues>({
     resolver: zodResolver(companySchema),
     defaultValues: {
       name: initialData.name,
