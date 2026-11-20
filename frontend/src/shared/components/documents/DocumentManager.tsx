@@ -63,7 +63,7 @@ export function DocumentManager({ documents, isLoading, error, canUpload, canDow
     if (!file) { setFileError('Select a file to upload.'); return; }
     await onUpload?.(file, metadata);
     if (tenantId && user) auditEventService.record({ tenantId, branchId: branchId ?? undefined, actorId: user.id, actorName: user.name, module: 'documents', entityType: metadata.entityType || 'Document', entityId: metadata.entityReference || file.name, reference: metadata.entityReference || file.name, action: 'Uploaded', description: `${user.name} uploaded ${file.name}.`, newValues: { fileName: file.name, category: metadata.category, expiryDate: metadata.expiryDate || null }, relatedRoute: globalThis.location.pathname, sensitivity: metadata.category === 'identity' || metadata.category === 'finance' ? 'sensitive' : 'normal' });
-    appToast.success('Document added to mock storage.');
+    appToast.success('Document uploaded successfully.');
     close();
   };
   const confirmDelete = async () => {

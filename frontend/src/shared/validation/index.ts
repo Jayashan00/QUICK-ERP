@@ -1,27 +1,36 @@
 import { z } from 'zod';
+import { setupZodErrorMap } from './formatError';
+
+// Automatically configure global user-friendly Zod error mapping
+setupZodErrorMap();
 
 export { getErrorMessage } from '@/shared/utils/errors';
+export {
+  formatUserFriendlyValidationError,
+  formatFieldLabel,
+  setupZodErrorMap,
+} from './formatError';
 
 export function requiredString(label: string, maxLength: number) {
   return z
     .string()
     .trim()
-    .min(1, `${label} is required.`)
-    .max(maxLength, `${label} must be ${maxLength} characters or less.`);
+    .min(1, `${label} is required. Please enter a valid value to continue.`)
+    .max(maxLength, `${label} cannot exceed ${maxLength} characters. Please shorten your text to proceed.`);
 }
 
 export function optionalString(label: string, maxLength: number) {
   return z
     .string()
     .trim()
-    .max(maxLength, `${label} must be ${maxLength} characters or less.`);
+    .max(maxLength, `${label} cannot exceed ${maxLength} characters. Please shorten your text to proceed.`);
 }
 
 export const emailSchema = z
   .string()
   .trim()
-  .min(1, 'Email address is required.')
-  .email('Enter a valid email address.')
+  .min(1, 'Email address is required. Please enter an email address (e.g., name@company.com).')
+  .email('Please enter a valid email address in the format name@company.com.')
   .transform((email) => email.toLowerCase());
 
 const phoneCharacters = /^\+?[0-9()\-\s.]+$/;
@@ -29,19 +38,22 @@ const phoneCharacters = /^\+?[0-9()\-\s.]+$/;
 export const phoneSchema = z
   .string()
   .trim()
-  .min(1, 'Phone number is required.')
-  .max(30, 'Phone number must be 30 characters or less.')
-  .refine((phone) => phoneCharacters.test(phone), 'Enter a valid phone number.')
+  .min(1, 'Phone number is required. Please enter a phone number with country/area code (e.g., +1 555-123-4567).')
+  .max(30, 'Phone number cannot exceed 30 characters. Please check the number and re-enter.')
+  .refine(
+    (phone) => phoneCharacters.test(phone),
+    'Phone number contains invalid characters. Please use only numbers, spaces, hyphens, and an optional leading "+".',
+  )
   .refine((phone) => {
     const digitCount = phone.replace(/\D/g, '').length;
     return digitCount >= 7 && digitCount <= 15;
-  }, 'Enter a valid phone number.');
+  }, 'Phone number must contain between 7 and 15 digits. Please check and re-enter.');
 
 export function nonNegativeNumber(label: string) {
   return z
-    .number({ error: `${label} must be a number.` })
-    .finite(`${label} must be a finite number.`)
-    .min(0, `${label} cannot be negative.`);
+    .number({ error: `${label} must be a valid number. Please enter numeric digits only.` })
+    .finite(`${label} must be a finite number. Please enter a valid numeric value.`)
+    .min(0, `${label} cannot be negative. Please enter a value of 0.00 or higher.`);
 }
 
 export function optionalNonNegativeNumber(label: string) {
@@ -84,7 +96,7 @@ export function optionalDate(label: string) {
     .string()
     .refine(
       (value) => value === '' || isValidDateValue(value),
-      `${label} must be a valid date.`,
+      `${label} must be a valid date. Please select or enter a date in YYYY-MM-DD format.`,
     )
     .optional();
 }
@@ -103,6 +115,6 @@ export function optionalTodayOrFutureDate(label: string) {
       value === '' ||
       !isValidDateValue(value) ||
       value.slice(0, 10) >= getLocalDateInputValue(),
-    `${label} cannot be in the past.`,
+    `${label} cannot be in the past. Please select today's date or a future date.`,
   );
 }
