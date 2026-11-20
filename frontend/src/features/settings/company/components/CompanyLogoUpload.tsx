@@ -1,7 +1,42 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Building2, Trash2, Loader2 } from 'lucide-react';
 import { Button } from '@/shared/components/common/Button';
 import { FileUpload } from '@/shared/components/forms/FileUpload';
+
+function convertToPngDataUrl(dataUrl: string, maxDim = 800): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        let width = img.naturalWidth || img.width || 300;
+        let height = img.naturalHeight || img.height || 300;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(dataUrl);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/png'));
+      } catch {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => reject(new Error('Failed to load image for PNG conversion'));
+    img.src = dataUrl;
+  });
+}
 
 interface CompanyLogoUploadProps {
   value?: string;
@@ -17,6 +52,17 @@ export function CompanyLogoUpload({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (value && (value.startsWith('data:image/svg+xml') || value.trim().startsWith('<svg'))) {
+      const svgSrc = value.startsWith('data:') ? value : `data:image/svg+xml;utf8,${encodeURIComponent(value)}`;
+      void convertToPngDataUrl(svgSrc).then((png) => {
+        if (png && png.startsWith('data:image/png')) {
+          onChange(png);
+        }
+      });
+    }
+  }, [value, onChange]);
+
   const handleFileSelect = (file: File) => {
     setError(null);
 
@@ -27,16 +73,20 @@ export function CompanyLogoUpload({
       return;
     }
 
-    // Simulate mock upload / file read to Data URL
+    // Convert file to clean PNG Data URL for universal PDF compatibility
     setIsLoading(true);
     const reader = new FileReader();
 
-    reader.onload = () => {
-      setTimeout(() => {
+    reader.onload = async () => {
+      const rawResult = reader.result as string;
+      try {
+        const pngResult = await convertToPngDataUrl(rawResult);
         setIsLoading(false);
-        const result = reader.result as string;
-        onChange(result);
-      }, 300);
+        onChange(pngResult);
+      } catch {
+        setIsLoading(false);
+        onChange(rawResult);
+      }
     };
 
     reader.onerror = () => {

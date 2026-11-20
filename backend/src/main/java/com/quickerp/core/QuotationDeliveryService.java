@@ -24,6 +24,7 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 
 /** Delivers an approved quotation PDF and records the result in the tenant quotation. */
 public final class QuotationDeliveryService {
@@ -155,12 +156,11 @@ public final class QuotationDeliveryService {
 
     private PreparedDelivery prepared(Connection connection, Principal principal, String quotationId,
                                       ObjectNode quotation, ObjectNode customer, String recipient) throws SQLException {
-        String companyName = Sql.queryString(connection, "SELECT name FROM tenants WHERE id = ?", principal.tenantId());
-        if (companyName == null || companyName.isBlank()) companyName = "Quick ERP";
+        CompanyPdfBranding company = CompanyPdfBranding.load(connection, principal.tenantId(), mapper);
         String customerName = firstNonBlank(text(customer, "name"), text(quotation, "customerName"), "Customer");
         List<QuoteLine> lines = quoteLines(connection, principal.tenantId(), quotation.path("items"));
         return new PreparedDelivery(quotationId, firstNonBlank(text(quotation, "referenceNumber"), quotationId),
-                companyName, customerName, recipient, firstNonBlank(text(quotation, "quotationDate"), "-"),
+                company, customerName, recipient, firstNonBlank(text(quotation, "quotationDate"), "-"),
                 firstNonBlank(text(quotation, "expiryDate"), "-"), firstNonBlank(text(quotation, "currency"), ""),
                 text(quotation, "terms"), amount(quotation, "subtotal"), amount(quotation, "discountAmount"),
                 amount(quotation, "taxAmount"), amount(quotation, "totalAmount"), lines,
@@ -346,7 +346,7 @@ public final class QuotationDeliveryService {
     private byte[] createPdf(PreparedDelivery quote, PdfCurrencyDisplay display) {
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PdfWriter writer = new PdfWriter(document);
-            writer.heading(quote.companyName());
+            writer.drawCompanyHeader(quote.company());
             writer.title("SALES QUOTATION");
             writer.line("Reference: " + quote.reference());
             writer.line("Quotation date: " + quote.quotationDate());
@@ -424,10 +424,14 @@ public final class QuotationDeliveryService {
 
     public record PdfDocument(String fileName, byte[] bytes) {}
 
-    private record PreparedDelivery(String quotationId, String reference, String companyName, String customerName,
+    private record PreparedDelivery(String quotationId, String reference, CompanyPdfBranding company, String customerName,
                                     String recipientEmail, String quotationDate, String expiryDate, String currency,
                                     String terms, BigDecimal subtotal, BigDecimal discount, BigDecimal tax,
-                                    BigDecimal total, List<QuoteLine> lines, String actorName) {}
+                                    BigDecimal total, List<QuoteLine> lines, String actorName) {
+        public String companyName() {
+            return company != null && company.companyName() != null ? company.companyName() : "Quick ERP";
+        }
+    }
 
     private static final class PdfWriter {
         private final PDDocument document;
@@ -445,6 +449,59 @@ public final class QuotationDeliveryService {
             document.addPage(page);
             content = new PDPageContentStream(document, page);
             y = 790;
+        }
+
+        private void drawLogo(byte[] logoBytes, float maxWidth, float maxHeight) {
+            try {
+                PDImageXObject image = CompanyPdfBranding.createImage(document, logoBytes);
+                if (image == null) return;
+                float imgW = image.getWidth();
+                float imgH = image.getHeight();
+                float scale = Math.min(maxWidth / imgW, maxHeight / imgH);
+                float drawW = imgW * scale;
+                float drawH = imgH * scale;
+                if (y - drawH < 55) newPage();
+                content.drawImage(image, 45, y - drawH, drawW, drawH);
+                y -= (drawH + 10);
+            } catch (Exception ignored) {
+            }
+        }
+
+        private void divider() throws IOException {
+            if (y < 55) newPage();
+            content.setStrokingColor(200, 200, 200);
+            content.setLineWidth(0.75f);
+            content.moveTo(45, y);
+            content.lineTo(550, y);
+            content.stroke();
+            content.setStrokingColor(0, 0, 0);
+            y -= 10;
+        }
+
+        private void drawCompanyHeader(CompanyPdfBranding branding) throws IOException {
+            if (branding != null && branding.logoBytes() != null) {
+                drawLogo(branding.logoBytes(), 140, 48);
+            }
+            heading(branding != null ? branding.companyName() : "Quick ERP");
+            if (branding != null && branding.address() != null && !branding.address().isBlank()) {
+                line(branding.address());
+            }
+            List<String> contacts = new ArrayList<>();
+            if (branding != null && branding.phone() != null && !branding.phone().isBlank()) contacts.add("Tel: " + branding.phone());
+            if (branding != null && branding.email() != null && !branding.email().isBlank()) contacts.add("Email: " + branding.email());
+            if (branding != null && branding.website() != null && !branding.website().isBlank()) contacts.add("Web: " + branding.website());
+            if (!contacts.isEmpty()) {
+                line(String.join(" | ", contacts));
+            }
+            List<String> taxReg = new ArrayList<>();
+            if (branding != null && branding.taxNumber() != null && !branding.taxNumber().isBlank()) taxReg.add("Tax / VAT No: " + branding.taxNumber());
+            if (branding != null && branding.registrationNumber() != null && !branding.registrationNumber().isBlank()) taxReg.add("Reg No: " + branding.registrationNumber());
+            if (!taxReg.isEmpty()) {
+                line(String.join(" | ", taxReg));
+            }
+            space();
+            divider();
+            space();
         }
 
         private void heading(String value) throws IOException { write(value, PDType1Font.HELVETICA_BOLD, 16, 22); }

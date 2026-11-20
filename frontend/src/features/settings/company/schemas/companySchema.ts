@@ -4,10 +4,10 @@ import { emailSchema, optionalString, phoneSchema, requiredString } from '@/shar
 const optionalWebsite = z
   .string()
   .trim()
-  .max(200, 'Website must be 200 characters or less.')
+  .max(200, 'Website URL cannot exceed 200 characters. Please shorten it to continue.')
   .refine(
     (value) => value === '' || /^https?:\/\/.+/i.test(value),
-    'Enter a valid website URL, including http:// or https://.',
+    'Please enter a valid website URL starting with http:// or https:// (e.g., https://example.com).',
   );
 
 export const companySchema = z.object({
