@@ -1,24 +1,24 @@
 import { z } from "zod";
 
 const required = (label: string) =>
-  z.string().trim().min(1, `${label} is required.`);
+  z.string().trim().min(1, `${label} is required. Please enter or select a valid value.`);
 const date = (label: string) =>
   required(label).refine(
     (value) => !Number.isNaN(Date.parse(value)),
-    `${label} must be valid.`,
+    `${label} must be a valid date. Please enter or select a date in YYYY-MM-DD format.`,
   );
 const salesLine = z.object({
   productId: required("Product"),
   variantId: z.string().optional(),
-  quantity: z.number().positive("Quantity must be greater than zero."),
-  unitPrice: z.number().nonnegative("Price cannot be negative."),
-  discountPercent: z.number().min(0).max(100),
+  quantity: z.number().positive("Quantity must be greater than zero. Please enter a positive amount."),
+  unitPrice: z.number().nonnegative("Price cannot be negative. Please enter an amount of 0.00 or higher."),
+  discountPercent: z.number().min(0, "Discount cannot be negative.").max(100, "Discount percentage cannot exceed 100%. Please enter a value from 0 to 100."),
   taxCode: z.string().optional(),
-  taxPercent: z.number().min(0).max(100),
+  taxPercent: z.number().min(0, "Tax cannot be negative.").max(100, "Tax percentage cannot exceed 100%. Please enter a value from 0 to 100."),
 });
 const uniqueLines = z
   .array(salesLine)
-  .min(1, "Add at least one item.")
+  .min(1, "Please add at least one item to proceed.")
   .superRefine((items, context) => {
     const seen = new Set<string>();
     items.forEach((item, index) => {
@@ -27,7 +27,7 @@ const uniqueLines = z
         context.addIssue({
           code: "custom",
           path: [index, "productId"],
-          message: "Each product or variant can only be added once.",
+          message: "Each product or variant can only be added once. Please adjust the quantity on the existing line instead.",
         });
       seen.add(key);
     });
@@ -51,7 +51,7 @@ export const salesQuotationSchema = z
     (value) => Date.parse(value.expiryDate) >= Date.parse(value.quotationDate),
     {
       path: ["expiryDate"],
-      message: "Expiry date cannot be before quotation date.",
+      message: "Expiry date cannot be before quotation date. Please select an expiry date on or after the quotation date.",
     },
   );
 export const salesOrderSchema = z
@@ -69,14 +69,14 @@ export const salesOrderSchema = z
       Date.parse(value.expectedDeliveryDate) >= Date.parse(value.orderDate),
     {
       path: ["expectedDeliveryDate"],
-      message: "Delivery date cannot be before order date.",
+      message: "Delivery date cannot be before order date. Please select a delivery date on or after the order date.",
     },
   );
 const deliveryLine = z.object({
   salesOrderLineId: required("Order line"),
   productId: required("Product"),
   variantId: z.string().optional(),
-  deliveredQuantity: z.number().positive(),
+  deliveredQuantity: z.number().positive("Delivered quantity must be greater than zero. Please enter a positive amount."),
   batchReference: z.string().trim().optional(),
   serialReferences: z.array(z.string()),
   expiryDate: z.string().trim().optional(),
@@ -88,7 +88,7 @@ export const deliverySchema = z.object({
   deliveryDate: date("Delivery date"),
   deliveryAddress: required("Delivery address"),
   notes: z.string().trim().max(1000).optional(),
-  items: z.array(deliveryLine).min(1),
+  items: z.array(deliveryLine).min(1, "Please add at least one item to proceed."),
 });
 export const salesInvoiceSchema = z
   .object({
@@ -106,7 +106,7 @@ export const salesInvoiceSchema = z
   })
   .refine(
     (value) => Date.parse(value.dueDate) >= Date.parse(value.invoiceDate),
-    { path: ["dueDate"], message: "Due date cannot be before invoice date." },
+    { path: ["dueDate"], message: "Due date cannot be before invoice date. Please select a due date on or after the invoice date." },
   );
 export const salesReturnSchema = z.object({
   salesOrderId: required("Sales order"),

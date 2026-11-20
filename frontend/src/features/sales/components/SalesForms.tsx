@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Controller } from "react-hook-form";
+import { useAppForm } from "@/shared/hooks";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, Trash2 } from "lucide-react";
 import { useBranch } from "@/core/branch/branch-context";
@@ -374,7 +375,7 @@ export function SalesQuotationFormModal({
     opportunities = useSalesOpportunityOptions(),
     mutations = useSalesMutations();
   const tenantCurrency = useTenantCurrency();
-  const form = useForm<SalesQuotationFormValues>({
+  const form = useAppForm<SalesQuotationFormValues>({
     resolver: zodResolver(salesQuotationSchema),
     defaultValues: {
       customerId: "",
@@ -590,7 +591,7 @@ export function SalesOrderFormModal({ isOpen, onClose, order }: OrderProps) {
     products = useSalesProductOptions(),
     mutations = useSalesMutations();
   const tenantCurrency = useTenantCurrency();
-  const form = useForm<SalesOrderFormValues>({
+  const form = useAppForm<SalesOrderFormValues>({
     resolver: zodResolver(salesOrderSchema),
     defaultValues: {
       customerId: "",
@@ -780,7 +781,7 @@ export function DeliveryFormModal({
     products = useSalesProductOptions(),
     mutations = useSalesMutations();
   const { branches } = useBranch();
-  const form = useForm<DeliveryFormValues>({
+  const form = useAppForm<DeliveryFormValues>({
     resolver: zodResolver(deliverySchema),
     defaultValues: {
       salesOrderId: initialOrderId,
@@ -1031,7 +1032,7 @@ export function SalesInvoiceFormModal({
     deliveries = useDeliveryNotes({ branchId: "all", pageSize: Number.MAX_SAFE_INTEGER }),
     mutations = useSalesMutations();
   const { terms } = usePaymentTerms();
-  const form = useForm<SalesInvoiceFormValues>({
+  const form = useAppForm<SalesInvoiceFormValues>({
     resolver: zodResolver(salesInvoiceSchema),
     defaultValues: {
       customerId: "",
@@ -1270,7 +1271,7 @@ export function SalesReturnFormModal({ isOpen, onClose }: Props) {
     orders = useSalesOrders({ branchId: "all", pageSize: 100 }),
     products = useSalesProductOptions(),
     mutations = useSalesMutations();
-  const form = useForm<SalesReturnFormValues>({
+  const form = useAppForm<SalesReturnFormValues>({
     resolver: zodResolver(salesReturnSchema),
     defaultValues: {
       salesOrderId: "",
@@ -1504,7 +1505,7 @@ export function RecurringInvoiceFormModal({ isOpen, onClose }: Props) {
   const customers = useSalesCustomerOptions(),
     people = useSalespersonOptions(),
     mutations = useSalesMutations();
-  const form = useForm<RecurringInvoiceFormValues>({
+  const form = useAppForm<RecurringInvoiceFormValues>({
     resolver: zodResolver(recurringInvoiceSchema),
     defaultValues: {
       customerId: "",
