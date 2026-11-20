@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { Controller, useForm } from 'react-hook-form';
+import { Controller } from 'react-hook-form';
+import { useAppForm } from '@/shared/hooks';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowLeft, Save } from 'lucide-react';
 
@@ -72,7 +73,7 @@ export function OpportunityFormPage() {
     getFieldState,
     watch,
     formState: { errors, isSubmitting, isDirty },
-  } = useForm<OpportunityFormValues>({
+  } = useAppForm<OpportunityFormValues>({
     resolver: zodResolver(opportunitySchema),
     defaultValues: {
       name: searchParams.get('opportunityName') ?? '',
