@@ -1686,7 +1686,7 @@ public final class StateStore {
                                 tenant);
                     } else {
                         countedUsers = Sql.queryLong(connection,
-                                "SELECT COUNT(*) FROM app_users WHERE tenant_id = ? AND super_admin = FALSE AND status <> 'inactive' AND role_id <> 'role-001' AND (email <> ? OR ? IS NULL)",
+                                "SELECT COUNT(*) FROM app_users WHERE tenant_id = ? AND super_admin = FALSE AND status <> 'inactive' AND role_id <> 'role-001' AND (email <> CAST(? AS text) OR CAST(? AS text) IS NULL)",
                                 tenant, adminEmail, adminEmail);
                     }
                     boolean isTargetAdmin = "role-001".equals(roleId) || (adminEmail != null && adminEmail.equalsIgnoreCase(email));

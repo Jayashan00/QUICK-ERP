@@ -2,6 +2,7 @@ import { mockPlatformFoundation } from '@/features/platform/mocks/platform';
 import { supportTicketService } from '@/features/support/services/supportTicketService';
 import type { SupportStatus } from '@/features/support/types/support';
 import { apiClient, ApiError } from '@/core/api';
+import { isBackendEnabled } from '@/core/persistence/backendSession';
 import type {
   GenerateInvoiceInput,
   InvoicePaymentStatus,
@@ -21,6 +22,41 @@ const store = structuredClone(mockPlatformFoundation);
 const wait = (duration = 160) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, duration));
 const clone = (): PlatformFoundation => structuredClone(store);
 const id = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
+
+/** Sign-in details of a new company's administrator, shown once to the Super Admin after activation. */
+export interface IssuedAccessCredentials { email: string; temporaryPassword: string }
+
+/** 16 random characters without look-alikes (0/O, 1/l/I), easy to read out to the company administrator. */
+function generateTemporaryPassword(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
+}
+
+/**
+ * With the real backend, activating a company creates it on the server from the company template
+ * (all default roles, branches and settings) together with its administrator's login.
+ * Returns the administrator's credentials, or undefined when the company already existed on the server.
+ */
+async function provisionCompanyOnServer(tenant: { id: string; name: string; ownerEmail: string; contactName: string; admin?: { name?: string; email?: string } }): Promise<IssuedAccessCredentials | undefined> {
+  const email = (tenant.admin?.email || tenant.ownerEmail || '').trim();
+  if (!email) throw new Error('Add the company administrator\'s email before activating access.');
+  const temporaryPassword = generateTemporaryPassword();
+  try {
+    await apiClient.post(`/platform/tenants/${encodeURIComponent(tenant.id)}/provision`, {
+      name: tenant.name.trim(),
+      ownerName: (tenant.admin?.name || tenant.contactName || tenant.name).trim(),
+      ownerEmail: email,
+      ownerPassword: temporaryPassword,
+    });
+    return { email, temporaryPassword };
+  } catch (error) {
+    // Activation was retried after the company had already been created on the server.
+    if (error instanceof ApiError && error.status === 409 && /tenant with this id/i.test(error.message)) return undefined;
+    throw new Error(error instanceof Error && error.message ? error.message : 'The company could not be created on the server.');
+  }
+}
 
 function normalizeStore() {
   const legacy = store as PlatformFoundation & { plans?: Array<{ id: string; maxUsers: number; maxBranches: number; maxStorageGb?: number }>; subscriptions?: unknown; flags?: unknown };
@@ -393,8 +429,14 @@ export const platformService = {
     }
     const expiry = expiryDate.toISOString().slice(0, 10);
 
+    // Real backend: create the company and its administrator's login on the server first. If that fails,
+    // nothing is marked active, so the Super Admin can fix the problem and activate again.
+    const accessCredentials = isBackendEnabled() ? await provisionCompanyOnServer(tenant) : undefined;
+
     const token = crypto.randomUUID();
-    const setupUrl = `https://vyro.cloud/auth/accept-invitation?token=${token}`;
+    const setupUrl = isBackendEnabled() && typeof window !== 'undefined'
+      ? `${window.location.origin}/login`
+      : `https://vyro.cloud/auth/accept-invitation?token=${token}`;
 
     tenant.status = 'active';
     tenant.subscription = {
@@ -430,7 +472,7 @@ export const platformService = {
       },
     });
     audit('Tenant access activated', tenant.id, tenant.name, `Tenant activated following confirmed payment. Access invitation token generated for ${tenant.admin.email}.`);
-    return structuredClone(tenant);
+    return { ...structuredClone(tenant), accessCredentials };
   },
 
   async setTenantStatus(tenantId: string, status: 'pending' | 'active' | 'suspended' | 'expired') {

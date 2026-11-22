@@ -98,7 +98,7 @@ class StateStoreIntegrationTest {
         provisioning = new ProvisioningService(db, mapper, hasher, settings);
 
         SeedService.Result seeded;
-        try (InputStream accounts = stream("seed/seed-data.json"); InputStream starter = stream("seed/starter-data.json")) {
+        try (InputStream accounts = stream("seed/demo-seed-data.json"); InputStream starter = stream("seed/starter-data.json")) {
             seeded = new SeedService(db, mapper, hasher).seedIfEmpty(accounts, starter, PASSWORD, true, settings.provisionCopyCollections());
         }
         assertTrue(seeded.users() >= 10, "starter users");
@@ -531,6 +531,13 @@ class StateStoreIntegrationTest {
         assertTrue(refused.rejected().get(0).message().contains("unknown module"));
         assertEquals("[\"customers\",\"products\",\"sales\",\"settings\"]",
                 auth.login("admin@quickerp.test", PASSWORD, "10.9.9.8").tenant().path("entitlements").path("enabledModules").toString());
+
+        // Put every module back, so tests that run after this one see the starter company unchanged.
+        JsonNode allModules = json("{\"tenants\":[{\"id\":\"tenant-001\",\"status\":\"active\",\"enabledModules\":[\"hr\",\"inventory\",\"stock\",\"crm\","
+                + "\"customers\",\"suppliers\",\"products\",\"sales\",\"purchases\",\"finance\",\"projects\",\"pos\",\"web_store\",\"reports\","
+                + "\"documents\",\"notifications\",\"settings\"]}]}");
+        assertEquals(List.of(), store.applyBatch(superAdmin, new StateStore.BatchRequest("it-3",
+                List.of(change("platform.foundation", StateStore.VALUE_RECORD, allModules)), List.of())).rejected());
     }
 
     @Test

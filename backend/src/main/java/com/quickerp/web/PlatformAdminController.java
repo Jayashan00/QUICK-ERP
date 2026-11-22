@@ -163,7 +163,7 @@ public class PlatformAdminController {
             String adminEmail = admin.path("email").asText(null);
             long userCount = includeAdmin
                     ? Sql.queryLong(conn, "SELECT COUNT(*) FROM app_users WHERE tenant_id = ? AND super_admin = FALSE AND status <> 'inactive'", id)
-                    : Sql.queryLong(conn, "SELECT COUNT(*) FROM app_users WHERE tenant_id = ? AND super_admin = FALSE AND status <> 'inactive' AND role_id <> 'role-001' AND (email <> ? OR ? IS NULL)", id, adminEmail, adminEmail);
+                    : Sql.queryLong(conn, "SELECT COUNT(*) FROM app_users WHERE tenant_id = ? AND super_admin = FALSE AND status <> 'inactive' AND role_id <> 'role-001' AND (email <> CAST(? AS text) OR CAST(? AS text) IS NULL)", id, adminEmail, adminEmail);
             ObjectNode usage = entitlements.path("usage").isObject()
                     ? (ObjectNode) entitlements.path("usage")
                     : entitlements.putObject("usage");
@@ -203,7 +203,7 @@ public class PlatformAdminController {
             String adminEmail = admin.path("email").asText(null);
             long userCount = includeAdmin
                     ? Sql.queryLong(conn, "SELECT COUNT(*) FROM app_users WHERE tenant_id = ? AND super_admin = FALSE AND status <> 'inactive'", id)
-                    : Sql.queryLong(conn, "SELECT COUNT(*) FROM app_users WHERE tenant_id = ? AND super_admin = FALSE AND status <> 'inactive' AND role_id <> 'role-001' AND (email <> ? OR ? IS NULL)", id, adminEmail, adminEmail);
+                    : Sql.queryLong(conn, "SELECT COUNT(*) FROM app_users WHERE tenant_id = ? AND super_admin = FALSE AND status <> 'inactive' AND role_id <> 'role-001' AND (email <> CAST(? AS text) OR CAST(? AS text) IS NULL)", id, adminEmail, adminEmail);
             ObjectNode usage = entitlements.path("usage").isObject()
                     ? (ObjectNode) entitlements.path("usage")
                     : entitlements.putObject("usage");

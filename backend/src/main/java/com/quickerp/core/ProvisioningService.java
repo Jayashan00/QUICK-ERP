@@ -24,6 +24,9 @@ import java.util.regex.Pattern;
  */
 public final class ProvisioningService {
 
+    /** The login-less company template seeded on new installations (see seed-data.json). */
+    public static final String TEMPLATE_TENANT = "tenant-template";
+
     public record ProvisionRequest(String name, String ownerName, String ownerEmail, String ownerPassword, String templateTenantId) {
     }
 
@@ -55,11 +58,13 @@ public final class ProvisioningService {
         String ownerEmail = required(request.ownerEmail(), "ownerEmail", "The owner email is required.");
         if (!ownerEmail.contains("@")) throw ApiException.validation("ownerEmail", "Enter a valid owner email address.");
         AuthService.validatePassword(request.ownerPassword());
-        String template = request.templateTenantId() == null || request.templateTenantId().isBlank() ? "tenant-001" : request.templateTenantId().trim();
+        String requestedTemplate = request.templateTenantId() == null || request.templateTenantId().isBlank() ? null : request.templateTenantId().trim();
 
         String now = Instant.now().toString();
         return db.tx(connection -> {
             Sql.lock(connection, "t:" + tenantId);
+            String template = requestedTemplate != null ? requestedTemplate
+                    : Sql.queryLong(connection, "SELECT COUNT(*) FROM tenants WHERE id = ?", TEMPLATE_TENANT) > 0 ? TEMPLATE_TENANT : "tenant-001";
             if (Sql.queryLong(connection, "SELECT COUNT(*) FROM tenants WHERE id = ?", tenantId) > 0) {
                 throw ApiException.conflict("A tenant with this id already exists.");
             }
@@ -76,6 +81,7 @@ public final class ProvisioningService {
             }
 
             ObjectNode tenantProfile = (ObjectNode) Sql.readJson(mapper, templateProfileText).deepCopy();
+            tenantProfile.remove("description");
             tenantProfile.put("id", tenantId);
             tenantProfile.put("name", name);
             tenantProfile.put("subdomain", tenantId);

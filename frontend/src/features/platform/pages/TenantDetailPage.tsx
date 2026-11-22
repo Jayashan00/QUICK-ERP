@@ -53,6 +53,7 @@ import { TextInput } from '@/shared/components/forms/TextInput';
 import { FormField } from '@/shared/components/forms/FormField';
 import { Select } from '@/shared/components/forms/Select';
 import { Modal } from '@/shared/components/common/Modal';
+import type { IssuedAccessCredentials } from '@/features/platform/services/platformService';
 import { appToast } from '@/shared/utils/toast';
 import { getErrorMessage } from '@/shared/utils/errors';
 import { convertPlatformCurrency } from '@/core/currency/platformCurrency';
@@ -100,6 +101,7 @@ export function TenantDetailPage() {
   // Onboarding & Payment Modals
   const [previewInvoiceModal, setPreviewInvoiceModal] = useState(false);
   const [recordPaymentModal, setRecordPaymentModal] = useState(false);
+  const [issuedCredentials, setIssuedCredentials] = useState<IssuedAccessCredentials | null>(null);
   const [activateConfirmModal, setActivateConfirmModal] = useState(false);
 
   const form = useForm<TenantConfigurationInput>({
@@ -418,9 +420,14 @@ export function TenantDetailPage() {
       return;
     }
     try {
-      await activateAccess.mutateAsync();
-      appToast.success('Tenant access activated! Secure invitation setup link generated.');
+      const activated = await activateAccess.mutateAsync();
       setActivateConfirmModal(false);
+      if (activated.accessCredentials) {
+        setIssuedCredentials(activated.accessCredentials);
+        appToast.success('Company activated. Give the administrator the sign-in details shown.');
+      } else {
+        appToast.success('Tenant access activated! Secure invitation setup link generated.');
+      }
     } catch (error) {
       appToast.error(error instanceof Error ? error.message : 'Failed to activate tenant.');
     }
@@ -1466,6 +1473,29 @@ export function TenantDetailPage() {
       </Modal>
 
       {/* Record Payment Modal */}
+      <Modal isOpen={issuedCredentials !== null} title="Company administrator sign-in" onClose={() => setIssuedCredentials(null)}>
+        {issuedCredentials && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              The company was created with all default roles. Give these details to its administrator. The password is shown
+              <strong> only once</strong>; ask the administrator to change it after the first sign-in (Security page).
+            </p>
+            <dl className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+              <div className="flex items-center justify-between gap-3"><dt className="text-slate-500">Sign-in page</dt><dd className="font-mono">{window.location.origin}/login</dd></div>
+              <div className="flex items-center justify-between gap-3"><dt className="text-slate-500">Email</dt><dd className="font-mono">{issuedCredentials.email}</dd></div>
+              <div className="flex items-center justify-between gap-3"><dt className="text-slate-500">Temporary password</dt><dd className="font-mono select-all">{issuedCredentials.temporaryPassword}</dd></div>
+            </dl>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => {
+                void navigator.clipboard.writeText(`Sign-in: ${window.location.origin}/login\nEmail: ${issuedCredentials.email}\nTemporary password: ${issuedCredentials.temporaryPassword}`);
+                appToast.success('Sign-in details copied.');
+              }}>Copy details</Button>
+              <Button variant="primary" onClick={() => setIssuedCredentials(null)}>Done</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <Modal isOpen={recordPaymentModal} title="Record &amp; Confirm Payment" onClose={() => setRecordPaymentModal(false)}>
         <form className="space-y-4" onSubmit={handleConfirmPayment}>
           <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">

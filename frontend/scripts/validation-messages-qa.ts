@@ -3,20 +3,12 @@ import { z } from 'zod';
 import {
   formatUserFriendlyValidationError,
   formatFieldLabel,
-  requiredString,
-  optionalString,
-  emailSchema,
-  phoneSchema,
-  nonNegativeNumber,
-  optionalDate,
-  optionalTodayOrFutureDate,
 } from '../src/shared/validation';
 import { customerSchema } from '../src/features/customers/schemas/customerSchema';
-import { supplierSchema } from '../src/features/suppliers/schemas/supplier.schema';
 import { productFormSchema } from '../src/features/products/schemas/productSchema';
 import { salesOrderSchema } from '../src/features/sales/schemas/salesSchemas';
 import { warehouseSchema } from '../src/features/inventory/schemas/inventorySchemas';
-import { loginSchema, resetPasswordSchema } from '../src/features/auth/schemas/securitySchemas';
+import { loginSchema } from '../src/features/auth/schemas/securitySchemas';
 
 // 1. Test formatFieldLabel
 assert.equal(formatFieldLabel('customerName'), 'Customer name');

@@ -13,6 +13,8 @@ import {
  */
 export function useAppForm<
   TFieldValues extends FieldValues = FieldValues,
+  // Same default as react-hook-form's own UseFormProps, so every existing form keeps its types.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   TContext = any,
   TTransformedValues = TFieldValues,
 >(

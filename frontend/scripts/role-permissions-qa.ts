@@ -10,7 +10,7 @@ import {
 import {
   ROLE_PERMISSION_PRESETS,
 } from '../src/features/settings/roles/config/rolePermissionPresets';
-import { TENANT_MODULES, tenantEntitlementService } from '../src/core/tenant/tenantEntitlements';
+import { TENANT_MODULES } from '../src/core/tenant/tenantEntitlements';
 import { roleService } from '../src/core/permissions/roleService';
 import { permissionMatrixService } from '../src/features/settings/roles/services/permissionMatrixService';
 

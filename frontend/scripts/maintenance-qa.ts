@@ -7,7 +7,6 @@ import {
   clearMaintenanceState,
   checkMaintenanceStatus,
 } from '@/core/maintenance/maintenanceState';
-import { apiConfig } from '@/core/api/apiConfig';
 
 console.log('Running VYRO Maintenance Mode Frontend QA tests...');
 

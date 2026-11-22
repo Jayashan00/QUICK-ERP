@@ -141,7 +141,7 @@ export async function checkMaintenanceStatus(): Promise<MaintenanceStatus> {
       }
       return updated;
     }
-  } catch (error) {
+  } catch {
     // If network fails, do not unilaterally mark as maintenance unless already active
   }
 

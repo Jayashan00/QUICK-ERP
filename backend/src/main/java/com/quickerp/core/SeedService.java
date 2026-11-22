@@ -85,7 +85,8 @@ public final class SeedService {
                         id, tenantId, email, hash, status, superAdmin, Sql.text(user, "roleId"), Sql.writeJson(mapper, profile));
                 created++;
             }
-            int collections = starterData == null ? 0 : seedCollections(connection, starterData, demoData, configCollections);
+            String templateId = templateTenant(seed);
+            int collections = starterData == null ? 0 : seedCollections(connection, starterData, templateId, demoData, configCollections);
             return new Result(created, collections);
         });
     }
@@ -107,8 +108,26 @@ public final class SeedService {
         return users;
     }
 
-    private int seedCollections(Connection connection, JsonNode starterData, boolean demoData, Collection<String> configCollections) throws SQLException {
-        String tenantId = Sql.text(starterData, "tenantId");
+    /** The tenant marked {@code "status": "template"} in seed-data.json, or null. */
+    static String templateTenant(JsonNode seed) {
+        for (JsonNode tenant : seed.path("tenants")) {
+            if ("template".equals(tenant.path("status").asText())) return tenant.path("id").asText(null);
+        }
+        return null;
+    }
+
+    /**
+     * Stores the starter collections. With a template tenant (production), the starter configuration is
+     * stored under the template's id and no user records are copied: the template has no logins and is
+     * only the source new companies are provisioned from.
+     */
+    private int seedCollections(Connection connection, JsonNode starterData, String templateId, boolean demoData,
+                                Collection<String> configCollections) throws SQLException {
+        String starterTenant = Sql.text(starterData, "tenantId");
+        if (templateId != null && starterTenant != null && !templateId.equals(starterTenant)) {
+            starterData = ProvisioningService.replaceTenant(starterData, starterTenant, templateId);
+        }
+        String tenantId = templateId != null ? templateId : starterTenant;
         if (tenantId == null || Sql.queryLong(connection, "SELECT COUNT(*) FROM tenants WHERE id = ?", tenantId) == 0) return 0;
         Set<String> config = new HashSet<>(configCollections == null ? Set.of() : configCollections);
         config.addAll(SECURITY_COLLECTIONS);
@@ -117,6 +136,7 @@ public final class SeedService {
         while (collections.hasNext()) {
             Map.Entry<String, JsonNode> collection = collections.next();
             String name = collection.getKey();
+            if (templateId != null && "core.users".equals(name)) continue;
             if (demoData || config.contains(name)) {
                 Iterator<Map.Entry<String, JsonNode>> records = collection.getValue().fields();
                 while (records.hasNext()) {
