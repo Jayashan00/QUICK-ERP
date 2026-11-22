@@ -15,3 +15,5 @@ frontend/start-frontend.bat
 .idea/
 .vscode/
 *.iml
+
+__pycache__/
