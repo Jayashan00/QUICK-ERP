@@ -17,3 +17,5 @@ frontend/start-frontend.bat
 *.iml
 
 __pycache__/
+
+__pycache__/

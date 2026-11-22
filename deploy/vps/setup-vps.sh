@@ -129,8 +129,9 @@ install -o quickerp -g quickerp -m 0644 target/quick-erp-backend.jar /opt/quicke
 
 step "7/9 Building the website"
 cd "$PACKAGE/frontend"
-npm ci --no-audit --no-fund
-VITE_API_BASE_URL="/api/v1" VITE_USE_MOCKS="false" npm run build
+# pnpm (pinned): npm 11+ refuses the xlsx package's download link (cdn.sheetjs.com); pnpm-lock.yaml is used.
+npx --yes pnpm@9.15.0 install --frozen-lockfile
+VITE_API_BASE_URL="/api/v1" VITE_USE_MOCKS="false" npx --yes pnpm@9.15.0 run build
 rm -rf "$WEB.new" && cp -r dist "$WEB.new" && chmod -R a+rX "$WEB.new"
 rm -rf "$WEB.old"; [ -d "$WEB" ] && mv "$WEB" "$WEB.old"; mv "$WEB.new" "$WEB"; rm -rf "$WEB.old"
 
@@ -146,6 +147,13 @@ for _ in $(seq 1 90); do
   echo -n "."; sleep 2
 done
 curl -fs http://127.0.0.1:8000/api/v1/health >/dev/null || die "the backend did not start. See: journalctl -u quickerp-backend -n 100"
+# The inquiry service runs /usr/bin/node. Where Node lives elsewhere in a public place (for example
+# /usr/local/bin/node), point /usr/bin/node at it; other apps keep using the same Node.
+if [ ! -x /usr/bin/node ]; then
+  NODE_PATH_REAL="$(readlink -f "$(command -v node)")"
+  case "$NODE_PATH_REAL" in /root/*|/home/*) die "Node.js is installed in a private folder ($NODE_PATH_REAL); the inquiry service cannot use it" ;; esac
+  ln -s "$NODE_PATH_REAL" /usr/bin/node
+fi
 bash "$PACKAGE/website-inquiries/install.sh"
 systemctl is-active --quiet vyro-inquiries || die "the inquiry service did not start. See: journalctl -u vyro-inquiries -n 50"
 
