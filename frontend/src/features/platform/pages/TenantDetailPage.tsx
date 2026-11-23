@@ -61,6 +61,8 @@ import { getErrorMessage } from '@/shared/utils/errors';
 import { convertPlatformCurrency } from '@/core/currency/platformCurrency';
 import { formatCurrency } from '@/shared/utils/formatters';
 
+const TENANT_ADMIN_SIGN_IN_URL = 'https://vyroerp.com/login';
+
 const SUBSCRIPTION_PLANS = [
   { value: 'starter', label: 'Starter' },
   { value: 'business', label: 'Business' },
@@ -1554,13 +1556,13 @@ export function TenantDetailPage() {
               <strong> only once</strong>; ask the administrator to change it after the first sign-in (Security page).
             </p>
             <dl className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-              <div className="flex items-center justify-between gap-3"><dt className="text-slate-500">Sign-in page</dt><dd className="font-mono">{window.location.origin}/login</dd></div>
+              <div className="flex items-center justify-between gap-3"><dt className="text-slate-500">Sign-in page</dt><dd className="font-mono">{TENANT_ADMIN_SIGN_IN_URL}</dd></div>
               <div className="flex items-center justify-between gap-3"><dt className="text-slate-500">Email</dt><dd className="font-mono">{issuedCredentials.email}</dd></div>
               <div className="flex items-center justify-between gap-3"><dt className="text-slate-500">Temporary password</dt><dd className="font-mono select-all">{issuedCredentials.temporaryPassword}</dd></div>
             </dl>
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={() => {
-                void navigator.clipboard.writeText(`Sign-in: ${window.location.origin}/login\nEmail: ${issuedCredentials.email}\nTemporary password: ${issuedCredentials.temporaryPassword}`);
+                void navigator.clipboard.writeText(`Sign-in: ${TENANT_ADMIN_SIGN_IN_URL}\nEmail: ${issuedCredentials.email}\nTemporary password: ${issuedCredentials.temporaryPassword}`);
                 appToast.success('Sign-in details copied.');
               }}>Copy details</Button>
               <Button variant="primary" onClick={() => setIssuedCredentials(null)}>Done</Button>
