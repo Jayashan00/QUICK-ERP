@@ -46,7 +46,8 @@ class StateStoreIntegrationTest {
     private static final List<String> MIGRATIONS = List.of(
             "V1__initial_schema.sql", "V2__security_and_files.sql", "V3__security_hardening.sql",
             "V4__ai_assistant.sql", "V5__sync_tenant_entitlements.sql",
-            "V7__support_ticket_tenant_approval.sql", "V8__support_ticket_escalation_workflow.sql");
+            "V7__support_ticket_tenant_approval.sql", "V8__support_ticket_escalation_workflow.sql",
+            "V9__tenant_subscription.sql");
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final String schema = "qerp_it_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);

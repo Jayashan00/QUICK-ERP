@@ -38,6 +38,8 @@ import { usePlatformFoundation, usePlatformMutation } from '@/features/platform/
 import {
   TENANT_MODULE_CATALOG,
   expandModuleDependencies,
+  getDependentModules,
+  getModuleLabel,
   computeDaysRemaining,
   type TenantModule,
 } from '@/core/tenant/tenantEntitlements';
@@ -89,13 +91,14 @@ export function TenantDetailPage() {
   const navigate = useNavigate();
   const query = usePlatformFoundation();
   const tenant = query.data?.tenants.find((item) => item.id === tenantId);
+  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
   const [pendingModules, setPendingModules] = useState<TenantModule[]>([]);
   const [statusConfirm, setStatusConfirm] = useState(false);
   const [resetConfirm, setResetConfirm] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [suspendPromptModal, setSuspendPromptModal] = useState(false);
-  const [disableConfirm, setDisableConfirm] = useState<TenantModule | null>(null);
+  const [disableConfirm, setDisableConfirm] = useState<{ module: TenantModule; dependents: TenantModule[] } | null>(null);
   const [editingCompany, setEditingCompany] = useState(false);
 
   // Onboarding & Payment Modals
@@ -154,6 +157,21 @@ export function TenantDetailPage() {
   useEffect(() => {
     if (tenant) {
       setPendingModules(tenant.enabledModules);
+      const today = new Date().toISOString().slice(0, 10);
+      const defaultExpiry = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+      const rawStart = tenant.subscription?.start;
+      const initialStart = (tenant.status === 'pending' && rawStart && rawStart < today) || !rawStart
+        ? today
+        : rawStart;
+      const rawExpiry = tenant.subscription?.expiry;
+      const initialExpiry = (tenant.status === 'pending' && rawExpiry && rawExpiry < initialStart) || !rawExpiry
+        ? defaultExpiry
+        : rawExpiry;
+      const rawRenewal = tenant.revenue?.renewalDate;
+      const initialRenewal = (tenant.status === 'pending' && rawRenewal && rawRenewal < today) || !rawRenewal
+        ? defaultExpiry
+        : rawRenewal;
+
       form.reset({
         enabledModules: tenant.enabledModules,
         maxUsers: tenant.limits.maxUsers,
@@ -164,15 +182,15 @@ export function TenantDetailPage() {
         revenueAmount: tenant.revenue.amount,
         revenueCurrency: tenant.revenue.currency,
         billingCycle: tenant.revenue.billingCycle,
-        renewalDate: tenant.revenue.renewalDate,
+        renewalDate: initialRenewal,
         discountAmount: tenant.revenue.discountAmount ?? 0,
         additionalCharges: tenant.revenue.additionalCharges ?? 0,
         taxRatePercent: tenant.revenue.taxRatePercent ?? 0,
         paymentInstructions: tenant.revenue.paymentInstructions ?? '',
         terms: tenant.revenue.terms ?? '',
         subscriptionPlan: (tenant.subscription?.plan ?? 'business') as 'starter' | 'business' | 'enterprise' | 'custom',
-        subscriptionStart: tenant.subscription?.start ?? '',
-        subscriptionExpiry: tenant.subscription?.expiry ?? '',
+        subscriptionStart: initialStart,
+        subscriptionExpiry: initialExpiry,
         tenantStatus: tenant.status,
       });
 
@@ -295,6 +313,21 @@ export function TenantDetailPage() {
   const handleDiscardChanges = () => {
     if (!tenant) return;
     setPendingModules(tenant.enabledModules);
+    const today = new Date().toISOString().slice(0, 10);
+    const defaultExpiry = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+    const rawStart = tenant.subscription?.start;
+    const initialStart = (tenant.status === 'pending' && rawStart && rawStart < today) || !rawStart
+      ? today
+      : rawStart;
+    const rawExpiry = tenant.subscription?.expiry;
+    const initialExpiry = (tenant.status === 'pending' && rawExpiry && rawExpiry < initialStart) || !rawExpiry
+      ? defaultExpiry
+      : rawExpiry;
+    const rawRenewal = tenant.revenue?.renewalDate;
+    const initialRenewal = (tenant.status === 'pending' && rawRenewal && rawRenewal < today) || !rawRenewal
+      ? defaultExpiry
+      : rawRenewal;
+
     form.reset({
       enabledModules: tenant.enabledModules,
       maxUsers: tenant.limits.maxUsers,
@@ -305,15 +338,15 @@ export function TenantDetailPage() {
       revenueAmount: tenant.revenue.amount,
       revenueCurrency: tenant.revenue.currency,
       billingCycle: tenant.revenue.billingCycle,
-      renewalDate: tenant.revenue.renewalDate,
+      renewalDate: initialRenewal,
       discountAmount: tenant.revenue.discountAmount ?? 0,
       additionalCharges: tenant.revenue.additionalCharges ?? 0,
       taxRatePercent: tenant.revenue.taxRatePercent ?? 0,
       paymentInstructions: tenant.revenue.paymentInstructions ?? '',
       terms: tenant.revenue.terms ?? '',
       subscriptionPlan: (tenant.subscription?.plan ?? 'business') as 'starter' | 'business' | 'enterprise' | 'custom',
-      subscriptionStart: tenant.subscription?.start ?? '',
-      subscriptionExpiry: tenant.subscription?.expiry ?? '',
+      subscriptionStart: initialStart,
+      subscriptionExpiry: initialExpiry,
       tenantStatus: tenant.status,
     });
     appToast.info('Unsaved changes discarded.');
@@ -356,7 +389,8 @@ export function TenantDetailPage() {
   const toggleModule = (module: TenantModule) => {
     if (module === 'settings') return;
     if (pendingModules.includes(module)) {
-      setDisableConfirm(module);
+      const dependents = getDependentModules(module, pendingModules);
+      setDisableConfirm({ module, dependents });
       return;
     }
     const next = expandModuleDependencies([...pendingModules, module]);
@@ -899,41 +933,7 @@ export function TenantDetailPage() {
 
       {/* Main Configuration Form */}
       <form onSubmit={saveConfiguration} className="space-y-6">
-        {/* Card 1: Subscription Plan & Status */}
-        <Card>
-          <div className="flex items-center justify-between">
-            <h2 className="flex items-center gap-2 font-semibold">
-              <Settings2 size={18} className="text-blue-600" />
-              Subscription &amp; Lifecycle Settings
-            </h2>
-            <span className="text-xs text-slate-500">Super Admin controlled tier</span>
-          </div>
-
-          <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <FormField label="Subscription plan" error={form.formState.errors.subscriptionPlan?.message}>
-              <Select {...form.register('subscriptionPlan')} options={SUBSCRIPTION_PLANS} />
-            </FormField>
-            <FormField
-              label="Tenant lifecycle status"
-              error={form.formState.errors.tenantStatus?.message}
-              hint={tenant.status === 'pending' ? 'Pending tenants can only be activated via the "Activate & Send Access" button after payment.' : undefined}
-            >
-              <Select
-                {...form.register('tenantStatus')}
-                disabled={tenant.status === 'pending'}
-                options={tenant.status === 'pending' ? [{ value: 'pending', label: 'Pending Activation' }] : TENANT_STATUS_OPTIONS}
-              />
-            </FormField>
-            <FormField label="Subscription start date" error={form.formState.errors.subscriptionStart?.message}>
-              <TextInput type="date" {...form.register('subscriptionStart')} />
-            </FormField>
-            <FormField label="Subscription expiry date" error={form.formState.errors.subscriptionExpiry?.message}>
-              <TextInput type="date" {...form.register('subscriptionExpiry')} />
-            </FormField>
-          </div>
-        </Card>
-
-        {/* Card 2: Allowed Modules */}
+        {/* Card 1: Allowed Modules */}
         <Card>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -986,81 +986,7 @@ export function TenantDetailPage() {
           </div>
         </Card>
 
-        {/* Card 3: Revenue, Invoicing & Terms */}
-        <Card>
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Subscription pricing, discounts &amp; payment terms</h2>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              leftIcon={<FileText size={14} />}
-              onClick={handleGenerateInvoice}
-              isLoading={generateInvoice.isPending}
-            >
-              Update &amp; Re-generate Invoice
-            </Button>
-          </div>
-          <p className="mt-1 text-sm text-slate-500">
-            Define pricing terms for invoice generation and customer billing.
-          </p>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <FormField label="Base subscription price" error={form.formState.errors.revenueAmount?.message}>
-              <TextInput type="number" min={0} step="0.01" {...form.register('revenueAmount', { valueAsNumber: true })} />
-            </FormField>
-            <FormField label="Currency" error={form.formState.errors.revenueCurrency?.message}>
-              <Select
-                {...form.register('revenueCurrency')}
-                options={[
-                  { value: 'USD', label: 'USD ($)' },
-                  { value: 'LKR', label: 'LKR (Rs)' },
-                ]}
-              />
-            </FormField>
-            <FormField label="Billing cycle" error={form.formState.errors.billingCycle?.message}>
-              <Select
-                {...form.register('billingCycle')}
-                options={[
-                  { value: 'monthly', label: 'Monthly' },
-                  { value: 'yearly', label: 'Yearly' },
-                ]}
-              />
-            </FormField>
-            <FormField label="Renewal date" error={form.formState.errors.renewalDate?.message}>
-              <TextInput type="date" {...form.register('renewalDate')} />
-            </FormField>
-
-            <FormField label="Discount amount" error={form.formState.errors.discountAmount?.message}>
-              <TextInput type="number" min={0} step="0.01" {...form.register('discountAmount', { valueAsNumber: true })} />
-            </FormField>
-            <FormField label="Additional setup charges" error={form.formState.errors.additionalCharges?.message}>
-              <TextInput type="number" min={0} step="0.01" {...form.register('additionalCharges', { valueAsNumber: true })} />
-            </FormField>
-            <FormField label="Tax rate (%)" error={form.formState.errors.taxRatePercent?.message}>
-              <TextInput type="number" min={0} max={100} step="0.1" {...form.register('taxRatePercent', { valueAsNumber: true })} />
-            </FormField>
-            <FormField label="Subscription terms" error={form.formState.errors.terms?.message}>
-              <TextInput placeholder="e.g. 1 Year Enterprise Contract" {...form.register('terms')} />
-            </FormField>
-
-            <div className="sm:col-span-2 xl:col-span-4">
-              <FormField label="Bank payment instructions (Included on PDF Invoice)" error={form.formState.errors.paymentInstructions?.message}>
-                <textarea
-                  rows={2}
-                  className="w-full rounded-lg border border-slate-300 p-2.5 text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                  placeholder="Bank: Quick Bank PLC&#10;Account Name: Quick Solutions Ltd&#10;Account Number: 0192837465"
-                  {...form.register('paymentInstructions')}
-                />
-              </FormField>
-            </div>
-          </div>
-          <div className="mt-4 rounded-lg bg-slate-50 px-4 py-3 text-sm">
-            <span className="text-slate-500">Platform base currency conversion ({baseCurrency}): </span>
-            <strong>{formatCurrency(convertedRevenue, baseCurrency)}</strong>
-          </div>
-        </Card>
-
-        {/* Card 4: Tenant Limits */}
+        {/* Card 2: Tenant Limits */}
         <Card>
           <h2 className="font-semibold">Tenant limits</h2>
           <p className="mt-1 text-sm text-slate-500">
@@ -1125,6 +1051,114 @@ export function TenantDetailPage() {
                 </div>
               </label>
             </div>
+          </div>
+        </Card>
+
+        {/* Card 3: Subscription Plan & Lifecycle Status */}
+        <Card>
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-2 font-semibold">
+              <Settings2 size={18} className="text-blue-600" />
+              Subscription &amp; Lifecycle Settings
+            </h2>
+            <span className="text-xs text-slate-500">Super Admin controlled tier</span>
+          </div>
+
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <FormField label="Subscription plan" error={form.formState.errors.subscriptionPlan?.message}>
+              <Select {...form.register('subscriptionPlan')} options={SUBSCRIPTION_PLANS} />
+            </FormField>
+            <FormField
+              label="Tenant lifecycle status"
+              error={form.formState.errors.tenantStatus?.message}
+              hint={tenant.status === 'pending' ? 'Pending tenants can only be activated via the "Activate & Send Access" button after payment.' : undefined}
+            >
+              <Select
+                {...form.register('tenantStatus')}
+                disabled={tenant.status === 'pending'}
+                options={tenant.status === 'pending' ? [{ value: 'pending', label: 'Pending Activation' }] : TENANT_STATUS_OPTIONS}
+              />
+            </FormField>
+            <FormField label="Subscription start date" error={form.formState.errors.subscriptionStart?.message}>
+              <TextInput type="date" min={todayStr} {...form.register('subscriptionStart')} />
+            </FormField>
+            <FormField label="Subscription expiry date" error={form.formState.errors.subscriptionExpiry?.message}>
+              <TextInput type="date" min={watchedValues.subscriptionStart || todayStr} {...form.register('subscriptionExpiry')} />
+            </FormField>
+          </div>
+        </Card>
+
+        {/* Card 4: Revenue, Invoicing & Terms */}
+        <Card>
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Subscription pricing, discounts &amp; payment terms</h2>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              leftIcon={<FileText size={14} />}
+              onClick={handleGenerateInvoice}
+              isLoading={generateInvoice.isPending}
+            >
+              Update &amp; Re-generate Invoice
+            </Button>
+          </div>
+          <p className="mt-1 text-sm text-slate-500">
+            Define pricing terms for invoice generation and customer billing.
+          </p>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <FormField label="Base subscription price" error={form.formState.errors.revenueAmount?.message}>
+              <TextInput type="number" min={0} step="0.01" {...form.register('revenueAmount', { valueAsNumber: true })} />
+            </FormField>
+            <FormField label="Currency" error={form.formState.errors.revenueCurrency?.message}>
+              <Select
+                {...form.register('revenueCurrency')}
+                options={[
+                  { value: 'USD', label: 'USD ($)' },
+                  { value: 'LKR', label: 'LKR (Rs)' },
+                ]}
+              />
+            </FormField>
+            <FormField label="Billing cycle" error={form.formState.errors.billingCycle?.message}>
+              <Select
+                {...form.register('billingCycle')}
+                options={[
+                  { value: 'monthly', label: 'Monthly' },
+                  { value: 'yearly', label: 'Yearly' },
+                ]}
+              />
+            </FormField>
+            <FormField label="Renewal date" error={form.formState.errors.renewalDate?.message}>
+              <TextInput type="date" min={todayStr} {...form.register('renewalDate')} />
+            </FormField>
+
+            <FormField label="Discount amount" error={form.formState.errors.discountAmount?.message}>
+              <TextInput type="number" min={0} step="0.01" {...form.register('discountAmount', { valueAsNumber: true })} />
+            </FormField>
+            <FormField label="Additional setup charges" error={form.formState.errors.additionalCharges?.message}>
+              <TextInput type="number" min={0} step="0.01" {...form.register('additionalCharges', { valueAsNumber: true })} />
+            </FormField>
+            <FormField label="Tax rate (%)" error={form.formState.errors.taxRatePercent?.message}>
+              <TextInput type="number" min={0} max={100} step="0.1" {...form.register('taxRatePercent', { valueAsNumber: true })} />
+            </FormField>
+            <FormField label="Subscription terms" error={form.formState.errors.terms?.message}>
+              <TextInput placeholder="e.g. 1 Year Enterprise Contract" {...form.register('terms')} />
+            </FormField>
+
+            <div className="sm:col-span-2 xl:col-span-4">
+              <FormField label="Bank payment instructions (Included on PDF Invoice)" error={form.formState.errors.paymentInstructions?.message}>
+                <textarea
+                  rows={2}
+                  className="w-full rounded-lg border border-slate-300 p-2.5 text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  placeholder="Bank: Quick Bank PLC&#10;Account Name: Quick Solutions Ltd&#10;Account Number: 0192837465"
+                  {...form.register('paymentInstructions')}
+                />
+              </FormField>
+            </div>
+          </div>
+          <div className="mt-4 rounded-lg bg-slate-50 px-4 py-3 text-sm">
+            <span className="text-slate-500">Platform base currency conversion ({baseCurrency}): </span>
+            <strong>{formatCurrency(convertedRevenue, baseCurrency)}</strong>
           </div>
         </Card>
 
@@ -1216,15 +1250,54 @@ export function TenantDetailPage() {
 
       <ConfirmDialog
         isOpen={Boolean(disableConfirm)}
-        title={`Disable ${disableConfirm} module?`}
-        message="Users belonging to this tenant will immediately lose access to this module and its associated permissions."
+        title={
+          disableConfirm && disableConfirm.dependents.length > 0
+            ? `Disable ${getModuleLabel(disableConfirm.module)} and dependent modules?`
+            : `Disable ${disableConfirm ? getModuleLabel(disableConfirm.module) : ''} module?`
+        }
+        message={
+          disableConfirm ? (
+            <div className="space-y-2">
+              {disableConfirm.dependents.length > 0 ? (
+                <>
+                  <p>
+                    Disabling <strong>{getModuleLabel(disableConfirm.module)}</strong> will also automatically disable the following module{disableConfirm.dependents.length > 1 ? 's' : ''} that depend on it:
+                  </p>
+                  <ul className="list-disc pl-5 font-semibold text-slate-800 space-y-0.5">
+                    {disableConfirm.dependents.map((dep) => (
+                      <li key={dep}>{getModuleLabel(dep)}</li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-slate-500 pt-1">
+                    Users belonging to this tenant will immediately lose access to these modules and their associated permissions.
+                  </p>
+                </>
+              ) : (
+                <p>
+                  Users belonging to this tenant will immediately lose access to <strong>{getModuleLabel(disableConfirm.module)}</strong> and its associated permissions.
+                </p>
+              )}
+            </div>
+          ) : ''
+        }
         variant="danger"
+        confirmLabel={disableConfirm && disableConfirm.dependents.length > 0 ? 'Disable All' : 'Disable'}
         onConfirm={() => {
           if (!disableConfirm) return;
-          const next = pendingModules.filter((module) => module !== disableConfirm);
+          const { module, dependents } = disableConfirm;
+          const toRemove = new Set([module, ...dependents]);
+          const next = pendingModules.filter((m) => !toRemove.has(m));
           setPendingModules(next);
           form.setValue('enabledModules', next, { shouldDirty: true });
           setDisableConfirm(null);
+
+          const moduleLabel = getModuleLabel(module);
+          if (dependents.length > 0) {
+            const depLabels = dependents.map((d) => getModuleLabel(d)).join(', ');
+            appToast.warning(`Disabled "${moduleLabel}" and dependent module(s): ${depLabels}.`);
+          } else {
+            appToast.info(`Disabled "${moduleLabel}".`);
+          }
         }}
         onCancel={() => setDisableConfirm(null)}
       />

@@ -10,6 +10,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -65,10 +67,14 @@ public final class ProvisioningService {
             Sql.lock(connection, "t:" + tenantId);
             String template = requestedTemplate != null ? requestedTemplate
                     : Sql.queryLong(connection, "SELECT COUNT(*) FROM tenants WHERE id = ?", TEMPLATE_TENANT) > 0 ? TEMPLATE_TENANT : "tenant-001";
-            if (Sql.queryLong(connection, "SELECT COUNT(*) FROM tenants WHERE id = ?", tenantId) > 0) {
-                throw ApiException.conflict("A tenant with this id already exists.");
+            String existingProfileText = Sql.queryString(connection, "SELECT profile FROM tenants WHERE id = ?", tenantId);
+            String existingStatus = existingProfileText == null ? null
+                    : Sql.queryString(connection, "SELECT status FROM tenants WHERE id = ?", tenantId);
+            if (existingProfileText != null && !"pending".equals(existingStatus)) {
+                throw ApiException.conflict("Only an existing pending tenant can be provisioned.");
             }
-            if (Sql.queryLong(connection, "SELECT COUNT(*) FROM tenants WHERE lower(trim(name)) = lower(trim(?))", name) > 0) {
+            if (Sql.queryLong(connection,
+                    "SELECT COUNT(*) FROM tenants WHERE lower(trim(name)) = lower(trim(?)) AND id <> ?", name, tenantId) > 0) {
                 throw ApiException.conflict("A company with this name already exists.");
             }
             String templateProfileText = Sql.queryString(connection, "SELECT profile FROM tenants WHERE id = ?", template);
@@ -80,18 +86,71 @@ public final class ProvisioningService {
                 throw ApiException.conflict("The email address " + ownerEmail + " is already used by another account.");
             }
 
-            ObjectNode tenantProfile = (ObjectNode) Sql.readJson(mapper, templateProfileText).deepCopy();
-            tenantProfile.remove("description");
+            ObjectNode tenantProfile = existingProfileText == null
+                    ? (ObjectNode) Sql.readJson(mapper, templateProfileText).deepCopy()
+                    : (ObjectNode) Sql.readJson(mapper, existingProfileText).deepCopy();
+            if (existingProfileText != null) {
+                JsonNode onboarding = tenantProfile.path("onboarding");
+                if (onboarding.path("invoice").path("isOutdated").asBoolean(false)) {
+                    throw ApiException.forbidden("Generate an updated invoice before activating tenant access.");
+                }
+                if (!"paid".equalsIgnoreCase(onboarding.path("payment").path("status").asText())) {
+                    throw ApiException.forbidden("Tenant access cannot be activated until invoice payment is fully confirmed as PAID.");
+                }
+            }
+            if (existingProfileText == null) tenantProfile.remove("description");
             tenantProfile.put("id", tenantId);
             tenantProfile.put("name", name);
-            tenantProfile.put("subdomain", tenantId);
+            if (!tenantProfile.hasNonNull("subdomain") || tenantProfile.path("subdomain").asText().isBlank()) {
+                tenantProfile.put("subdomain", tenantId);
+            }
             tenantProfile.put("status", "active");
             tenantProfile.put("ownerEmail", ownerEmail);
             tenantProfile.put("contactName", ownerName);
-            tenantProfile.put("createdAt", now);
+            if (!tenantProfile.hasNonNull("createdAt")) tenantProfile.put("createdAt", now);
             tenantProfile.put("updatedAt", now);
-            Sql.update(connection, "INSERT INTO tenants (id, name, status, profile) VALUES (?, ?, 'active', CAST(? AS jsonb))",
-                    tenantId, name, Sql.writeJson(mapper, tenantProfile));
+
+            LocalDate subscriptionStart = LocalDate.now();
+            String billingCycle = tenantProfile.path("revenue").path("billingCycle").asText("monthly");
+            LocalDate subscriptionExpiry = "yearly".equalsIgnoreCase(billingCycle)
+                    ? subscriptionStart.plusYears(1)
+                    : subscriptionStart.plusMonths(1);
+            ObjectNode subscription = tenantProfile.has("subscription") && tenantProfile.get("subscription").isObject()
+                    ? (ObjectNode) tenantProfile.get("subscription")
+                    : tenantProfile.putObject("subscription");
+            subscription.put("status", "active");
+            subscription.put("start", subscriptionStart.toString());
+            subscription.put("expiry", subscriptionExpiry.toString());
+
+            ObjectNode admin = tenantProfile.has("admin") && tenantProfile.get("admin").isObject()
+                    ? (ObjectNode) tenantProfile.get("admin")
+                    : tenantProfile.putObject("admin");
+            admin.put("name", ownerName);
+            admin.put("email", ownerEmail);
+            admin.put("status", "active");
+
+            ObjectNode onboarding = tenantProfile.has("onboarding") && tenantProfile.get("onboarding").isObject()
+                    ? (ObjectNode) tenantProfile.get("onboarding")
+                    : tenantProfile.putObject("onboarding");
+            onboarding.put("stage", "access_activated");
+            ObjectNode invitation = onboarding.putObject("invitation");
+            invitation.put("token", UUID.randomUUID().toString());
+            invitation.put("sentAt", now);
+            invitation.put("expiresAt", Instant.now().plus(48, ChronoUnit.HOURS).toString());
+            invitation.put("setupUrl", "/login");
+
+            String subscriptionPlan = subscription.path("plan").asText("business");
+            if (existingProfileText == null) {
+                Sql.update(connection,
+                        "INSERT INTO tenants (id, name, status, profile, subscription_plan, subscription_start, subscription_expiry) " +
+                                "VALUES (?, ?, 'active', CAST(? AS jsonb), ?, ?, ?)",
+                        tenantId, name, Sql.writeJson(mapper, tenantProfile), subscriptionPlan, subscriptionStart, subscriptionExpiry);
+            } else {
+                Sql.update(connection,
+                        "UPDATE tenants SET name = ?, status = 'active', profile = CAST(? AS jsonb), subscription_plan = ?, " +
+                                "subscription_start = ?, subscription_expiry = ?, updated_at = now() WHERE id = ?",
+                        name, Sql.writeJson(mapper, tenantProfile), subscriptionPlan, subscriptionStart, subscriptionExpiry, tenantId);
+            }
 
             List<String> copied = new ArrayList<>();
             List<String> branchIds = new ArrayList<>();
@@ -143,6 +202,12 @@ public final class ProvisioningService {
             ArrayNode order = mapper.createArrayNode().add(ownerId);
             insert(connection, tenantId, StateStore.USERS_COLLECTION, StateStore.ORDER_RECORD, order, principal.userId());
             Sql.update(connection, "INSERT INTO erp_collections (tenant_id, collection) VALUES (?, ?) ON CONFLICT DO NOTHING", tenantId, StateStore.USERS_COLLECTION);
+            syncPlatformFoundation(connection, tenantId, tenantProfile, principal.userId());
+            Sql.update(connection,
+                    "INSERT INTO platform_audit_log (id, actor_id, actor_email, action, entity_type, entity_id, description, created_at) " +
+                            "VALUES (?, ?, ?, 'Tenant activated', 'Tenant', ?, ?, now())",
+                    "audit-" + UUID.randomUUID(), principal.userId(), principal.email(), tenantId,
+                    "Tenant " + name + " activated following confirmed payment; administrator access was issued to " + ownerEmail + ".");
             return new ProvisionResult(tenantProfile, owner, copied);
         });
     }
@@ -189,6 +254,30 @@ public final class ProvisioningService {
         Sql.update(connection, "INSERT INTO erp_records (tenant_id, collection, record_id, data, deleted, version, change_seq, updated_by) "
                         + "VALUES (?, ?, ?, CAST(? AS jsonb), FALSE, 1, nextval('erp_change_seq'), ?)",
                 tenant, collection, recordId, Sql.writeJson(mapper, data), userId);
+    }
+
+    private void syncPlatformFoundation(Connection connection, String tenantId, ObjectNode tenantProfile, String userId) throws SQLException {
+        String foundationText = Sql.queryString(connection,
+                "SELECT data FROM erp_records WHERE tenant_id = 'platform' AND collection = 'platform.foundation' " +
+                        "AND record_id = '__value__' AND NOT deleted");
+        if (foundationText == null) return;
+        JsonNode root = Sql.readJson(mapper, foundationText);
+        if (!root.isObject() || !root.path("tenants").isArray()) return;
+        ArrayNode tenants = (ArrayNode) root.path("tenants");
+        boolean found = false;
+        for (int index = 0; index < tenants.size(); index++) {
+            if (tenantId.equals(Sql.text(tenants.get(index), "id"))) {
+                tenants.set(index, tenantProfile);
+                found = true;
+                break;
+            }
+        }
+        if (!found) tenants.add(tenantProfile);
+        Sql.update(connection,
+                "UPDATE erp_records SET data = CAST(? AS jsonb), version = version + 1, change_seq = nextval('erp_change_seq'), " +
+                        "updated_at = now(), updated_by = ?, client_id = 'server:provisioning' " +
+                        "WHERE tenant_id = 'platform' AND collection = 'platform.foundation' AND record_id = '__value__'",
+                Sql.writeJson(mapper, root), userId);
     }
 
     private static void collect(String collection, String recordId, JsonNode data, String wanted, List<String> ids) {

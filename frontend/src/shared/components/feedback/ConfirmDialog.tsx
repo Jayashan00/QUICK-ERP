@@ -5,7 +5,7 @@ import { Button } from '@/shared/components/common/Button';
 interface ConfirmDialogProps {
   isOpen: boolean;
   title: string;
-  message: string;
+  message: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: 'danger' | 'warning' | 'primary';
@@ -56,7 +56,7 @@ export function ConfirmDialog({
     >
       <div className="flex items-start gap-3 min-w-0">
         {variant === 'danger' && <AlertTriangle size={20} className="mt-0.5 shrink-0 text-red-600" />}
-        <p className="text-sm leading-6 text-slate-600 min-w-0 max-w-full break-words [overflow-wrap:anywhere] [word-break:break-word] whitespace-normal" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'normal' }}>{message}</p>
+        <div className="text-sm leading-6 text-slate-600 min-w-0 max-w-full break-words [overflow-wrap:anywhere] [word-break:break-word] whitespace-normal" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'normal' }}>{message}</div>
       </div>
     </Modal>
   );

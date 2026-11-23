@@ -24,7 +24,7 @@ import java.io.InputStream;
 import java.sql.*;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -44,7 +44,7 @@ public class PlatformAdminController {
             String id, String name, String subdomain, String status,
             String subscriptionPlan, String subscriptionStart, String subscriptionExpiry,
             JsonNode entitlements, JsonNode admin, String ownerEmail, String contactName,
-            String createdAt, String updatedAt, JsonNode onboarding, JsonNode revenue) {
+            String country, String createdAt, String updatedAt, JsonNode onboarding, JsonNode revenue) {
     }
 
     public record CreateCompanyRequest(
@@ -63,6 +63,7 @@ public class PlatformAdminController {
             Integer maxWarehouses, Integer maxStorageGb, String tenantStatus,
             Boolean includeAdminInUserLimit,
             Double revenueAmount, String revenueCurrency, String billingCycle,
+            String renewalDate,
             Double discountAmount, Double additionalCharges, Double taxRatePercent,
             String paymentInstructions, String terms) {
     }
@@ -78,6 +79,9 @@ public class PlatformAdminController {
     }
 
     public record SetStatusRequest(String status) {
+    }
+
+    public record ActivateTenantRequest(String ownerPassword) {
     }
 
     public record AuditLogEntry(
@@ -117,14 +121,16 @@ public class PlatformAdminController {
     private final Db db;
     private final MaintenanceService maintenanceService;
     private final PasswordResetService passwordResetService;
+    private final ProvisioningService provisioningService;
 
     public PlatformAdminController(DataSource dataSource, ObjectMapper mapper, Db db, MaintenanceService maintenanceService,
-                                   PasswordResetService passwordResetService) {
+                                   PasswordResetService passwordResetService, ProvisioningService provisioningService) {
         this.dataSource = dataSource;
         this.mapper = mapper;
         this.db = db;
         this.maintenanceService = maintenanceService;
         this.passwordResetService = passwordResetService;
+        this.provisioningService = provisioningService;
     }
 
     // ---------------------------------------------------------------- helpers
@@ -260,7 +266,8 @@ public class PlatformAdminController {
         String updatedAt = profile.path("updatedAt").asText(null);
         return new TenantSummary(id, name, profile.path("subdomain").asText(id),
                 status, subPlan, subStart, subExpiry, entitlements, admin,
-                ownerEmail, contactName, createdAt, updatedAt, onboarding, revenue);
+                ownerEmail, contactName, profile.path("country").asText("Sri Lanka"),
+                createdAt, updatedAt, onboarding, revenue);
     }
 
     private TenantSummary buildSummaryFromProfile(String id, String name, ObjectNode profile, Connection conn) throws SQLException {
@@ -297,6 +304,7 @@ public class PlatformAdminController {
         return new TenantSummary(id, name, profile.path("subdomain").asText(id),
                 status, subPlan, subStart, subExpiry, entitlements, admin,
                 profile.path("ownerEmail").asText(null), profile.path("contactName").asText(null),
+                profile.path("country").asText("Sri Lanka"),
                 profile.path("createdAt").asText(null), profile.path("updatedAt").asText(null),
                 onboarding, revenue);
     }
@@ -425,7 +433,7 @@ public class PlatformAdminController {
         return db.snapshot(conn -> {
             List<TenantSummary> tenants = new ArrayList<>();
             String sql = "SELECT id, name, status, profile, subscription_plan, subscription_start, subscription_expiry " +
-                    "FROM tenants WHERE id <> 'platform' ORDER BY name";
+                    "FROM tenants WHERE id NOT IN ('platform', 'tenant-template') ORDER BY name";
             try (PreparedStatement stmt = conn.prepareStatement(sql);
                  ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
@@ -530,7 +538,7 @@ public class PlatformAdminController {
             Sql.update(conn,
                     "INSERT INTO tenants (id, name, status, profile, subscription_plan, subscription_start, subscription_expiry, created_at, updated_at) " +
                             "VALUES (?, ?, 'pending', CAST(? AS jsonb), 'business', ?, ?, now(), now())",
-                    tenantId, name, Sql.writeJson(mapper, profile), today.toString(), defaultExpiry.toString());
+                    tenantId, name, Sql.writeJson(mapper, profile), today, defaultExpiry);
 
             syncPlatformFoundation(conn, tenantId, profile);
             recordPlatformAudit(conn, principal, "Tenant created", tenantId,
@@ -674,6 +682,7 @@ public class PlatformAdminController {
             if (body.revenueAmount() != null) revNode.put("amount", body.revenueAmount());
             if (body.revenueCurrency() != null && !body.revenueCurrency().isBlank()) revNode.put("currency", body.revenueCurrency());
             if (body.billingCycle() != null && !body.billingCycle().isBlank()) revNode.put("billingCycle", body.billingCycle());
+            if (body.renewalDate() != null && !body.renewalDate().isBlank()) revNode.put("renewalDate", body.renewalDate());
             if (body.discountAmount() != null) revNode.put("discountAmount", body.discountAmount());
             if (body.additionalCharges() != null) revNode.put("additionalCharges", body.additionalCharges());
             if (body.taxRatePercent() != null) revNode.put("taxRatePercent", body.taxRatePercent());
@@ -698,16 +707,17 @@ public class PlatformAdminController {
 
             String planCol = body.subscriptionPlan();
             String statusCol = newStatus != null ? newStatus : existing.path("status").asText("pending");
-            String startStr = body.subscriptionStart();
-            String expiryStr = body.subscriptionExpiry();
+            LocalDate startDate = optionalDate(body.subscriptionStart(), "subscriptionStart");
+            LocalDate expiryDate = optionalDate(body.subscriptionExpiry(), "subscriptionExpiry");
+            if (startDate != null && expiryDate != null && expiryDate.isBefore(startDate)) {
+                throw ApiException.validation("subscriptionExpiry", "Subscription expiry must be on or after the start date.");
+            }
 
             Sql.update(conn,
-                    "UPDATE tenants SET status = ?, subscription_plan = ?, " +
-                            "subscription_start = ?, subscription_expiry = ?, " +
+                    "UPDATE tenants SET status = ?, subscription_plan = COALESCE(?, subscription_plan), " +
+                            "subscription_start = COALESCE(?, subscription_start), subscription_expiry = COALESCE(?, subscription_expiry), " +
                             "profile = CAST(? AS jsonb), updated_at = now() WHERE id = ?",
-                    statusCol, planCol,
-                    startStr != null && !startStr.isBlank() ? startStr : null,
-                    expiryStr != null && !expiryStr.isBlank() ? expiryStr : null,
+                    statusCol, planCol, startDate, expiryDate,
                     Sql.writeJson(mapper, profile), tenantId);
 
             syncPlatformFoundation(conn, tenantId, profile);
@@ -947,105 +957,24 @@ public class PlatformAdminController {
     // ---------------------------------------------------------------- POST /platform/tenants/{tenantId}/activate
 
     @PostMapping("/tenants/{tenantId}/activate")
-    public TenantSummary activateTenant(@PathVariable String tenantId, HttpServletRequest request) {
+    public TenantSummary activateTenant(@PathVariable String tenantId,
+                                        @RequestBody ActivateTenantRequest body,
+                                        HttpServletRequest request) {
         Principal principal = AuthInterceptor.principal(request);
         requireSuperAdmin(principal);
-        return db.tx(conn -> {
-            Sql.lock(conn, "t:" + tenantId);
+        if (body == null) throw ApiException.badRequest("Request body is required.");
+        AuthService.validatePassword(body.ownerPassword());
+        ProvisioningService.ProvisionRequest provisionRequest = db.snapshot(conn -> {
             String profileText = Sql.queryString(conn, "SELECT profile FROM tenants WHERE id = ?", tenantId);
             if (profileText == null) throw ApiException.notFound("Tenant not found.");
-            String tenantName = Sql.queryString(conn, "SELECT name FROM tenants WHERE id = ?", tenantId);
-            ObjectNode profile = (ObjectNode) Sql.readJson(mapper, profileText).deepCopy();
-            ObjectNode onboarding = (ObjectNode) profile.path("onboarding");
-
-            // Enforce requirement: Prevent duplicate activation
-            if ("active".equalsIgnoreCase(profile.path("status").asText())) {
-                throw ApiException.badRequest("Tenant is already activated. Cannot issue duplicate activation.");
-            }
-
-            // Enforce requirement: Do not activate if invoice is outdated
-            if (onboarding.path("invoice").path("isOutdated").asBoolean(false)) {
-                throw ApiException.forbidden("Tenant access cannot be activated while the invoice is outdated. Please generate an updated invoice and confirm payment.");
-            }
-
-            // Enforce requirement: Do not activate tenant access until payment is fully confirmed as PAID
-            String paymentStatus = onboarding.path("payment").path("status").asText("unpaid");
-            if (!"paid".equalsIgnoreCase(paymentStatus)) {
-                throw ApiException.forbidden("Tenant access cannot be activated until invoice payment is fully confirmed as PAID.");
-            }
-
-            // Set tenant status to ACTIVE
-            profile.put("status", "active");
-
-            // Compute subscription start & expiry based on billing cycle
-            String billingCycle = profile.path("revenue").path("billingCycle").asText("monthly");
-            LocalDate start = LocalDate.now();
-            LocalDate expiry = "yearly".equalsIgnoreCase(billingCycle) ? start.plusYears(1) : start.plusMonths(1);
-
-            ObjectNode subNode = profile.has("subscription") && profile.get("subscription").isObject()
-                    ? (ObjectNode) profile.get("subscription")
-                    : profile.putObject("subscription");
-            subNode.put("status", "active");
-            subNode.put("start", start.toString());
-            subNode.put("expiry", expiry.toString());
-
-            // Generate single-use invitation token
-            String invitationToken = UUID.randomUUID().toString();
-            String expiresAt = Instant.now().plus(48, ChronoUnit.HOURS).toString();
-            String setupUrl = "https://quickerp.cloud/auth/accept-invitation?token=" + invitationToken;
-
-            ObjectNode invNode = onboarding.putObject("invitation");
-            invNode.put("token", invitationToken);
-            invNode.put("sentAt", Instant.now().toString());
-            invNode.put("expiresAt", expiresAt);
-            invNode.put("setupUrl", setupUrl);
-
-            // Advance stage
-            onboarding.put("stage", "access_activated");
-            profile.put("updatedAt", Instant.now().toString());
-
-            // Create or activate Tenant Admin user in app_users
-            String adminEmail = profile.path("admin").path("email").asText(profile.path("ownerEmail").asText(null));
-            String adminName = profile.path("admin").path("name").asText(profile.path("contactName").asText("Administrator"));
-
-            if (adminEmail != null && !adminEmail.isBlank()) {
-                String existingUserId = Sql.queryString(conn,
-                        "SELECT id FROM app_users WHERE tenant_id = ? AND role_id = 'role-001'", tenantId);
-                if (existingUserId == null) {
-                    existingUserId = Sql.queryString(conn,
-                            "SELECT id FROM app_users WHERE tenant_id = ? AND lower(email) = lower(?)", tenantId, adminEmail);
-                }
-
-                if (existingUserId == null) {
-                    String newUserId = "usr-" + UUID.randomUUID().toString().substring(0, 8);
-                    ObjectNode adminProfile = mapper.createObjectNode();
-                    adminProfile.put("name", adminName);
-                    adminProfile.put("email", adminEmail);
-                    adminProfile.put("tenantId", tenantId);
-                    adminProfile.put("roleId", "role-001");
-                    adminProfile.put("status", "active");
-
-                    Sql.update(conn,
-                            "INSERT INTO app_users (id, tenant_id, email, password_hash, status, super_admin, role_id, profile, created_at, updated_at) " +
-                                    "VALUES (?, ?, ?, NULL, 'active', FALSE, 'role-001', CAST(? AS jsonb), now(), now())",
-                            newUserId, tenantId, adminEmail, Sql.writeJson(mapper, adminProfile));
-                } else {
-                    Sql.update(conn,
-                            "UPDATE app_users SET status = 'active', updated_at = now() WHERE id = ?", existingUserId);
-                }
-            }
-
-            // Update tenants table relational columns
-            Sql.update(conn,
-                    "UPDATE tenants SET status = 'active', subscription_start = ?, subscription_expiry = ?, profile = CAST(? AS jsonb), updated_at = now() WHERE id = ?",
-                    start.toString(), expiry.toString(), Sql.writeJson(mapper, profile), tenantId);
-
-            syncPlatformFoundation(conn, tenantId, profile);
-            recordPlatformAudit(conn, principal, "Tenant activated", tenantId,
-                    "Tenant " + tenantName + " activated following confirmed payment. Access invitation token generated for " + adminEmail + ".");
-
-            return buildSummaryFromProfile(tenantId, tenantName, profile, conn);
+            JsonNode profile = Sql.readJson(mapper, profileText);
+            String name = Sql.queryString(conn, "SELECT name FROM tenants WHERE id = ?", tenantId);
+            String ownerName = profile.path("admin").path("name").asText(profile.path("contactName").asText(name));
+            String ownerEmail = profile.path("admin").path("email").asText(profile.path("ownerEmail").asText(""));
+            return new ProvisioningService.ProvisionRequest(name, ownerName, ownerEmail, body.ownerPassword(), null);
         });
+        provisioningService.provision(principal, tenantId, provisionRequest);
+        return getTenant(tenantId, request);
     }
 
     // ---------------------------------------------------------------- PUT /platform/tenants/{tenantId}/status
@@ -1104,10 +1033,19 @@ public class PlatformAdminController {
                 throw ApiException.badRequest("A company must be suspended before it can be deleted.");
             }
             String tenantName = Sql.queryString(conn, "SELECT name FROM tenants WHERE id = ?", tenantId);
+            removeTenantFromPlatformFoundation(conn, tenantId);
+            Sql.update(conn,
+                    "DELETE FROM revoked_tokens WHERE user_id IN (SELECT id FROM app_users WHERE tenant_id = ?)",
+                    tenantId);
+            Sql.update(conn,
+                    "DELETE FROM password_reset_tokens WHERE user_id IN (SELECT id FROM app_users WHERE tenant_id = ?)",
+                    tenantId);
             Sql.update(conn, "DELETE FROM stored_files WHERE tenant_id = ?", tenantId);
             Sql.update(conn, "DELETE FROM ai_conversations WHERE tenant_id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM ai_audit_log WHERE tenant_id = ?", tenantId);
             Sql.update(conn, "DELETE FROM erp_records WHERE tenant_id = ?", tenantId);
-            Sql.update(conn, "DELETE FROM erp_change_sequences WHERE tenant_id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM erp_collections WHERE tenant_id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM erp_record_history WHERE tenant_id = ?", tenantId);
             Sql.update(conn, "DELETE FROM app_users WHERE tenant_id = ?", tenantId);
             Sql.update(conn, "DELETE FROM tenants WHERE id = ?", tenantId);
             recordPlatformAudit(conn, principal, "Tenant deleted", tenantId,
@@ -1396,9 +1334,43 @@ public class PlatformAdminController {
         }
 
         Sql.update(conn,
-                "UPDATE erp_records SET data = CAST(? AS jsonb), change_seq = nextval('erp_change_seq'), updated_at = now() " +
+                "UPDATE erp_records SET data = CAST(? AS jsonb), version = version + 1, change_seq = nextval('erp_change_seq'), " +
+                        "updated_at = now(), updated_by = 'server:platform', client_id = 'server:platform' " +
                         "WHERE tenant_id = 'platform' AND collection = 'platform.foundation' AND record_id = '__value__'",
                 Sql.writeJson(mapper, foundation));
+    }
+
+    private void removeTenantFromPlatformFoundation(Connection conn, String tenantId) throws SQLException {
+        String foundationText = Sql.queryString(conn,
+                "SELECT data FROM erp_records WHERE tenant_id = 'platform' AND collection = 'platform.foundation' AND record_id = '__value__' AND NOT deleted");
+        if (foundationText == null) return;
+        JsonNode foundation = Sql.readJson(mapper, foundationText);
+        if (!foundation.isObject() || !foundation.path("tenants").isArray()) return;
+
+        ArrayNode tenants = (ArrayNode) foundation.path("tenants");
+        boolean removed = false;
+        for (int i = tenants.size() - 1; i >= 0; i--) {
+            if (tenantId.equals(Sql.text(tenants.get(i), "id"))) {
+                tenants.remove(i);
+                removed = true;
+            }
+        }
+        if (!removed) return;
+
+        Sql.update(conn,
+                "UPDATE erp_records SET data = CAST(? AS jsonb), version = version + 1, change_seq = nextval('erp_change_seq'), " +
+                        "updated_at = now(), updated_by = 'server:platform', client_id = 'server:platform' " +
+                        "WHERE tenant_id = 'platform' AND collection = 'platform.foundation' AND record_id = '__value__'",
+                Sql.writeJson(mapper, foundation));
+    }
+
+    private static LocalDate optionalDate(String value, String field) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return LocalDate.parse(value.trim());
+        } catch (DateTimeParseException error) {
+            throw ApiException.validation(field, "Enter a valid date in YYYY-MM-DD format.");
+        }
     }
 
     private static String validated(String value, String field, String message) {

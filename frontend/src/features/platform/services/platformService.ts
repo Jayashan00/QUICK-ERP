@@ -9,6 +9,7 @@ import type {
   PlatformFoundation,
   PlatformMaintenanceDetail,
   PlatformSettings,
+  PlatformTenant,
   PlatformTenantInput,
   PlatformUserInput,
   RecordPaymentInput,
@@ -22,6 +23,82 @@ const store = structuredClone(mockPlatformFoundation);
 const wait = (duration = 160) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, duration));
 const clone = (): PlatformFoundation => structuredClone(store);
 const id = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
+
+interface PlatformTenantApiResponse {
+  id: string;
+  name: string;
+  subdomain: string;
+  status: PlatformTenant['status'];
+  subscriptionPlan?: 'starter' | 'business' | 'enterprise' | 'custom';
+  subscriptionStart?: string;
+  subscriptionExpiry?: string;
+  entitlements?: {
+    enabledModules?: TenantModule[];
+    limits?: PlatformTenant['limits'];
+    usage?: PlatformTenant['usage'];
+  };
+  admin?: PlatformTenant['admin'];
+  ownerEmail?: string;
+  contactName?: string;
+  country?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  onboarding?: PlatformTenant['onboarding'];
+  revenue?: PlatformTenant['revenue'];
+}
+
+function fromApiTenant(row: PlatformTenantApiResponse): PlatformTenant {
+  const now = new Date().toISOString();
+  const defaultExpiry = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  const admin = row.admin ?? { name: row.contactName ?? row.name, email: row.ownerEmail ?? '', status: 'invited' };
+  return {
+    id: row.id,
+    name: row.name,
+    subdomain: row.subdomain || row.id,
+    ownerEmail: row.ownerEmail ?? admin.email,
+    contactName: row.contactName ?? admin.name,
+    country: row.country ?? 'Sri Lanka',
+    status: row.status,
+    subscription: {
+      plan: row.subscriptionPlan ?? 'business',
+      start: row.subscriptionStart ?? now.slice(0, 10),
+      expiry: row.subscriptionExpiry ?? defaultExpiry,
+    },
+    enabledModules: row.entitlements?.enabledModules ?? ['settings'],
+    limits: row.entitlements?.limits ?? { maxUsers: 10, maxBranches: 2, includeAdminInUserLimit: false },
+    usage: row.entitlements?.usage ?? { currentUsers: 0, currentBranches: 1 },
+    admin,
+    revenue: row.revenue ?? {
+      amount: 0,
+      currency: store.settings.baseCurrency,
+      billingCycle: 'monthly',
+      renewalDate: row.subscriptionExpiry ?? defaultExpiry,
+    },
+    onboarding: row.onboarding ?? {
+      stage: row.status === 'active' ? 'access_activated' : 'company_created',
+      email: { status: 'not_sent' },
+      payment: { status: 'unpaid' },
+    },
+    createdAt: row.createdAt ?? now,
+    updatedAt: row.updatedAt ?? now,
+    lastActivityAt: row.updatedAt ?? now,
+  };
+}
+
+function replaceTenantFromApi(row: PlatformTenantApiResponse): PlatformTenant {
+  const tenant = fromApiTenant(row);
+  const index = store.tenants.findIndex((item) => item.id === tenant.id);
+  if (index >= 0) store.tenants[index] = tenant;
+  else store.tenants.unshift(tenant);
+  tenantEntitlementService.set(tenant.id, {
+    enabledModules: tenant.enabledModules,
+    limits: tenant.limits,
+    usage: tenant.usage,
+    admin: tenant.admin,
+    subscription: { ...tenant.subscription, status: tenant.status },
+  });
+  return tenant;
+}
 
 /** Sign-in details of a new company's administrator, shown once to the Super Admin after activation. */
 export interface IssuedAccessCredentials { email: string; temporaryPassword: string }
@@ -39,22 +116,21 @@ function generateTemporaryPassword(): string {
  * (all default roles, branches and settings) together with its administrator's login.
  * Returns the administrator's credentials, or undefined when the company already existed on the server.
  */
-async function provisionCompanyOnServer(tenant: { id: string; name: string; ownerEmail: string; contactName: string; admin?: { name?: string; email?: string } }): Promise<IssuedAccessCredentials | undefined> {
+async function activateCompanyOnServer(tenant: { id: string; ownerEmail: string; admin?: { email?: string } }): Promise<{ tenant: PlatformTenant; accessCredentials: IssuedAccessCredentials }> {
   const email = (tenant.admin?.email || tenant.ownerEmail || '').trim();
   if (!email) throw new Error('Add the company administrator\'s email before activating access.');
   const temporaryPassword = generateTemporaryPassword();
   try {
-    await apiClient.post(`/platform/tenants/${encodeURIComponent(tenant.id)}/provision`, {
-      name: tenant.name.trim(),
-      ownerName: (tenant.admin?.name || tenant.contactName || tenant.name).trim(),
-      ownerEmail: email,
-      ownerPassword: temporaryPassword,
-    });
-    return { email, temporaryPassword };
+    const { data } = await apiClient.post<PlatformTenantApiResponse>(
+      `/platform/tenants/${encodeURIComponent(tenant.id)}/activate`,
+      { ownerPassword: temporaryPassword },
+    );
+    return {
+      tenant: replaceTenantFromApi(data),
+      accessCredentials: { email, temporaryPassword },
+    };
   } catch (error) {
-    // Activation was retried after the company had already been created on the server.
-    if (error instanceof ApiError && error.status === 409 && /tenant with this id/i.test(error.message)) return undefined;
-    throw new Error(error instanceof Error && error.message ? error.message : 'The company could not be created on the server.');
+    throw new Error(error instanceof Error && error.message ? error.message : 'The company could not be activated on the server.');
   }
 }
 
@@ -158,8 +234,12 @@ export const platformService = {
       const isSuper = Boolean(user?.isSuperAdmin || user?.roleId === 'role-super-admin');
       if (isSuper) {
         if (isBackendEnabled()) {
-          const { data: users } = await apiClient.get<PlatformFoundation['users']>('/platform/users');
+          const [{ data: users }, { data: tenants }] = await Promise.all([
+            apiClient.get<PlatformFoundation['users']>('/platform/users'),
+            apiClient.get<PlatformTenantApiResponse[]>('/platform/tenants'),
+          ]);
           store.users = users;
+          store.tenants = tenants.map(fromApiTenant);
         }
         const { data: maint } = await apiClient.get<PlatformMaintenanceDetail>('/platform/maintenance');
         store.maintenance = {
@@ -172,16 +252,27 @@ export const platformService = {
           updatedByEmail: maint.updatedByEmail,
         };
       }
-    } catch {
-      // In mock mode or offline, use store values
+    } catch (error) {
+      // Backend mode must never silently replace authoritative tenants with local mock data.
+      if (isBackendEnabled()) throw error;
     }
     await wait();
     normalizeStore();
     return clone();
   },
-  async getTenant(tenantId: string) { await wait(); normalizeStore(); const tenant = store.tenants.find((row) => row.id === tenantId); return tenant ? structuredClone(tenant) : null; },
+  async getTenant(tenantId: string) {
+    if (isBackendEnabled()) {
+      const { data } = await apiClient.get<PlatformTenantApiResponse>(`/platform/tenants/${encodeURIComponent(tenantId)}`);
+      return structuredClone(replaceTenantFromApi(data));
+    }
+    await wait(); normalizeStore(); const tenant = store.tenants.find((row) => row.id === tenantId); return tenant ? structuredClone(tenant) : null;
+  },
 
   async createTenant(input: PlatformTenantInput) {
+    if (isBackendEnabled()) {
+      const { data } = await apiClient.post<PlatformTenantApiResponse>('/platform/tenants', input);
+      return structuredClone(replaceTenantFromApi(data));
+    }
     await wait();
     const trimmedName = input.name.trim().toLowerCase();
     if (store.tenants.some((row) => row.name.trim().toLowerCase() === trimmedName)) {
@@ -242,6 +333,10 @@ export const platformService = {
   },
 
   async updateTenant(tenantId: string, input: PlatformTenantInput) {
+    if (isBackendEnabled()) {
+      const { data } = await apiClient.put<PlatformTenantApiResponse>(`/platform/tenants/${encodeURIComponent(tenantId)}`, input);
+      return structuredClone(replaceTenantFromApi(data));
+    }
     await wait();
     const tenant = store.tenants.find((row) => row.id === tenantId);
     if (!tenant) throw new Error('Tenant not found.');
@@ -259,6 +354,13 @@ export const platformService = {
   },
 
   async configureTenant(tenantId: string, input: TenantConfigurationInput) {
+    if (isBackendEnabled()) {
+      const { data } = await apiClient.put<PlatformTenantApiResponse>(
+        `/platform/tenants/${encodeURIComponent(tenantId)}/subscription`,
+        input,
+      );
+      return structuredClone(replaceTenantFromApi(data));
+    }
     await wait(); const tenant = store.tenants.find((row) => row.id === tenantId); if (!tenant) throw new Error('Tenant not found.');
     if (input.maxUsers < tenant.usage.currentUsers) throw new Error(`Maximum users cannot be below current usage (${tenant.usage.currentUsers}).`);
     if (input.maxBranches < tenant.usage.currentBranches) throw new Error(`Maximum branches cannot be below current usage (${tenant.usage.currentBranches}).`);
@@ -323,6 +425,13 @@ export const platformService = {
   },
 
   async generateInvoice(tenantId: string, options?: GenerateInvoiceInput) {
+    if (isBackendEnabled()) {
+      const { data } = await apiClient.post<PlatformTenantApiResponse>(
+        `/platform/tenants/${encodeURIComponent(tenantId)}/invoice/generate`,
+        options ?? {},
+      );
+      return structuredClone(replaceTenantFromApi(data));
+    }
     await wait();
     const tenant = store.tenants.find((row) => row.id === tenantId);
     if (!tenant) throw new Error('Tenant not found.');
@@ -370,6 +479,12 @@ export const platformService = {
   },
 
   async sendInvoiceEmail(tenantId: string) {
+    if (isBackendEnabled()) {
+      const { data } = await apiClient.post<PlatformTenantApiResponse>(
+        `/platform/tenants/${encodeURIComponent(tenantId)}/invoice/send`,
+      );
+      return structuredClone(replaceTenantFromApi(data));
+    }
     await wait();
     const tenant = store.tenants.find((row) => row.id === tenantId);
     if (!tenant) throw new Error('Tenant not found.');
@@ -394,6 +509,13 @@ export const platformService = {
   },
 
   async recordPayment(tenantId: string, input: RecordPaymentInput) {
+    if (isBackendEnabled()) {
+      const { data } = await apiClient.post<PlatformTenantApiResponse>(
+        `/platform/tenants/${encodeURIComponent(tenantId)}/payment/confirm`,
+        input,
+      );
+      return structuredClone(replaceTenantFromApi(data));
+    }
     await wait();
     const tenant = store.tenants.find((row) => row.id === tenantId);
     if (!tenant) throw new Error('Tenant not found.');
@@ -437,6 +559,11 @@ export const platformService = {
       throw new Error('Tenant access cannot be activated until invoice payment is fully confirmed as PAID.');
     }
 
+    if (isBackendEnabled()) {
+      const activated = await activateCompanyOnServer(tenant);
+      return { ...structuredClone(activated.tenant), accessCredentials: activated.accessCredentials };
+    }
+
     const today = new Date();
     const start = today.toISOString().slice(0, 10);
     const isYearly = tenant.revenue?.billingCycle === 'yearly';
@@ -448,14 +575,8 @@ export const platformService = {
     }
     const expiry = expiryDate.toISOString().slice(0, 10);
 
-    // Real backend: create the company and its administrator's login on the server first. If that fails,
-    // nothing is marked active, so the Super Admin can fix the problem and activate again.
-    const accessCredentials = isBackendEnabled() ? await provisionCompanyOnServer(tenant) : undefined;
-
     const token = crypto.randomUUID();
-    const setupUrl = isBackendEnabled() && typeof window !== 'undefined'
-      ? `${window.location.origin}/login`
-      : `https://vyro.cloud/auth/accept-invitation?token=${token}`;
+    const setupUrl = `https://vyro.cloud/auth/accept-invitation?token=${token}`;
 
     tenant.status = 'active';
     tenant.subscription = {
@@ -491,10 +612,15 @@ export const platformService = {
       },
     });
     audit('Tenant access activated', tenant.id, tenant.name, `Tenant activated following confirmed payment. Access invitation token generated for ${tenant.admin.email}.`);
-    return { ...structuredClone(tenant), accessCredentials };
+    return { ...structuredClone(tenant), accessCredentials: undefined as IssuedAccessCredentials | undefined };
   },
 
   async setTenantStatus(tenantId: string, status: 'pending' | 'active' | 'suspended' | 'expired') {
+    if (isBackendEnabled()) {
+      await apiClient.put(`/platform/tenants/${encodeURIComponent(tenantId)}/status`, { status });
+      const { data } = await apiClient.get<PlatformTenantApiResponse>(`/platform/tenants/${encodeURIComponent(tenantId)}`);
+      return structuredClone(replaceTenantFromApi(data));
+    }
     await wait();
     const tenant = store.tenants.find((row) => row.id === tenantId);
     if (!tenant) throw new Error('Tenant not found.');
@@ -508,15 +634,11 @@ export const platformService = {
   },
 
   async deleteTenant(tenantId: string) {
-    try {
-      const rawUser = typeof localStorage !== 'undefined' ? localStorage.getItem(APP_CONSTANTS.STORAGE_KEYS.USER) : null;
-      const user = rawUser ? JSON.parse(rawUser) : null;
-      const isSuper = Boolean(user?.isSuperAdmin || user?.roleId === 'role-super-admin');
-      if (isSuper) {
-        await apiClient.delete(`/platform/tenants/${tenantId}`);
-      }
-    } catch {
-      // In mock mode or offline, fallback to store
+    if (isBackendEnabled()) {
+      await apiClient.delete(`/platform/tenants/${encodeURIComponent(tenantId)}`);
+      store.tenants = store.tenants.filter((row) => row.id !== tenantId);
+      tenantEntitlementService.delete(tenantId);
+      return { success: true };
     }
     await wait();
     const index = store.tenants.findIndex((row) => row.id === tenantId);

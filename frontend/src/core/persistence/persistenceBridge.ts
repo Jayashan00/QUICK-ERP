@@ -71,7 +71,14 @@ interface BatchConflict {
 interface BatchResponse {
   cursor: number;
   applied: number;
-  rejected: Array<{ collection: string; recordId: string; message: string }>;
+  rejected: Array<{
+    collection: string;
+    recordId: string;
+    message: string;
+    data: unknown;
+    deleted: boolean;
+    version: number;
+  }>;
   /** Changes refused because someone else saved the record first; the latest saved version is included. */
   conflicts?: BatchConflict[];
   /** The version each saved record has now. */
@@ -80,7 +87,16 @@ interface BatchResponse {
 
 /** Collections that must always reach the server in the same request (stock balances and their movements). */
 const LINKED_COLLECTIONS = new Set(['inventory.balances', 'inventory.movements']);
+/** Mirrors maintained by dedicated backend APIs; the generic state batch must never write them. */
+const SERVER_MANAGED_COLLECTIONS = new Set(['platform.foundation']);
 const CONFLICT_MESSAGE = 'Someone else saved a record you changed at the same time. Their latest version is now shown; please check it and make your change again.';
+
+class PersistenceRejectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PersistenceRejectionError';
+  }
+}
 
 export type PersistenceStatus = 'idle' | 'loading' | 'synced' | 'saving' | 'offline';
 
@@ -306,9 +322,9 @@ class PersistenceBridge {
   }
 
   /** Manually flushes local changes and pulls latest server changes. */
-  async sync(): Promise<void> {
+  async sync(options: { requireSaved?: boolean } = {}): Promise<void> {
     if (this.mode === 'idle') return;
-    await this.flush();
+    await this.flush([], Boolean(options.requireSaved));
     if (this.mode === 'tenant') await this.pull();
   }
 
@@ -319,7 +335,9 @@ class PersistenceBridge {
   }
 
   private writableAccessors(): StateAccessor[] {
-    if (this.mode !== 'public') return getStateAccessors();
+    if (this.mode !== 'public') {
+      return getStateAccessors().filter((accessor) => !SERVER_MANAGED_COLLECTIONS.has(accessor.key));
+    }
     return PUBLIC_WRITABLE_COLLECTIONS.map((key) => getStateAccessor(key)).filter((accessor): accessor is StateAccessor => Boolean(accessor));
   }
 
@@ -364,7 +382,7 @@ class PersistenceBridge {
   }
 
   /** Sends every local change to the backend. `seeded` marks collections saved for the first time. */
-  async flush(seeded: string[] = []): Promise<void> {
+  async flush(seeded: string[] = [], requireSaved = false): Promise<void> {
     if (this.mode === 'idle' && seeded.length === 0) return;
     if (this.busy) {
       this.again = true;
@@ -384,21 +402,27 @@ class PersistenceBridge {
       if (batches.length === 0) batches.push([]);
       const path = this.mode === 'public' ? `/public/shop/${encodeURIComponent(this.scopeId)}/batch` : '/state/batch';
       const conflicts: BatchConflict[] = [];
+      const rejected: BatchResponse['rejected'] = [];
       for (let index = 0; index < batches.length; index += 1) {
         const isLast = index === batches.length - 1;
         const body = { clientId: this.clientId, changes: batches[index], seeded: isLast ? seeded : [] };
         const { data } = await apiClient.post<BatchResponse>(path, body, { headers: this.headers });
         if (generation !== this.generation) return;
         this.reportRejections(data.rejected ?? []);
+        rejected.push(...(data.rejected ?? []));
         for (const saved of data.versions ?? []) this.setVersion(saved.collection, saved.recordId, saved.version);
         conflicts.push(...(data.conflicts ?? []));
+        this.cursor = Math.max(this.cursor, data.cursor ?? 0);
       }
       for (const [key, value] of encoded) this.snapshot.set(key, value);
+      if (rejected.length > 0) await this.applyRejections(rejected);
       if (conflicts.length > 0) await this.applyConflicts(conflicts);
       this.setStatus('synced');
+      if (requireSaved && rejected.length > 0) throw new PersistenceRejectionError(rejected[0]!.message);
     } catch (error) {
+      if (error instanceof PersistenceRejectionError) throw error;
       this.handleError(error);
-      if (seeded.length > 0) throw error;
+      if (seeded.length > 0 || requireSaved) throw error;
     } finally {
       this.busy = false;
       if (this.again) {
@@ -431,6 +455,34 @@ class PersistenceBridge {
     }
     await queryClient.invalidateQueries();
     this.rejectionHandler?.(CONFLICT_MESSAGE);
+  }
+
+  /** Restores records the server refused so the UI never presents rejected data as saved. */
+  private async applyRejections(rejected: BatchResponse['rejected']) {
+    const byCollection = new Map<string, BatchResponse['rejected']>();
+    for (const item of rejected) byCollection.set(item.collection, [...(byCollection.get(item.collection) ?? []), item]);
+    for (const [key, items] of byCollection) {
+      const accessor = getStateAccessor(key);
+      if (!accessor) continue;
+      const changes: CollectionChange[] = items.map((item) => ({
+        recordId: item.recordId,
+        data: item.data,
+        deleted: item.deleted,
+      }));
+      applyChanges(accessor, changes);
+      const snapshot = new Map(this.snapshot.get(key) ?? []);
+      for (const item of items) {
+        this.setVersion(key, item.recordId, item.version);
+        if (item.deleted) snapshot.delete(item.recordId);
+        else snapshot.set(item.recordId, jsonOf(item.data));
+      }
+      if (accessor.kind === 'list') {
+        const order = encodeCollection(accessor).get(ORDER_RECORD);
+        if (order !== undefined) snapshot.set(ORDER_RECORD, order);
+      }
+      this.snapshot.set(key, snapshot);
+    }
+    await queryClient.invalidateQueries();
   }
 
   /** Splits changes into requests; stock balances and their movements always travel together, first. */
