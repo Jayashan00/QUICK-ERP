@@ -27,6 +27,7 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -98,6 +99,14 @@ public class PlatformAdminController {
             Boolean enabled, String message, String startAt, String endAt) {
     }
 
+    public record PlatformUserRequest(String name, String email, String role, String status) {
+    }
+
+    public record PlatformUserResponse(
+            String id, String name, String email, String role, List<String> permissions,
+            String status, String lastActiveAt, boolean isSeed, boolean invitationSent) {
+    }
+
     // ---------------------------------------------------------------- fields
 
     private static final List<String> VALID_STATUSES = List.of("pending", "active", "suspended", "expired");
@@ -107,20 +116,87 @@ public class PlatformAdminController {
     private final ObjectMapper mapper;
     private final Db db;
     private final MaintenanceService maintenanceService;
+    private final PasswordResetService passwordResetService;
 
-    public PlatformAdminController(DataSource dataSource, ObjectMapper mapper, Db db, MaintenanceService maintenanceService) {
+    public PlatformAdminController(DataSource dataSource, ObjectMapper mapper, Db db, MaintenanceService maintenanceService,
+                                   PasswordResetService passwordResetService) {
         this.dataSource = dataSource;
         this.mapper = mapper;
         this.db = db;
         this.maintenanceService = maintenanceService;
+        this.passwordResetService = passwordResetService;
     }
 
     // ---------------------------------------------------------------- helpers
 
     private void requireSuperAdmin(Principal principal) {
-        if (!principal.superAdmin()) {
+        if (!principal.superAdmin() || !"role-003".equals(principal.roleId())) {
             throw ApiException.forbidden("Only Super Admin users can access platform management.");
         }
+    }
+
+    private static String platformRoleId(String role) {
+        return "Platform Administrator".equals(role) ? "role-003" : "role-platform-support";
+    }
+
+    private static String platformRoleName(String roleId) {
+        return "role-003".equals(roleId) ? "Platform Administrator" : "Support";
+    }
+
+    private static List<String> platformPermissions(String role) {
+        return "Platform Administrator".equals(role)
+                ? List.of("*")
+                : List.of("platform.support.view", "platform.support.create", "platform.support.edit",
+                        "platform.support.delete", "platform.support.configure");
+    }
+
+    private PlatformUserRequest validatePlatformUser(PlatformUserRequest body) {
+        if (body == null || body.name() == null || body.name().trim().length() < 2) {
+            throw ApiException.validation("name", "Name must contain at least 2 characters.");
+        }
+        if (body.email() == null || !body.email().trim().matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+            throw ApiException.validation("email", "Enter a valid email address.");
+        }
+        if (!List.of("Platform Administrator", "Support").contains(body.role())) {
+            throw ApiException.validation("role", "Platform role must be Platform Administrator or Support.");
+        }
+        if (!List.of("active", "inactive").contains(body.status())) {
+            throw ApiException.validation("status", "Status must be active or inactive.");
+        }
+        return new PlatformUserRequest(body.name().trim(), body.email().trim().toLowerCase(Locale.ROOT), body.role(), body.status());
+    }
+
+    private PlatformUserResponse platformUser(ResultSet rows, boolean invitationSent) throws SQLException {
+        JsonNode profile = Sql.readJson(mapper, rows.getString("profile"));
+        String role = platformRoleName(rows.getString("role_id"));
+        Timestamp lastActive = rows.getTimestamp("last_login_at");
+        Timestamp created = rows.getTimestamp("created_at");
+        return new PlatformUserResponse(
+                rows.getString("id"), profile.path("name").asText(rows.getString("email")), rows.getString("email"),
+                role, platformPermissions(role), rows.getString("status"),
+                (lastActive != null ? lastActive : created).toInstant().toString(),
+                "usr-superadmin".equals(rows.getString("id")), invitationSent);
+    }
+
+    private PlatformUserResponse findPlatformUser(Connection connection, String userId, boolean invitationSent) throws SQLException {
+        try (PreparedStatement statement = Sql.prepare(connection,
+                "SELECT id, email, status, role_id, profile, last_login_at, created_at FROM app_users "
+                        + "WHERE tenant_id = 'platform' AND super_admin = TRUE AND id = ?", userId);
+             ResultSet rows = statement.executeQuery()) {
+            if (!rows.next()) throw ApiException.notFound("Platform user not found.");
+            return platformUser(rows, invitationSent);
+        }
+    }
+
+    private void protectLastPlatformAdministrator(Connection connection, String userId, String nextRole, String nextStatus) throws SQLException {
+        String currentRole = Sql.queryString(connection,
+                "SELECT role_id FROM app_users WHERE tenant_id = 'platform' AND super_admin = TRUE AND id = ?", userId);
+        if (!"role-003".equals(currentRole)) return;
+        if ("Platform Administrator".equals(nextRole) && "active".equals(nextStatus)) return;
+        long otherAdmins = Sql.queryLong(connection,
+                "SELECT COUNT(*) FROM app_users WHERE tenant_id = 'platform' AND super_admin = TRUE "
+                        + "AND role_id = 'role-003' AND status = 'active' AND id <> ?", userId);
+        if (otherAdmins == 0) throw ApiException.conflict("The last active Platform Administrator cannot be changed or deleted.");
     }
 
     private void recordPlatformAudit(Connection conn, Principal principal,
@@ -225,6 +301,121 @@ public class PlatformAdminController {
                 onboarding, revenue);
     }
 
+    // ---------------------------------------------------------------- platform users
+
+    @GetMapping("/users")
+    public List<PlatformUserResponse> listPlatformUsers(HttpServletRequest request) {
+        Principal principal = AuthInterceptor.principal(request);
+        requireSuperAdmin(principal);
+        return db.snapshot(connection -> {
+            List<PlatformUserResponse> users = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT id, email, status, role_id, profile, last_login_at, created_at FROM app_users "
+                            + "WHERE tenant_id = 'platform' AND super_admin = TRUE ORDER BY created_at");
+                 ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) users.add(platformUser(rows, false));
+            }
+            return users;
+        });
+    }
+
+    @PostMapping("/users")
+    public PlatformUserResponse createPlatformUser(@RequestBody PlatformUserRequest rawBody, HttpServletRequest request) {
+        Principal principal = AuthInterceptor.principal(request);
+        requireSuperAdmin(principal);
+        PlatformUserRequest body = validatePlatformUser(rawBody);
+        String userId = "platform-user-" + UUID.randomUUID().toString().substring(0, 8);
+        PlatformUserResponse created = db.tx(connection -> {
+            if (Sql.queryLong(connection, "SELECT COUNT(*) FROM app_users WHERE lower(email) = ?", body.email()) > 0) {
+                throw ApiException.conflict("A login account already uses this email address.");
+            }
+            ObjectNode profile = mapper.createObjectNode();
+            profile.put("name", body.name());
+            profile.put("roleName", body.role());
+            profile.put("department", "Platform");
+            profile.put("jobTitle", body.role());
+            profile.putArray("branchIds");
+            profile.put("defaultBranchId", "");
+            profile.put("createdAt", Instant.now().toString());
+            profile.put("updatedAt", Instant.now().toString());
+            Sql.update(connection,
+                    "INSERT INTO app_users (id, tenant_id, email, password_hash, status, super_admin, role_id, profile) "
+                            + "VALUES (?, 'platform', ?, NULL, ?, TRUE, ?, CAST(? AS jsonb))",
+                    userId, body.email(), body.status(), platformRoleId(body.role()), Sql.writeJson(mapper, profile));
+            recordPlatformAudit(connection, principal, "Platform user created", userId,
+                    "Platform user " + body.email() + " was created with the " + body.role() + " role.");
+            return findPlatformUser(connection, userId, false);
+        });
+        if (!"active".equals(body.status())) return created;
+        try {
+            passwordResetService.invite(userId);
+            return new PlatformUserResponse(created.id(), created.name(), created.email(), created.role(), created.permissions(),
+                    created.status(), created.lastActiveAt(), created.isSeed(), true);
+        } catch (RuntimeException emailFailure) {
+            return created;
+        }
+    }
+
+    @PutMapping("/users/{userId}")
+    public PlatformUserResponse updatePlatformUser(@PathVariable String userId, @RequestBody PlatformUserRequest rawBody,
+                                                   HttpServletRequest request) {
+        Principal principal = AuthInterceptor.principal(request);
+        requireSuperAdmin(principal);
+        PlatformUserRequest body = validatePlatformUser(rawBody);
+        return db.tx(connection -> {
+            PlatformUserResponse current = findPlatformUser(connection, userId, false);
+            if (principal.userId().equals(userId) && (!"active".equals(body.status()) || !"Platform Administrator".equals(body.role()))) {
+                throw ApiException.conflict("You cannot deactivate or remove Platform Administrator access from your own account.");
+            }
+            protectLastPlatformAdministrator(connection, userId, body.role(), body.status());
+            if (!current.email().equalsIgnoreCase(body.email())
+                    && Sql.queryLong(connection, "SELECT COUNT(*) FROM app_users WHERE lower(email) = ? AND id <> ?", body.email(), userId) > 0) {
+                throw ApiException.conflict("A login account already uses this email address.");
+            }
+            ObjectNode profile = mapper.createObjectNode();
+            profile.put("name", body.name());
+            profile.put("roleName", body.role());
+            profile.put("department", "Platform");
+            profile.put("jobTitle", body.role());
+            profile.putArray("branchIds");
+            profile.put("defaultBranchId", "");
+            profile.put("updatedAt", Instant.now().toString());
+            String roleId = platformRoleId(body.role());
+            Sql.update(connection,
+                    "UPDATE app_users SET email = ?, status = ?, role_id = ?, profile = CAST(? AS jsonb), "
+                            + "token_version = CASE WHEN status <> ? OR role_id <> ? THEN token_version + 1 ELSE token_version END, updated_at = now() WHERE id = ?",
+                    body.email(), body.status(), roleId, Sql.writeJson(mapper, profile), body.status(), roleId, userId);
+            recordPlatformAudit(connection, principal, "Platform user updated", userId,
+                    "Platform user " + body.email() + " was updated.");
+            return findPlatformUser(connection, userId, false);
+        });
+    }
+
+    @PostMapping("/users/{userId}/invitation")
+    public ResponseEntity<Void> resendPlatformUserInvitation(@PathVariable String userId, HttpServletRequest request) {
+        Principal principal = AuthInterceptor.principal(request);
+        requireSuperAdmin(principal);
+        db.snapshot(connection -> findPlatformUser(connection, userId, false));
+        passwordResetService.invite(userId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/users/{userId}")
+    public ResponseEntity<Void> deletePlatformUser(@PathVariable String userId, HttpServletRequest request) {
+        Principal principal = AuthInterceptor.principal(request);
+        requireSuperAdmin(principal);
+        if (principal.userId().equals(userId)) throw ApiException.conflict("You cannot delete your own platform account.");
+        db.tx(connection -> {
+            PlatformUserResponse current = findPlatformUser(connection, userId, false);
+            protectLastPlatformAdministrator(connection, userId, "Support", "inactive");
+            Sql.update(connection, "DELETE FROM app_users WHERE id = ?", userId);
+            recordPlatformAudit(connection, principal, "Platform user deleted", userId,
+                    "Platform user " + current.email() + " was deleted.");
+            return null;
+        });
+        return ResponseEntity.noContent().build();
+    }
+
     // ---------------------------------------------------------------- GET /platform/tenants
 
     @GetMapping("/tenants")
@@ -321,19 +512,25 @@ public class PlatformAdminController {
             ObjectNode paymentNode = onboarding.putObject("payment");
             paymentNode.put("status", "unpaid");
 
+            LocalDate today = LocalDate.now();
+            LocalDate defaultExpiry = today.plusMonths(1);
+
             ObjectNode subNode = profile.putObject("subscription");
             subNode.put("plan", "business");
             subNode.put("status", "pending");
+            subNode.put("start", today.toString());
+            subNode.put("expiry", defaultExpiry.toString());
 
             ObjectNode revNode = profile.putObject("revenue");
             revNode.put("amount", 0.0);
             revNode.put("currency", "USD");
             revNode.put("billingCycle", "monthly");
+            revNode.put("renewalDate", defaultExpiry.toString());
 
             Sql.update(conn,
                     "INSERT INTO tenants (id, name, status, profile, subscription_plan, subscription_start, subscription_expiry, created_at, updated_at) " +
-                            "VALUES (?, ?, 'pending', CAST(? AS jsonb), 'business', NULL, NULL, now(), now())",
-                    tenantId, name, Sql.writeJson(mapper, profile));
+                            "VALUES (?, ?, 'pending', CAST(? AS jsonb), 'business', ?, ?, now(), now())",
+                    tenantId, name, Sql.writeJson(mapper, profile), today.toString(), defaultExpiry.toString());
 
             syncPlatformFoundation(conn, tenantId, profile);
             recordPlatformAudit(conn, principal, "Tenant created", tenantId,

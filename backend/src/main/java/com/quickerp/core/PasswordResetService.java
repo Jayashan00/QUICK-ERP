@@ -48,6 +48,28 @@ public final class PasswordResetService {
                         + "If you did not request this, you can ignore this email.");
     }
 
+    /** Sends a one-time password setup link for a newly-created account. */
+    public void invite(String userId) {
+        if (userId == null || userId.isBlank()) throw ApiException.notFound("User not found.");
+        String[] target = db.tx(connection -> {
+            String email = Sql.queryString(connection,
+                    "SELECT u.email FROM app_users u JOIN tenants t ON t.id = u.tenant_id "
+                            + "WHERE u.id = ? AND u.status = 'active' AND t.status = 'active'",
+                    userId);
+            if (email == null) throw ApiException.badRequest("Only an active user can receive a password setup email.");
+            String token = Hashing.randomToken(32);
+            Sql.update(connection, "UPDATE password_reset_tokens SET used_at = now() WHERE user_id = ? AND used_at IS NULL", userId);
+            Sql.update(connection, "INSERT INTO password_reset_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                    Hashing.sha256(token), userId, OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(TOKEN_MINUTES));
+            return new String[] {email, token};
+        });
+        String link = settings.passwordResetUrl() + (settings.passwordResetUrl().contains("?") ? "&" : "?") + "token=" + target[1];
+        mailer.send(target[0], "Set up your Quick ERP password",
+                "A Quick ERP platform account was created for you.\n\n"
+                        + "Open this one-time link within " + TOKEN_MINUTES + " minutes to choose your password:\n" + link + "\n\n"
+                        + "If you were not expecting this account, contact your platform administrator.");
+    }
+
     public void confirm(String token, String newPassword) {
         AuthService.validatePassword(newPassword);
         if (token == null || token.isBlank()) throw ApiException.badRequest("This password reset link is invalid or expired.");
