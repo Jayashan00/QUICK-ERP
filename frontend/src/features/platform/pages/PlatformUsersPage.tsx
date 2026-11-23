@@ -67,6 +67,7 @@ export function PlatformUsersPage() {
     platformService.saveUser(input, editing?.id),
   );
   const deleteMutation = usePlatformMutation((userId: string) => platformService.deleteUser(userId));
+  const resendMutation = usePlatformMutation((userId: string) => platformService.resendUserInvitation(userId));
 
   const isSeedAdmin = Boolean(editing?.isSeed || editing?.id === 'platform-user-001');
 
@@ -174,6 +175,18 @@ export function PlatformUsersPage() {
               label: 'Edit platform access',
               onClick: () => openModal(r),
             },
+            {
+              key: 'resend-invitation',
+              label: 'Send password setup email',
+              onClick: async () => {
+                try {
+                  await resendMutation.mutateAsync(r.id);
+                  appToast.success(`Password setup email sent to ${r.email}.`);
+                } catch (error) {
+                  appToast.error(error instanceof Error ? error.message : 'Unable to send the password setup email.');
+                }
+              },
+            },
           ];
           // Seed admin account cannot be deleted
           if (!r.isSeed && r.id !== 'platform-user-001') {
@@ -201,13 +214,15 @@ export function PlatformUsersPage() {
                 appToast.error('The seed administrator account cannot be deactivated.');
                 return;
               }
-              await saveMutation.mutateAsync({
+              const saved = await saveMutation.mutateAsync({
                 ...values,
                 role: isSeedAdmin ? 'Platform Administrator' : values.role,
                 status: isSeedAdmin ? 'active' : values.status,
               });
               setEditing(undefined);
-              appToast.success('Platform user saved.');
+              if (!editing && saved.invitationSent) appToast.success(`Platform user created. Password setup email sent to ${saved.email}.`);
+              else if (!editing && values.status === 'active') appToast.success('Platform user created, but the password setup email was not sent. Use the row action to resend it.');
+              else appToast.success('Platform user saved.');
             } catch (error) {
               appToast.error(error instanceof Error ? error.message : 'Unable to save user.');
             }

@@ -133,4 +133,11 @@ export const roleService = {
 };
 
 // Backend persistence registration (see src/core/persistence).
-registerList('core.roles', () => rolesStore, (rows) => { rolesStore = rows.map(normalizeAtomicModulePermissions); });
+registerList('core.roles', () => rolesStore, (rows) => {
+  rolesStore = rows.map(normalizeAtomicModulePermissions);
+  for (const required of mockRoles.filter((role) => role.scope === 'platform' && role.isSystem)) {
+    if (!rolesStore.some((role) => role.id === required.id && role.tenantId === 'platform')) {
+      rolesStore.push(normalizeAtomicModulePermissions(required));
+    }
+  }
+});

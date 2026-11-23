@@ -121,6 +121,7 @@ export interface PlatformUserRecord {
   status: 'active' | 'inactive';
   lastActiveAt: string;
   isSeed?: boolean;
+  invitationSent?: boolean;
 }
 
 export interface PlatformHealthCheck { id: string; service: string; status: 'operational' | 'degraded' | 'offline'; latencyMs: number; checkedAt: string; note: string }

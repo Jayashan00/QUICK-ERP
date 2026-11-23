@@ -70,19 +70,29 @@ function normalizeStore() {
     tenant.usage = tenant.usage ?? existing?.usage ?? { currentUsers: old.userCount ?? 1, currentBranches: old.branchCount ?? 1, storageGb: old.storageGb };
     tenant.admin = tenant.admin ?? existing?.admin ?? { name: tenant.contactName, email: tenant.ownerEmail, status: 'active' };
 
+    const today = new Date().toISOString().slice(0, 10);
+    const defaultExpiry = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+
     tenant.subscription = tenant.subscription ?? {
       plan: 'business' as const,
-      start: new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10),
-      expiry: tenant.revenue?.renewalDate ?? new Date(Date.now() + 365 * 86_400_000).toISOString().slice(0, 10),
+      start: today,
+      expiry: defaultExpiry,
     };
+    if (tenant.status === 'pending' && tenant.subscription.start && tenant.subscription.start < today) {
+      tenant.subscription.start = today;
+      tenant.subscription.expiry = defaultExpiry;
+    }
 
     const oldTenant = tenant as typeof tenant & { revenueAmount?: number; revenueCurrency?: 'USD' | 'LKR'; billingCycle?: 'monthly' | 'yearly'; renewalDate?: string };
     tenant.revenue = tenant.revenue ?? {
       amount: oldTenant.revenueAmount ?? 0,
       currency: oldTenant.revenueCurrency ?? 'USD',
       billingCycle: oldTenant.billingCycle ?? 'monthly',
-      renewalDate: oldTenant.renewalDate ?? new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10),
+      renewalDate: oldTenant.renewalDate ?? defaultExpiry,
     };
+    if (tenant.status === 'pending' && tenant.revenue.renewalDate && tenant.revenue.renewalDate < today) {
+      tenant.revenue.renewalDate = defaultExpiry;
+    }
 
     tenant.onboarding = tenant.onboarding ?? {
       stage: tenant.status === 'active' ? 'access_activated' : 'company_created',
@@ -147,6 +157,10 @@ export const platformService = {
       const user = rawUser ? JSON.parse(rawUser) : null;
       const isSuper = Boolean(user?.isSuperAdmin || user?.roleId === 'role-super-admin');
       if (isSuper) {
+        if (isBackendEnabled()) {
+          const { data: users } = await apiClient.get<PlatformFoundation['users']>('/platform/users');
+          store.users = users;
+        }
         const { data: maint } = await apiClient.get<PlatformMaintenanceDetail>('/platform/maintenance');
         store.maintenance = {
           enabled: maint.enabled,
@@ -202,6 +216,11 @@ export const platformService = {
         currency: store.settings.baseCurrency,
         billingCycle: 'monthly' as const,
         renewalDate: new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10),
+      },
+      subscription: {
+        plan: 'business' as const,
+        start: new Date().toISOString().slice(0, 10),
+        expiry: new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10),
       },
       onboarding: {
         stage: 'company_created' as const,
@@ -524,6 +543,16 @@ export const platformService = {
   },
 
   async saveUser(input: PlatformUserInput, userId?: string) {
+    if (isBackendEnabled()) {
+      const response = userId
+        ? await apiClient.put<PlatformFoundation['users'][number]>(`/platform/users/${encodeURIComponent(userId)}`, input)
+        : await apiClient.post<PlatformFoundation['users'][number]>('/platform/users', input);
+      const saved = response.data;
+      const index = store.users.findIndex((row) => row.id === saved.id);
+      if (index >= 0) store.users[index] = saved;
+      else store.users.unshift(saved);
+      return structuredClone(saved);
+    }
     await wait();
     const current = userId ? store.users.find((row) => row.id === userId) : undefined;
     const isSeedAdmin = Boolean(current?.isSeed || current?.id === 'platform-user-001');
@@ -555,6 +584,11 @@ export const platformService = {
     return structuredClone(user);
   },
   async deleteUser(userId: string) {
+    if (isBackendEnabled()) {
+      await apiClient.delete(`/platform/users/${encodeURIComponent(userId)}`);
+      store.users = store.users.filter((row) => row.id !== userId);
+      return;
+    }
     await wait();
     const current = store.users.find((row) => row.id === userId);
     if (current?.isSeed || current?.id === 'platform-user-001') {
@@ -562,6 +596,13 @@ export const platformService = {
     }
     store.users = store.users.filter((row) => row.id !== userId);
     audit('Platform user deleted', userId, current?.name ?? userId, 'Platform user deleted.');
+  },
+  async resendUserInvitation(userId: string) {
+    if (isBackendEnabled()) {
+      await apiClient.post(`/platform/users/${encodeURIComponent(userId)}/invitation`);
+      return;
+    }
+    await wait();
   },
   async saveSettings(settings: PlatformSettings) {
     await wait();
