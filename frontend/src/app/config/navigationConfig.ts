@@ -12,13 +12,10 @@ import {
   Briefcase,
   FolderKanban,
   Store,
-  BarChart3,
   FileText,
   Bell,
   Settings,
-  ShieldAlert,
   Building,
-  Activity,
   HeartPulse,
   Headphones,
   Inbox,
@@ -162,19 +159,7 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
             path: "/sales/returns",
             permission: "sales.view",
           },
-          {
-            label: "Recurring Invoices",
-            path: "/sales/recurring",
-            permission: "sales.view",
-          },
-          {
-            label: "Commissions",
-            path: "/sales/commissions",
-            permission: "sales.view",
-          },
-          { label: "Flash Sales", path: "/sales/flash-sales", permission: "sales.view" },
-          { label: "Customer Reviews", path: "/sales/reviews", permission: "sales.view" },
-          { label: "Abandoned Carts", path: "/sales/abandoned-carts", permission: "sales.view" },
+          { label: "Flash Sales", path: "/sales/flash-sales", permission: "sales.flash_sales.view" },
         ],
       },
       {
@@ -310,11 +295,6 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
             allPermissions: ["inventory.view", "stock.count"],
           },
           {
-            label: "Mobile Stock Count",
-            path: "/inventory/counts/mobile",
-            allPermissions: ["inventory.view", "stock.count"],
-          },
-          {
             label: "Returns & Wastage",
             path: "/inventory/returns-wastage",
             allPermissions: ["inventory.view", "stock.adjust"],
@@ -322,9 +302,7 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
           { label: "Stock Ageing Report", path: "/inventory/reports/aging", allPermissions: ["inventory.view", "inventory.stock.view"] },
           { label: "Stock Margins", path: "/inventory/reports/margins", allPermissions: ["inventory.view", "inventory.stock.view"] },
           { label: "Expiry Report", path: "/inventory/reports/expiry", allPermissions: ["inventory.view", "inventory.view_expiry"] },
-          { label: "Dead Stock Report", path: "/inventory/reports/dead-stock", allPermissions: ["inventory.view", "inventory.stock.view"] },
           { label: "Wastage Report", path: "/inventory/reports/wastage", allPermissions: ["inventory.view", "stock.adjust"] },
-          { label: "In Transit Inventory", path: "/inventory/reports/in-transit", allPermissions: ["inventory.view", "inventory.transfers.view"] },
           { label: "Stock Velocity", path: "/inventory/velocity", allPermissions: ["inventory.view", "inventory.velocity.view"] },
           {
             label: "Reorder Workflow",
@@ -422,11 +400,6 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
             permission: "hr.employees.view",
           },
           {
-            label: "Departments",
-            path: "/hr/departments",
-            permission: "hr.departments.view",
-          },
-          {
             label: "Attendance",
             path: "/hr/attendance",
             permission: "hr.attendance.view",
@@ -449,10 +422,6 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
           { label: "Onboarding", path: "/hr/onboarding", permission: "hr.onboarding.view" },
           { label: "Training", path: "/hr/training", permission: "hr.training.view" },
           { label: "Performance", path: "/hr/performance", permission: "hr.performance.view" },
-          { label: "OKRs & Feedback", path: "/hr/okr", permission: "hr.okr.view" },
-          { label: "Policies & Signatures", path: "/hr/policies", permission: "hr.policies.view" },
-          { label: "HR Tickets", path: "/hr/tickets", permission: "hr.tickets.view" },
-          { label: "HR Approvals", path: "/hr/approvals", permission: "hr.employees.view" },
           { label: "HR Calendar", path: "/hr/calendar", permission: "hr.employees.view" },
           { label: "Employee Assets", path: "/hr/assets", permission: "hr.assets.view" },
           { label: "Employee Exits", path: "/hr/exits", permission: "hr.exits.view" },
@@ -469,7 +438,6 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
             path: "/projects/list",
             permission: "projects.projects.view",
           },
-          { label: "Project Dashboard", path: "/projects/dashboard", permission: "projects.projects.view" },
           { label: "Milestones", path: "/projects/milestones", permission: "projects.milestones.view" },
           {
             label: "Tasks",
@@ -484,53 +452,6 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
           { label: "Project Expenses", path: "/projects/expenses", permission: "projects.expenses.view" },
           { label: "Billing", path: "/projects/billing", permission: "projects.billing.view" },
           { label: "Profitability & Reports", path: "/projects/profitability", permission: "projects.reports.view" },
-        ],
-      },
-      {
-        label: "Reports & Analytics",
-        path: "/reports",
-        icon: BarChart3,
-        children: [
-          {
-            label: "Reports Dashboard",
-            path: "/reports",
-            anyPermissions: ["reports.view", "reports.sales.view", "reports.purchases.view", "reports.inventory.view", "reports.finance.view", "reports.hr.view", "reports.projects.view", "reports.pos.view"],
-          },
-          {
-            label: "CRM & Sales Reports",
-            path: "/reports/sales",
-            permission: "reports.sales.view",
-          },
-          {
-            label: "Purchase Reports",
-            path: "/reports/purchases",
-            permission: "reports.purchases.view",
-          },
-          {
-            label: "Finance Reports",
-            path: "/reports/finance",
-            permission: "reports.finance.view",
-          },
-          {
-            label: "Inventory Reports",
-            path: "/reports/inventory",
-            permission: "reports.inventory.view",
-          },
-          {
-            label: "HR Reports",
-            path: "/reports/hr",
-            permission: "reports.hr.view",
-          },
-          {
-            label: "Project Reports",
-            path: "/reports/projects",
-            permission: "reports.projects.view",
-          },
-          {
-            label: "POS & Store Reports",
-            path: "/reports/pos",
-            permission: "reports.pos.view",
-          },
         ],
       },
       {
@@ -577,6 +498,7 @@ export const ERP_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
             label: item.label,
             path: item.path,
             permission: item.permission,
+            tenantAdminOnly: item.tenantAdminOnly,
           })),
         })),
       },
@@ -599,12 +521,6 @@ export const SUPER_ADMIN_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
         path: "/super-admin/tenants",
         icon: Building,
         permission: "platform.tenants.view",
-      },
-      {
-        label: "Platform Usage",
-        path: "/super-admin/usage",
-        icon: Activity,
-        permission: "platform.usage.view",
       },
       {
         label: "Platform Users",
@@ -639,18 +555,6 @@ export const SUPER_ADMIN_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
         path: "/super-admin/settings",
         icon: Settings,
         permission: "platform.settings.view",
-      },
-      {
-        label: "Platform Reports",
-        path: "/super-admin/reports",
-        icon: BarChart3,
-        permission: "platform.reports.view",
-      },
-      {
-        label: "Security Audit",
-        path: "/super-admin/security",
-        icon: ShieldAlert,
-        permission: "platform.security.view",
       },
       {
         label: "Audit Logs",

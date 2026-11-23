@@ -7,6 +7,8 @@ import { purchasingService } from "../src/features/purchases/services/purchasing
 const scope = { tenantId: "tenant-001", branchId: "branch-001" };
 const branches = ["branch-001"];
 const actor = { id: "qa-user", name: "Purchasing QA" };
+const approver = { id: "qa-manager", name: "Purchasing QA Manager" };
+const administrator = { id: "qa-admin", name: "Purchasing QA Administrator", administrator: true };
 const dates = { orderDate: "2026-09-28", expectedDeliveryDate: "2026-10-15" };
 const line = {
   productId: "prod-002",
@@ -26,6 +28,11 @@ const request = await purchasingService.createRequest(
   branches,
   {
     branchId: "branch-001",
+    warehouseId: "warehouse-hq-main",
+    departmentId: "dept-003",
+    costCenterId: "cc-001",
+    priority: "high",
+    budgetReference: "BUDGET-QA",
     requiredDate: "2026-10-15",
     reason: "QA replenishment",
     notes: "Service workflow test",
@@ -40,6 +47,11 @@ await purchasingService.updateRequest(
   request.id,
   {
     branchId: request.branchId,
+    warehouseId: request.warehouseId,
+    departmentId: request.departmentId,
+    costCenterId: request.costCenterId,
+    priority: request.priority,
+    budgetReference: request.budgetReference,
     requiredDate: request.requiredDate,
     reason: "Updated QA replenishment",
     notes: "Edited",
@@ -59,9 +71,43 @@ await purchasingService.transitionRequest(
   branches,
   request.id,
   "approve",
-  actor,
+  approver,
   "Budget available",
 );
+
+const adminRequest = await purchasingService.createRequest(
+  scope,
+  branches,
+  {
+    branchId: "branch-001",
+    warehouseId: "warehouse-hq-main",
+    departmentId: "dept-003",
+    costCenterId: "cc-001",
+    priority: "normal",
+    budgetReference: "ADMIN-QA",
+    requiredDate: "2026-10-16",
+    reason: "Administrator workflow override check",
+    notes: "Admin may complete maker-checker actions in their tenant.",
+    items: [line],
+  },
+  administrator,
+);
+await purchasingService.transitionRequest(
+  scope,
+  branches,
+  adminRequest.id,
+  "submit",
+  administrator,
+);
+await purchasingService.transitionRequest(
+  scope,
+  branches,
+  adminRequest.id,
+  "approve",
+  administrator,
+  "Tenant administrator override",
+);
+assert.equal(adminRequest.createdBy, administrator.id);
 await assert.rejects(() =>
   purchasingService.createRfq(
     scope,
@@ -116,6 +162,7 @@ const order = await purchasingService.createOrder(
     ...dates,
     paymentTerms: "Net 30",
     currency: "LKR",
+    directPurchaseReason: "Emergency QA purchase outside the RFQ path.",
     notes: "QA direct PO",
     items: [line],
   },
@@ -136,6 +183,7 @@ const updatedOrder = await purchasingService.updateOrder(
     ...dates,
     paymentTerms: order.paymentTerms,
     currency: order.currency,
+    directPurchaseReason: order.directPurchaseReason,
     notes: "QA edited PO",
     items: [line],
   },

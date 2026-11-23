@@ -101,10 +101,13 @@ public class AppProperties {
     public static class Mail {
         private String from = "no-reply@quickerp.local";
         private String passwordResetUrl = "http://localhost:3000/reset-password";
+        private String supplierRfqUrl = "http://localhost:3000/supplier/rfq";
         public String getFrom() { return from; }
         public void setFrom(String from) { this.from = from; }
         public String getPasswordResetUrl() { return passwordResetUrl; }
         public void setPasswordResetUrl(String passwordResetUrl) { this.passwordResetUrl = passwordResetUrl; }
+        public String getSupplierRfqUrl() { return supplierRfqUrl; }
+        public void setSupplierRfqUrl(String supplierRfqUrl) { this.supplierRfqUrl = supplierRfqUrl; }
     }
 
     public static class Files {

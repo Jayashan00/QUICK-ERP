@@ -3,7 +3,8 @@ import type { AuditEntry } from "@/shared/types/audit";
 import type { BaseEntity, EntityId } from "@/shared/types/common";
 import type { DocumentRecord } from "@/shared/types/document-record";
 
-export type PurchaseRequestStatus = "draft" | "submitted" | "approved" | "rejected" | "cancelled";
+export type PurchaseRequestStatus = "draft" | "submitted" | "returned" | "approved" | "sourcing" | "converted" | "rejected" | "cancelled";
+export type PurchaseRequestPriority = "low" | "normal" | "high" | "urgent";
 export type RfqStatus = "draft" | "sent" | "responses_received" | "closed" | "cancelled";
 export type SupplierQuotationStatus = "received" | "preferred" | "rejected" | "expired" | "converted";
 export type PurchaseOrderStatus = "draft" | "pending_approval" | "approved" | "sent" | "partially_received" | "completed" | "cancelled";
@@ -42,14 +43,43 @@ export interface PurchaseDocument extends BaseEntity {
 export interface PurchaseRequest extends PurchaseDocument {
   requesterId: EntityId;
   requesterName: string;
+  departmentId?: EntityId;
+  departmentName?: string;
+  costCenterId?: EntityId;
+  costCenterName?: string;
+  /** Legacy values retained so older persisted requests remain readable. */
+  department?: string;
+  costCenter?: string;
+  warehouseId: EntityId;
+  priority: PurchaseRequestPriority;
+  budgetReference?: string;
   requiredDate: string;
   reason: string;
+  estimatedTotal: number;
+  returnReason?: string;
   status: PurchaseRequestStatus;
   items: PurchaseLine[];
+  sourceReorder?: {
+    balanceId: EntityId;
+    branchId: EntityId;
+    warehouseId: EntityId;
+    locationId: EntityId;
+    available: number;
+    lowStockLevel: number;
+    suggestedQuantity: number;
+  };
 }
 export interface RequestForQuotation extends PurchaseDocument {
   purchaseRequestId: EntityId;
   supplierIds: EntityId[];
+  invitations?: Array<{
+    id: string;
+    supplierId: string;
+    supplierName?: string;
+    status: "Pending" | "Viewed" | "Submitted" | "Expired";
+    emailStatus?: "pending" | "sent" | "failed";
+    emailError?: string;
+  }>;
   requiredDeliveryDate: string;
   status: RfqStatus;
   items: PurchaseLine[];
@@ -75,6 +105,8 @@ export interface PurchaseOrder extends PurchaseDocument {
   supplierId: EntityId;
   warehouseId: EntityId;
   sourceQuotationId?: EntityId;
+  sourceRequestId?: EntityId;
+  directPurchaseReason?: string;
   orderDate: string;
   expectedDeliveryDate: string;
   paymentTerms: string;
@@ -174,4 +206,4 @@ export interface PurchaseMatchResult {
   lines: PurchaseMatchLine[];
   hasMismatch: boolean;
 }
-export interface PurchasingActor { id: EntityId; name: string }
+export interface PurchasingActor { id: EntityId; name: string; administrator?: boolean }

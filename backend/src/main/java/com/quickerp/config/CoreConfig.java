@@ -23,6 +23,7 @@ import com.quickerp.core.PasswordResetService;
 import com.quickerp.core.PasswordHasher;
 import com.quickerp.core.ProvisioningService;
 import com.quickerp.core.QuotationDeliveryService;
+import com.quickerp.core.RfqWorkflowService;
 import com.quickerp.core.SeedService;
 import com.quickerp.core.SalesOrderPdfService;
 import com.quickerp.core.SalesInvoicePdfService;
@@ -151,8 +152,8 @@ public class CoreConfig {
 
     @Bean
     public AuthService authService(Db db, ObjectMapper mapper, PasswordHasher hasher, TokenService tokens, AccessRules access,
-                                   CoreSettings settings, MfaService mfaService) {
-        return new AuthService(db, mapper, hasher, tokens, access, settings, mfaService);
+                                   CoreSettings settings, MfaService mfaService, ObjectProvider<com.quickerp.core.MaintenanceService> maintenanceServiceProvider) {
+        return new AuthService(db, mapper, hasher, tokens, access, settings, mfaService, maintenanceServiceProvider.getIfAvailable());
     }
 
     /** Sends email through the configured SMTP server (spring.mail.*); without one, the message is written to the log. */
@@ -221,6 +222,12 @@ public class CoreConfig {
     @Bean
     public QuotationDeliveryService quotationDeliveryService(Db db, ObjectMapper mapper, AccessRules access, Mailer mailer) {
         return new QuotationDeliveryService(db, mapper, access, mailer);
+    }
+
+    @Bean
+    public RfqWorkflowService rfqWorkflowService(Db db, ObjectMapper mapper, AccessRules access, Mailer mailer,
+                                                 AppProperties properties) {
+        return new RfqWorkflowService(db, mapper, access, mailer, properties.getMail().getSupplierRfqUrl());
     }
 
     @Bean

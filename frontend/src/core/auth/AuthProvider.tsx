@@ -47,7 +47,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const version = ++requestVersion.current;
     authService.logout();
     queryClient.clear();
-    setState({ ...signedOut, isLoading: true });
     try {
       const user = await authService.login(email, password);
       if (version !== requestVersion.current) throw new Error('This sign-in request is no longer active.');
@@ -76,35 +75,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!state.pendingUser || state.status !== 'captcha_pending') throw new Error('The login security check has expired. Start again.');
     const version = ++requestVersion.current;
     const user = state.pendingUser;
-    setState(previous => ({ ...previous, isLoading: true }));
-    try {
-      await authService.verifyCaptcha(answer);
-      if (version !== requestVersion.current) throw new Error('This security check is no longer active.');
-      if (authService.requiresMfa(user)) {
-        setState({ ...signedOut, pendingUser: user, status: 'mfa_pending' });
-        return { status: 'mfa_required', user };
-      }
-      completeLogin(user);
-      return { status: 'authenticated', user };
-    } catch (error) {
-      if (version === requestVersion.current) setState(previous => ({ ...previous, isLoading: false }));
-      throw error;
+    await authService.verifyCaptcha(answer);
+    if (version !== requestVersion.current) throw new Error('This security check is no longer active.');
+    if (authService.requiresMfa(user)) {
+      setState({ ...signedOut, pendingUser: user, status: 'mfa_pending' });
+      return { status: 'mfa_required', user };
     }
+    completeLogin(user);
+    return { status: 'authenticated', user };
   }, [completeLogin, state.pendingUser, state.status]);
 
   const verifyMfa = useCallback(async (code: string) => {
     if (!state.pendingUser || state.status !== 'mfa_pending') throw new Error('The MFA request has expired. Start again.');
     const version = ++requestVersion.current;
     const user = state.pendingUser;
-    setState(previous => ({ ...previous, isLoading: true }));
-    try {
-      await authService.verifyMfa(code);
-      if (version !== requestVersion.current) throw new Error('This verification request is no longer active.');
-      return completeLogin(user);
-    } catch (error) {
-      if (version === requestVersion.current) setState(previous => ({ ...previous, isLoading: false }));
-      throw error;
-    }
+    await authService.verifyMfa(code);
+    if (version !== requestVersion.current) throw new Error('This verification request is no longer active.');
+    return completeLogin(user);
   }, [completeLogin, state.pendingUser, state.status]);
 
   const resendMfaCode = useCallback(() => authService.resendMfaCode(), []);

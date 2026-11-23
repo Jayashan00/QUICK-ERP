@@ -26,6 +26,9 @@ public final class WebShopValidator {
 
         List<JsonNode> flashSales();
 
+        /** Existing web orders are used to enforce promotion-wide quantity caps. */
+        default List<JsonNode> orders() { return List.of(); }
+
         List<JsonNode> taxes();
 
         boolean branchIsActive(String branchId);
@@ -79,7 +82,7 @@ public final class WebShopValidator {
                 throw invalid("A product in the order is no longer available. Refresh the page and try again.");
             }
             double unitPrice = amount(item, "unitPrice");
-            if (!priceAllowed(product, quantity, unitPrice, branchId, catalog.flashSales(), now)) {
+            if (!priceAllowed(product, quantity, unitPrice, branchId, catalog.flashSales(), catalog.orders(), now)) {
                 throw invalid("The price of " + text(product, "name", productId) + " has changed. Refresh the page and try again.");
             }
             double lineTotal = money(quantity * unitPrice);
@@ -100,22 +103,52 @@ public final class WebShopValidator {
         if (Math.abs(amount(order, "total") - money(subtotal + payable)) > tolerance) throw invalid("The order total is not correct.");
     }
 
-    static boolean priceAllowed(JsonNode product, int quantity, double unitPrice, String branchId, List<JsonNode> flashSales, Instant now) {
+    static boolean priceAllowed(JsonNode product, int quantity, double unitPrice, String branchId,
+                                List<JsonNode> flashSales, List<JsonNode> orders, Instant now) {
         List<Double> allowed = new ArrayList<>();
-        allowed.add(regularPrice(product, quantity));
         String productId = Sql.text(product, "id");
         for (JsonNode sale : flashSales) {
             if (!productId.equals(Sql.text(sale, "productId")) || !branchId.equals(Sql.text(sale, "branchId"))) continue;
             if (!sale.path("enabled").asBoolean(false)) continue;
+            String status = Sql.text(sale, "status");
+            if (status != null && !"approved".equals(status)) continue;
+            JsonNode channels = sale.get("channels");
+            if (channels != null && channels.isArray() && !containsText(channels, "storefront")) continue;
+            int minimum = sale.path("minimumQuantity").asInt(1);
+            JsonNode maximumNode = sale.get("maximumQuantity");
+            if (quantity < minimum || maximumNode != null && maximumNode.isNumber() && quantity > maximumNode.asInt()) continue;
+            JsonNode limitNode = sale.get("promotionQuantityLimit");
+            if (limitNode != null && limitNode.isNumber()
+                    && sale.path("consumedQuantity").asInt(0) + storefrontUsage(orders, Sql.text(sale, "id")) + quantity > limitNode.asInt()) continue;
             Instant starts = instant(Sql.text(sale, "startsAt"));
             Instant ends = instant(Sql.text(sale, "endsAt"));
             if (starts == null || ends == null) continue;
             if (now.isBefore(starts.minusSeconds(CLOCK_SKEW_SECONDS)) || !now.isBefore(ends.plusSeconds(CLOCK_SKEW_SECONDS))) continue;
             if (sale.path("salePrice").isNumber()) allowed.add(sale.path("salePrice").asDouble());
         }
+        if (allowed.isEmpty()) allowed.add(regularPrice(product, quantity));
         for (double price : allowed) {
             if (Math.abs(price - unitPrice) < 0.005) return true;
         }
+        return false;
+    }
+
+    private static int storefrontUsage(List<JsonNode> orders, String promotionId) {
+        if (promotionId == null) return 0;
+        int quantity = 0;
+        for (JsonNode order : orders) {
+            if ("cancelled".equals(Sql.text(order, "status"))) continue;
+            JsonNode items = order.get("items");
+            if (items == null || !items.isArray()) continue;
+            for (JsonNode item : items) {
+                if (promotionId.equals(Sql.text(item, "promotionId"))) quantity += Math.max(0, item.path("quantity").asInt(0));
+            }
+        }
+        return quantity;
+    }
+
+    private static boolean containsText(JsonNode values, String expected) {
+        for (JsonNode value : values) if (expected.equals(value.asText())) return true;
         return false;
     }
 

@@ -26,6 +26,7 @@ import { appToast } from '@/shared/utils/toast';
 import { EmployeeForm, OperationForm, type EmployeeValues, type OperationKind, type OperationValues } from './HrForms';
 import { hrService, type HrScope, type HrActor, type BiometricRow } from './hrService';
 import { PayrollCommissionPanel, PayrollAccountingPanel } from './PayrollCommissionPanel';
+import { PayslipDocumentModal, printPayslipHtml, type PayslipItem } from './components/PayslipDocumentModal';
 import type { Employee } from './types/employee';
 
 const labels: Record<string, string> = { dashboard: 'HR dashboard', employees: 'Employees', profile: 'Employee profile', documents: 'Employee documents', shifts: 'Shifts', roster: 'Roster', attendance: 'Attendance', biometric: 'Biometric import', corrections: 'Attendance corrections', leave: 'Leave management', holidays: 'Holidays', overtime: 'Overtime', payitems: 'Allowances & deductions', revisions: 'Salary revisions', loans: 'Employee loans', payroll: 'Payroll', payslips: 'Payslips', audit: 'HR audit history' };
@@ -40,6 +41,7 @@ function HrPageWorkspace({ section }: { section: string }) {
   const [branchFilter, setBranchFilter] = useState(''); const [departmentFilter, setDepartmentFilter] = useState('');
   const [rosterView, setRosterView] = useState<'day' | 'week'>('week'); const [rosterDate, setRosterDate] = useState(new Date().toISOString().slice(0, 10));
   const [modal, setModal] = useState<OperationKind | 'employee' | null>(null); const [editing, setEditing] = useState<Employee | undefined>();
+  const [viewingPayslip, setViewingPayslip] = useState<PayslipItem | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; action: () => unknown } | null>(null);
   const [biometricText, setBiometricText] = useState('employeeCode,date,checkIn,checkOut\nEMP-0001,2026-09-27,09:00,17:00');
   const [preview, setPreview] = useState<BiometricRow[]>([]);
@@ -60,7 +62,7 @@ function HrPageWorkspace({ section }: { section: string }) {
     switch (kind) {
       case 'shift': return hrService.saveShift(scope, actor, { branchId: currentBranch, name: value.name, start: value.start, end: value.end, breakMinutes: Number(value.breakMinutes), active: true });
       case 'roster': return hrService.assignShift(scope, actor, { branchId: currentBranch, employeeId: value.employeeId, date: value.date, shiftId: value.shiftId });
-      case 'attendance': return hrService.recordAttendance(scope, actor, { branchId: hrService.employee(scope, value.employeeId).branchId, employeeId: value.employeeId, date: value.date, checkIn: value.checkIn, checkOut: value.checkOut, source: 'manual' });
+      case 'attendance': return hrService.recordAttendance(scope, actor, { branchId: hrService.employee(scope, value.employeeId).branchId, employeeId: value.employeeId, date: value.date, shiftId: value.shiftId || undefined, checkIn: value.checkIn, checkOut: value.checkOut, source: 'manual' });
       case 'correction': return hrService.requestCorrection(scope, actor, { attendanceId: value.attendanceId, requestedIn: value.requestedIn, requestedOut: value.requestedOut, reason: value.reason });
       case 'leave': return hrService.requestLeave(scope, actor, { employeeId: value.employeeId, typeId: value.typeId, startDate: value.startDate, endDate: value.endDate, reason: value.reason, attachment: value.attachment || undefined });
       case 'holiday': return hrService.addHoliday(scope, actor, { date: value.date, name: value.name, type: value.type as 'public' | 'company', branchId: branchFilter || undefined, active: true });
@@ -113,17 +115,141 @@ function HrPageWorkspace({ section }: { section: string }) {
     body = <><div className="mb-4 flex justify-end">{operation('payroll', 'Prepare payroll', P.HR.PAYROLL_PROCESS)}</div><Table headers={['Period', 'Branch', 'Employees', 'Gross', 'Net', 'Status', 'Actions']} rows={hrService.payrolls(scope, branchFilter || undefined).map((row) => ({ key: row.id, cells: [row.period, row.branchId, row.lines.length, formatMoney(row.lines.reduce((sum, line) => sum + line.gross, 0)), formatMoney(row.lines.reduce((sum, line) => sum + line.net, 0)), <Status value={row.status} />, row.status === 'draft' && can(P.HR.PAYROLL_PROCESS) ? <Button size="sm" onClick={() => action('Submit payroll for review', () => hrService.changePayrollStatus(scope, actor, row.id, 'review'))}>Review</Button> : row.status === 'review' && can(P.HR.PAYROLL_APPROVE) ? <Button size="sm" onClick={() => action('Approve payroll', () => hrService.changePayrollStatus(scope, actor, row.id, 'approved'))}>Approve</Button> : '—'] }))} /><Card className="mt-4"><h2 className="font-semibold">Accounting handoff</h2><p className="mt-2 text-sm">{hrService.payrollHandoffs(scope).length} approved payroll batch(es) await accounting mapping. No journals are posted automatically.</p></Card></>;
     body = <>{body}<Card className="mt-4"><h2 className="mb-3 font-semibold">Payroll input review</h2><p className="mb-3 text-sm text-slate-600">EPF and ETF use base pay plus allowances and commission. Overtime is excluded. Employee EPF (8%) reduces net pay; employer EPF (12%) and ETF (3%) are company costs.</p><Table headers={['Period', 'Employee', 'Base', 'Allowances', 'Overtime', 'Commission', 'EPF/ETF base', 'Employee EPF 8%', 'Employer EPF 12%', 'Employer ETF 3%', 'Other deductions', 'Loan recovery', 'Net']} rows={hrService.payrolls(scope, branchFilter || undefined).flatMap((batch) => batch.lines.map((line) => ({ key: `${batch.id}-${line.employeeId}`, cells: [batch.period, workerName(line.employeeId), formatMoney(line.base), formatMoney(line.allowance), formatMoney(line.overtime), formatMoney(line.commission), formatMoney(line.contributionBase), formatMoney(line.employeeEpf), formatMoney(line.employerEpf), formatMoney(line.employerEtf), formatMoney(line.deduction), formatMoney(line.loanRecovery), formatMoney(line.net)] })))} /></Card></>;
   } else if (section === 'payslips') {
-    const rows = hrService.payslips(scope, branchFilter || undefined);
-    body = <><div className="mb-4 flex justify-end">{can(P.HR.PAYSLIPS_EXPORT) && <Button variant="secondary" onClick={() => downloadCsv('payslips.csv', [{ header: 'Employee', value: (row: typeof rows[number]) => workerName(row.employeeId) }, { header: 'Period', value: (row: typeof rows[number]) => row.period }, { header: 'Gross', value: (row: typeof rows[number]) => row.gross }, { header: 'EPF/ETF base', value: (row: typeof rows[number]) => row.contributionBase }, { header: 'Employee EPF', value: (row: typeof rows[number]) => row.employeeEpf }, { header: 'Employer EPF', value: (row: typeof rows[number]) => row.employerEpf }, { header: 'Employer ETF', value: (row: typeof rows[number]) => row.employerEtf }, { header: 'Net', value: (row: typeof rows[number]) => row.net }], rows)}>Export CSV</Button>}</div><Table headers={['Employee', 'Period', 'Gross', 'EPF/ETF base', 'Employee EPF 8%', 'Employer EPF 12%', 'Employer ETF 3%', 'Other deductions', 'Loan recovery', 'Net', 'Status']} rows={rows.map((row) => ({ key: row.id, cells: [workerName(row.employeeId), row.period, formatMoney(row.gross), formatMoney(row.contributionBase), formatMoney(row.employeeEpf), formatMoney(row.employerEpf), formatMoney(row.employerEtf), formatMoney(row.deduction), formatMoney(row.loanRecovery), formatMoney(row.net), <Status value={row.status} />] }))} /><div className="mt-4 flex justify-end"><Button variant="secondary" onClick={() => window.print()}>Print</Button></div></>;
+    const rows = hrService.payslips(scope, branchFilter || undefined, departmentFilter || undefined);
+    const handleShareEmail = (slip: PayslipItem, worker?: Employee) => {
+      try {
+        const emp = worker || hrService.employees(scope).find((e) => e.id === slip.employeeId);
+        hrService.sendPayslipEmail(scope, actor, slip.id);
+        appToast.success(`Payslip for ${emp?.firstName ?? ''} ${emp?.lastName ?? ''} sent to ${emp?.email ?? 'employee email'}.`);
+        refresh();
+      } catch (err) {
+        appToast.error(err instanceof Error ? err.message : 'Failed to send payslip email.');
+      }
+    };
+    body = (
+      <>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-slate-600">
+            Generated employee payslips with full salary, allowances, deductions, statutory contributions and net salary.
+          </p>
+          <div className="flex gap-2">
+            {can(P.HR.PAYSLIPS_EXPORT) && (
+              <Button
+                variant="secondary"
+                onClick={() =>
+                  downloadCsv(
+                    'payslips.csv',
+                    [
+                      { header: 'Employee', value: (row: typeof rows[number]) => workerName(row.employeeId) },
+                      { header: 'Code', value: (row: typeof rows[number]) => hrService.employees(scope).find((e) => e.id === row.employeeId)?.employeeCode ?? '' },
+                      { header: 'Period', value: (row: typeof rows[number]) => row.period },
+                      { header: 'Base Salary', value: (row: typeof rows[number]) => row.base },
+                      { header: 'Allowances', value: (row: typeof rows[number]) => row.allowance },
+                      { header: 'Gross', value: (row: typeof rows[number]) => row.gross },
+                      { header: 'EPF/ETF base', value: (row: typeof rows[number]) => row.contributionBase },
+                      { header: 'Employee EPF 8%', value: (row: typeof rows[number]) => row.employeeEpf },
+                      { header: 'Employer EPF 12%', value: (row: typeof rows[number]) => row.employerEpf },
+                      { header: 'Employer ETF 3%', value: (row: typeof rows[number]) => row.employerEtf },
+                      { header: 'Other deductions', value: (row: typeof rows[number]) => row.deduction },
+                      { header: 'Loan recovery', value: (row: typeof rows[number]) => row.loanRecovery },
+                      { header: 'Net', value: (row: typeof rows[number]) => row.net },
+                    ],
+                    rows
+                  )
+                }
+              >
+                Export CSV
+              </Button>
+            )}
+          </div>
+        </div>
+        <Table
+          headers={[
+            'Employee',
+            'Code',
+            'Period',
+            'Base Salary',
+            'Allowances',
+            'Gross',
+            'Employee EPF 8%',
+            'Deductions',
+            'Net Salary',
+            'Status',
+            'Actions',
+          ]}
+          rows={rows.map((row) => {
+            const worker = hrService.employees(scope).find((e) => e.id === row.employeeId);
+            return {
+              key: row.id,
+              cells: [
+                <div>
+                  <div className="font-medium text-slate-900">{workerName(row.employeeId)}</div>
+                  <div className="text-xs text-slate-500">{worker?.email || '—'}</div>
+                </div>,
+                worker?.employeeCode ?? '—',
+                row.period,
+                formatMoney(row.base),
+                formatMoney(row.allowance),
+                <span className="font-medium text-slate-900">{formatMoney(row.gross)}</span>,
+                formatMoney(row.employeeEpf),
+                formatMoney(row.deduction + row.loanRecovery),
+                <span className="font-bold text-blue-700">{formatMoney(row.net)}</span>,
+                <Status value={row.status} />,
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setViewingPayslip(row)}
+                  >
+                    View
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() =>
+                      printPayslipHtml({
+                        payslip: row,
+                        employee: worker,
+                        companyName: 'Acme Corporation',
+                        formatMoney,
+                      })
+                    }
+                  >
+                    Print
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleShareEmail(row, worker)}
+                    title={`Send payslip to ${worker?.email || 'employee'}`}
+                  >
+                    Share
+                  </Button>
+                </div>,
+              ],
+            };
+          })}
+        />
+        <PayslipDocumentModal
+          isOpen={Boolean(viewingPayslip)}
+          onClose={() => setViewingPayslip(null)}
+          payslip={viewingPayslip}
+          employee={viewingPayslip ? hrService.employees(scope).find((e) => e.id === viewingPayslip.employeeId) : undefined}
+          companyName="Acme Corporation"
+          formatMoney={formatMoney}
+          onShareEmail={(slip, worker) => handleShareEmail(slip, worker)}
+        />
+      </>
+    );
   } else if (section === 'audit') {
     body = <Table headers={['Time', 'Employee', 'Action', 'Reference', 'Actor', 'Note']} rows={hrService.audit(scope).map((row) => ({ key: row.id, cells: [new Date(row.at).toLocaleString(), row.employeeId ? workerName(row.employeeId) : '—', row.action, row.reference, row.actor, row.note || '—'] }))} />;
   } else {
     body = <Card>HR view unavailable.</Card>;
   }
 
-  return <PageContainer><PageHeader title={labels[section] ?? 'HR Core'} description="Company HR records in permitted branches. Payroll uses Sri Lankan EPF and ETF rates." /><div className="mb-5 grid gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2"><label className="text-xs font-medium text-slate-600">Branch<Select className="mt-1" value={branchFilter} onChange={(event) => setBranchFilter(event.target.value)} options={[{ value: '', label: 'All permitted branches' }, ...branches.map((row) => ({ value: row.id, label: row.name }))]} /></label><label className="text-xs font-medium text-slate-600">Department<Select className="mt-1" value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)} options={[{ value: '', label: 'All departments' }, ...departments.map((row) => ({ value: row.id, label: row.name }))]} /></label></div>{query.isLoading || organization.isLoading ? <Card role="status">Loading HR data…</Card> : query.isError || organization.isError ? <ErrorState title="Unable to load HR data" message="Try again." onRetry={() => { void query.refetch(); void organization.refetch(); }} /> : body}{section === 'payroll' && <><PayrollCommissionPanel scope={scope} actor={actor} branchId={currentBranch} canPrepare={can(P.HR.PAYROLL_PROCESS)} canApprove={can(P.HR.PAYROLL_APPROVE)} money={formatMoney} /><PayrollAccountingPanel scope={scope} branchId={branchFilter || undefined} money={formatMoney} /></>}<Modal isOpen={Boolean(modal)} title={modal === 'employee' ? editing ? 'Edit employee' : 'Add employee' : `New ${modal ?? 'HR record'}`} onClose={() => setModal(null)} maxWidth="820px">{modal === 'employee' && <EmployeeForm initial={editing} branches={branches} departments={departments} designations={designations} employees={hrService.employees(scope)} onSave={saveEmployee} onCancel={() => setModal(null)} />}{modal && modal !== 'employee' && <OperationForm kind={modal} employees={modal === 'roster' ? workers.filter((row) => row.branchId === currentBranch) : workers} shifts={hrService.shifts(scope, currentBranch)} leaveTypes={hrService.leaveTypes(scope.tenantId)} attendance={hrService.attendance(scope, currentBranch)} onSave={(value) => saveOperation(modal, value)} onCancel={() => setModal(null)} />}</Modal><ConfirmDialog isOpen={Boolean(confirm)} title={confirm?.title ?? ''} message={`${confirm?.title ?? 'Confirm this action'}?`} onCancel={() => setConfirm(null)} onConfirm={() => { if (confirm) void run(confirm.action, 'HR status updated.'); }} /></PageContainer>;
+  return <PageContainer><PageHeader title={labels[section] ?? 'HR Core'} description="Company HR records in permitted branches. Payroll uses Sri Lankan EPF and ETF rates." /><div className="mb-5 grid gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2"><label className="text-xs font-medium text-slate-600">Branch<Select className="mt-1" value={branchFilter} onChange={(event) => setBranchFilter(event.target.value)} options={[{ value: '', label: 'All permitted branches' }, ...branches.map((row) => ({ value: row.id, label: row.name }))]} /></label><label className="text-xs font-medium text-slate-600">Department<Select className="mt-1" value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)} options={[{ value: '', label: 'All departments' }, ...departments.map((row) => ({ value: row.id, label: row.name }))]} /></label></div>{query.isLoading || organization.isLoading ? <Card role="status">Loading HR data…</Card> : query.isError || organization.isError ? <ErrorState title="Unable to load HR data" message="Try again." onRetry={() => { void query.refetch(); void organization.refetch(); }} /> : body}{section === 'payroll' && <><PayrollCommissionPanel scope={scope} actor={actor} branchId={currentBranch} canPrepare={can(P.HR.PAYROLL_PROCESS)} canApprove={can(P.HR.PAYROLL_APPROVE)} money={formatMoney} /><PayrollAccountingPanel scope={scope} branchId={branchFilter || undefined} money={formatMoney} /></>}<Modal isOpen={Boolean(modal)} title={modal === 'employee' ? editing ? 'Edit employee' : 'Add employee' : `New ${modal ?? 'HR record'}`} onClose={() => setModal(null)} maxWidth="820px">{modal === 'employee' && <EmployeeForm initial={editing} branches={branches} departments={departments} designations={designations} employees={hrService.employees(scope)} onSave={saveEmployee} onCancel={() => setModal(null)} />}{modal && modal !== 'employee' && <OperationForm kind={modal} employees={modal === 'roster' ? workers.filter((row) => row.branchId === currentBranch) : workers} shifts={hrService.shifts(scope, currentBranch)} rosters={hrService.rosters(scope, currentBranch)} leaveTypes={hrService.leaveTypes(scope.tenantId)} attendance={hrService.attendance(scope, currentBranch)} onSave={(value) => saveOperation(modal, value)} onCancel={() => setModal(null)} />}</Modal><ConfirmDialog isOpen={Boolean(confirm)} title={confirm?.title ?? ''} message={`${confirm?.title ?? 'Confirm this action'}?`} onCancel={() => setConfirm(null)} onConfirm={() => { if (confirm) void run(confirm.action, 'HR status updated.'); }} /></PageContainer>;
 }
 
 export function HrPage(props: { section: string }) {
-  return props.section === 'dashboard' ? <ModuleDashboardPage module="hr" /> : <HrPageWorkspace {...props} />;
+  return props.section === 'dashboard' ? <ModuleDashboardPage module="hr" showWorkflow={false} /> : <HrPageWorkspace {...props} />;
 }

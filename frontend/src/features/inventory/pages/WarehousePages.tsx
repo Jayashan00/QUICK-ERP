@@ -300,10 +300,14 @@ function WarehouseForm({ initial }: { initial?: WarehouseListItem }) {
           </FormField>
           <FormField
             label="Warehouse Code"
-            required
             error={errors.code?.message}
           >
-            <TextInput {...register("code")} />
+            <TextInput
+              {...register("code")}
+              placeholder="Generated automatically"
+              readOnly
+              disabled={!initial}
+            />
           </FormField>
           <FormField label="Branch" required error={errors.branchId?.message}>
             <Select

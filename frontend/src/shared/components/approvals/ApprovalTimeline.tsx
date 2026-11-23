@@ -2,12 +2,13 @@ import { CheckCircle2, Clock3, XCircle } from 'lucide-react';
 import { EmptyState } from '@/shared/components/feedback/EmptyState';
 import type { ApprovalHistoryEntry } from '@/shared/types/approval';
 
-export function ApprovalTimeline({ history }: { history: ApprovalHistoryEntry[] }) {
-  if (!history.length) return <EmptyState title="No approval history" message="Approval decisions will appear here." />;
+export function ApprovalTimeline({ history }: { history?: ApprovalHistoryEntry[] }) {
+  const entries = Array.isArray(history) ? history : [];
+  if (!entries.length) return <EmptyState title="No approval history" message="Approval decisions will appear here." />;
 
   return (
     <ol className="space-y-4">
-      {[...history].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).map((entry) => {
+      {[...entries].sort((a, b) => String(b.timestamp ?? '').localeCompare(String(a.timestamp ?? ''))).map((entry) => {
         const Icon = entry.status === 'approved' ? CheckCircle2 : entry.status === 'rejected' ? XCircle : Clock3;
         return (
           <li key={entry.id} className="flex gap-3">

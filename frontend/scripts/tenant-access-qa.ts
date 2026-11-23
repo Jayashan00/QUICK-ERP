@@ -84,6 +84,78 @@ assert.ok(configured.enabledModules.includes('settings'));
 assert.equal((await platformService.getTenant('tenant-002'))?.name, 'Beta Logistics');
 assert.equal(await platformService.getTenant('other-tenant'), null);
 
+// Duplicate company name and subdomain validation during creation & update
+await assert.rejects(
+  platformService.createTenant({
+    name: '  Acme Corporation  ',
+    subdomain: 'unique-acme-subdomain',
+    ownerEmail: 'new-owner@example.com',
+    contactName: 'Jane Doe',
+    country: 'LK',
+    adminName: 'Jane Doe',
+    adminEmail: 'new-owner@example.com',
+  }),
+  /A company with this name already exists/,
+);
+await assert.rejects(
+  platformService.createTenant({
+    name: 'acme corporation',
+    subdomain: 'unique-acme-subdomain-2',
+    ownerEmail: 'new-owner@example.com',
+    contactName: 'Jane Doe',
+    country: 'LK',
+    adminName: 'Jane Doe',
+    adminEmail: 'new-owner@example.com',
+  }),
+  /A company with this name already exists/,
+);
+await assert.rejects(
+  platformService.createTenant({
+    name: 'Totally Unique Company',
+    subdomain: 'acme',
+    ownerEmail: 'new-owner@example.com',
+    contactName: 'Jane Doe',
+    country: 'LK',
+    adminName: 'Jane Doe',
+    adminEmail: 'new-owner@example.com',
+  }),
+  /Subdomain is already in use/,
+);
+await assert.rejects(
+  platformService.updateTenant('tenant-002', {
+    name: 'Acme Corporation',
+    subdomain: 'beta-logistics',
+    ownerEmail: 'admin@beta.test',
+    contactName: 'Maya Perera',
+    country: 'LK',
+    adminName: 'Maya Perera',
+    adminEmail: 'admin@beta.test',
+  }),
+  /A company with this name already exists/,
+);
+
+// Company deletion lifecycle: must be suspended before deletion
+const tempTenant = await platformService.createTenant({
+  name: 'Deletable Test Corp',
+  subdomain: 'deletable-test',
+  ownerEmail: 'delete-me@corp.test',
+  contactName: 'Deleter',
+  country: 'LK',
+  adminName: 'Deleter',
+  adminEmail: 'delete-me@corp.test',
+});
+// Cannot delete while in pending or active status
+await assert.rejects(
+  platformService.deleteTenant(tempTenant.id),
+  /A company must be suspended before it can be deleted/,
+);
+// Suspend the company first
+await platformService.setTenantStatus(tempTenant.id, 'suspended');
+// Now deleting the suspended company must succeed
+const deleteResult = await platformService.deleteTenant(tempTenant.id);
+assert.equal(deleteResult.success, true);
+assert.equal(await platformService.getTenant(tempTenant.id), null);
+
 const users = await userService.getUsers('tenant-001', { pageSize: 100 });
 tenantEntitlementService.set('tenant-001', { ...tenantEntitlementService.get('tenant-001')!, limits: { maxUsers: users.total, maxBranches: 99 }, usage: { currentUsers: users.total, currentBranches: 2 } });
 const templateUser = users.data[0];

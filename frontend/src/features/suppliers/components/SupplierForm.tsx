@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { Controller } from 'react-hook-form';
+import { useAppForm } from '@/shared/hooks';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Save, X } from 'lucide-react';
 
@@ -96,7 +97,7 @@ export function SupplierForm({
     watch,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<SupplierFormValues>({
+  } = useAppForm<SupplierFormValues>({
     resolver: zodResolver(supplierSchema),
     defaultValues: {
       ...defaultFormValues,

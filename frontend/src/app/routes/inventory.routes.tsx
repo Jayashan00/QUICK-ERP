@@ -2,7 +2,7 @@ import { Navigate, type RouteObject } from "react-router-dom";
 import { TENANT_PERMISSIONS as PERMISSIONS } from "@/core/permissions";
 import { RequirePermission } from "@/core/permissions/components";
 import { lazyPage } from "./lazyPage";
-const inventoryReportPage = (report: 'aging' | 'expiry' | 'dead-stock' | 'wastage' | 'in-transit' | 'margins') => lazyPage(() => import('@/features/inventory/pages/InventoryReportsPage').then(({ InventoryReportsPage }) => ({ default: () => <InventoryReportsPage report={report} /> })));
+const inventoryReportPage = (report: 'aging' | 'expiry' | 'wastage' | 'margins') => lazyPage(() => import('@/features/inventory/pages/InventoryReportsPage').then(({ InventoryReportsPage }) => ({ default: () => <InventoryReportsPage report={report} /> })));
 
 const ProductListPage = lazyPage(() =>
   import("@/features/products").then(({ ProductListPage }) => ({
@@ -134,15 +134,12 @@ const ReorderWorkflowPage = lazyPage(() =>
 const InventorySettingsPage = lazyPage(() =>
   import("@/features/inventory").then(({ InventorySettingsPage }) => ({ default: InventorySettingsPage })),
 );
-const MobileStockCountPage = lazyPage(() =>
-  import("@/features/inventory").then(({ MobileStockCountPage }) => ({ default: MobileStockCountPage })),
-);
 const StockVelocityPage = lazyPage(() =>
   import("@/features/inventory").then(({ StockVelocityPage }) => ({ default: StockVelocityPage })),
 );
 
 export const inventoryRoutes: RouteObject[] = [
-  ...(['aging', 'expiry', 'dead-stock', 'wastage', 'in-transit', 'margins'] as const).map((report) => { const Page = inventoryReportPage(report); const permission = report === 'expiry' ? PERMISSIONS.INVENTORY.VIEW_EXPIRY : report === 'wastage' ? PERMISSIONS.INVENTORY.STOCK_ADJUST : report === 'in-transit' ? PERMISSIONS.INVENTORY.TRANSFERS_VIEW : PERMISSIONS.INVENTORY.STOCK_VIEW; return { path: `inventory/reports/${report}`, element: <RequirePermission allOf={[PERMISSIONS.INVENTORY.VIEW, permission]}><Page /></RequirePermission> }; }),
+  ...(['aging', 'expiry', 'wastage', 'margins'] as const).map((report) => { const Page = inventoryReportPage(report); const permission = report === 'expiry' ? PERMISSIONS.INVENTORY.VIEW_EXPIRY : report === 'wastage' ? PERMISSIONS.INVENTORY.STOCK_ADJUST : PERMISSIONS.INVENTORY.STOCK_VIEW; return { path: `inventory/reports/${report}`, element: <RequirePermission allOf={[PERMISSIONS.INVENTORY.VIEW, permission]}><Page /></RequirePermission> }; }),
   // Products & Services
   {
     path: "products",
@@ -476,10 +473,6 @@ export const inventoryRoutes: RouteObject[] = [
   {
     path: "inventory/counts",
     element: <RequirePermission allOf={[PERMISSIONS.INVENTORY.VIEW, PERMISSIONS.INVENTORY.STOCK_COUNT]}><StockCountsPage /></RequirePermission>,
-  },
-  {
-    path: "inventory/counts/mobile",
-    element: <RequirePermission allOf={[PERMISSIONS.INVENTORY.VIEW, PERMISSIONS.INVENTORY.STOCK_COUNT]}><MobileStockCountPage /></RequirePermission>,
   },
   {
     path: "inventory/returns-wastage",

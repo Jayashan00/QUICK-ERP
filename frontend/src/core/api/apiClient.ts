@@ -2,9 +2,14 @@ import { apiConfig } from './apiConfig';
 import { ApiError } from './apiError';
 import type { ApiRequestConfig, ApiResponse } from './apiTypes';
 import { APP_CONSTANTS } from '@/shared/constants/appConstants';
+import { triggerMaintenance } from '@/core/maintenance/maintenanceState';
 
 function getAuthToken(): string | null {
-  return localStorage.getItem(APP_CONSTANTS.STORAGE_KEYS.AUTH_TOKEN);
+  try {
+    return localStorage.getItem(APP_CONSTANTS.STORAGE_KEYS.AUTH_TOKEN) ?? sessionStorage.getItem(APP_CONSTANTS.STORAGE_KEYS.AUTH_TOKEN);
+  } catch {
+    return null;
+  }
 }
 
 function buildUrl(path: string, params?: Record<string, string | number | boolean>): string {
@@ -65,12 +70,24 @@ async function request<T>(
     const errors = isRecord(detail.errors)
       ? Object.fromEntries(Object.entries(detail.errors).filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].every(value => typeof value === 'string')))
       : undefined;
-    throw new ApiError({
+    const error = new ApiError({
       status: response.status,
       message: typeof detail.message === 'string' && detail.message ? detail.message : response.statusText || 'The request failed.',
       errors,
       code: typeof detail.code === 'string' ? detail.code : undefined,
+      expectedStartTime: typeof detail.expectedStartTime === 'string' ? detail.expectedStartTime : typeof detail.startAt === 'string' ? detail.startAt : undefined,
+      expectedEndTime: typeof detail.expectedEndTime === 'string' ? detail.expectedEndTime : typeof detail.endAt === 'string' ? detail.endAt : undefined,
+      startAt: typeof detail.startAt === 'string' ? detail.startAt : typeof detail.expectedStartTime === 'string' ? detail.expectedStartTime : undefined,
+      endAt: typeof detail.endAt === 'string' ? detail.endAt : typeof detail.expectedEndTime === 'string' ? detail.expectedEndTime : undefined,
     });
+    if (error.isMaintenance) {
+      triggerMaintenance({
+        message: error.message,
+        startAt: error.startAt,
+        endAt: error.endAt,
+      });
+    }
+    throw error;
   }
 
   // Handle 204 No Content

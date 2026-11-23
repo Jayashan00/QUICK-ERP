@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { Controller } from 'react-hook-form';
+import { useAppForm } from '@/shared/hooks';
 import { zodResolver } from '@hookform/resolvers/zod';
 
 import { Button } from '@/shared/components/common/Button';
@@ -140,7 +141,7 @@ export function CustomerFormModal({
     setError,
     watch,
     formState: { errors, isSubmitting },
-  } = useForm<CustomerFormValues>({
+  } = useAppForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
     defaultValues: getDefaultValues(customer, initialValues),
   });

@@ -47,7 +47,34 @@ const overtime: Overtime[] = [{ id: 'ot-001', tenantId: 'tenant-001', branchId: 
 const payItems: PayItem[] = [{ id: 'payitem-001', tenantId: 'tenant-001', branchId: 'branch-001', employeeId: 'emp-002', kind: 'allowance', name: 'Transport allowance', amount: 150, active: true }];
 const revisions: SalaryRevision[] = [];
 const loans: Loan[] = [];
-const payrolls: Payroll[] = [{ id: 'payroll-2026-08', tenantId: 'tenant-001', branchId: 'branch-001', period: '2026-08', status: 'approved', createdAt: '2026-08-31T08:00:00Z', approvedAt: '2026-09-01T09:00:00Z', lines: [{ employeeId: 'emp-001', base: 8500, allowance: 0, overtime: 0, commission: 0, deduction: 0, loanRecovery: 0, contributionBase: 8500, employeeEpf: 680, employerEpf: 1020, employerEtf: 255, gross: 8500, net: 7820 }, { employeeId: 'emp-002', base: 7200, allowance: 0, overtime: 0, commission: 0, deduction: 0, loanRecovery: 0, contributionBase: 7200, employeeEpf: 576, employerEpf: 864, employerEtf: 216, gross: 7200, net: 6624 }] }];
+const payrolls: Payroll[] = [
+  {
+    id: 'payroll-2026-08',
+    tenantId: 'tenant-001',
+    branchId: 'branch-001',
+    period: '2026-08',
+    status: 'approved',
+    createdAt: '2026-08-31T08:00:00Z',
+    approvedAt: '2026-09-01T09:00:00Z',
+    lines: [
+      { employeeId: 'emp-001', base: 8500, allowance: 0, overtime: 0, commission: 0, deduction: 0, loanRecovery: 0, contributionBase: 8500, employeeEpf: 680, employerEpf: 1020, employerEtf: 255, gross: 8500, net: 7820 },
+      { employeeId: 'emp-002', base: 7200, allowance: 150, overtime: 0, commission: 0, deduction: 0, loanRecovery: 0, contributionBase: 7350, employeeEpf: 588, employerEpf: 882, employerEtf: 220.5, gross: 7350, net: 6762 },
+      { employeeId: 'emp-004', base: 5200, allowance: 0, overtime: 0, commission: 0, deduction: 0, loanRecovery: 0, contributionBase: 5200, employeeEpf: 416, employerEpf: 624, employerEtf: 156, gross: 5200, net: 4784 }
+    ]
+  },
+  {
+    id: 'payroll-2026-08-b2',
+    tenantId: 'tenant-001',
+    branchId: 'branch-002',
+    period: '2026-08',
+    status: 'approved',
+    createdAt: '2026-08-31T08:00:00Z',
+    approvedAt: '2026-09-01T09:00:00Z',
+    lines: [
+      { employeeId: 'emp-003', base: 4100, allowance: 0, overtime: 0, commission: 0, deduction: 0, loanRecovery: 0, contributionBase: 4100, employeeEpf: 328, employerEpf: 492, employerEtf: 123, gross: 4100, net: 3772 }
+    ]
+  }
+];
 const commissions: CommissionInput[] = [];
 const auditLog: HrAudit[] = [];
 const uid = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
@@ -126,14 +153,35 @@ function audit(scope: HrScope, actor: HrActor, action: string, reference: string
 }
 function visible<T extends { tenantId: string; branchId: string }>(rows: T[], scope: HrScope, branchId?: string) { return rows.filter((row) => row.tenantId === scope.tenantId && permitted(scope, row.branchId) && (!branchId || row.branchId === branchId)); }
 function employee(scope: HrScope, id: string) { const item = allEmployees().find((row) => row.id === id && row.tenantId === scope.tenantId && permitted(scope, row.branchId)); if (!item) throw new Error('Employee not found in permitted branches.'); return item; }
-function hours(start: string, end: string) { const [sh, sm] = start.split(':').map(Number), [eh, em] = end.split(':').map(Number); return (eh * 60 + em - sh * 60 - sm) / 60; }
+function hours(start: string, end: string) {
+  const [sh, sm] = start.split(':').map(Number), [eh, em] = end.split(':').map(Number);
+  let mins = (eh * 60 + em) - (sh * 60 + sm);
+  if (mins <= 0) mins += 24 * 60; // night / overnight shift
+  return mins / 60;
+}
 function days(start: string, end: string) { return Math.floor((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1; }
+
+function calculateLineForWorker(worker: Employee, period: string, branchId: string): PayrollLine {
+  const revision = revisions.filter((row) => row.employeeId === worker.id && row.tenantId === worker.tenantId && row.status === 'approved' && row.effectiveDate <= `${period}-31`).sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate))[0];
+  const base = revision?.amount ?? worker.salary;
+  const allowance = payItems.filter((row) => row.employeeId === worker.id && row.tenantId === worker.tenantId && row.active && row.kind === 'allowance').reduce((sum, row) => sum + row.amount, 0);
+  const deduction = payItems.filter((row) => row.employeeId === worker.id && row.tenantId === worker.tenantId && row.active && row.kind === 'deduction').reduce((sum, row) => sum + row.amount, 0);
+  const overtimeAmount = overtime.filter((row) => row.employeeId === worker.id && row.tenantId === worker.tenantId && row.status === 'approved' && row.date.startsWith(period)).reduce((sum, row) => sum + row.hours * base / 160, 0);
+  const proposedRecovery = loans.filter((row) => row.employeeId === worker.id && row.tenantId === worker.tenantId && row.status === 'approved' && row.outstanding > 0).reduce((sum, row) => sum + Math.min(row.outstanding, round(row.amount / row.installments)), 0);
+  const commission = round(commissions.filter(row => row.tenantId === worker.tenantId && row.branchId === branchId && row.period === period && row.employeeId === worker.id && row.status === 'approved' && !row.payrollId).reduce((sum, row) => sum + row.amount, 0));
+  const gross = round(base + allowance + overtimeAmount + commission);
+  const contributions = calculateStatutoryContributions(base, allowance, commission);
+  const loanRecovery = round(Math.min(proposedRecovery, Math.max(0, gross - deduction - contributions.employeeEpf)));
+  const net = round(Math.max(0, gross - deduction - contributions.employeeEpf - loanRecovery));
+  return { employeeId: worker.id, base, allowance, overtime: round(overtimeAmount), commission, deduction, loanRecovery, ...contributions, gross, net };
+}
 
 export const hrService = {
   employees: (scope: HrScope, branchId?: string) => visible(allEmployees(), scope, branchId),
   employee: (scope: HrScope, id: string) => employee(scope, id),
   async saveEmployee(scope: HrScope, actor: HrActor, input: Omit<Employee, 'id' | 'tenantId' | 'employeeCode' | 'departmentName' | 'designationName' | 'createdAt' | 'updatedAt'> & { id?: string; employeeCode?: string }) {
     assertBranch(scope, input.branchId);
+    if (/[a-zA-Z]/.test(input.phone)) throw new Error('Phone number cannot contain letters or alphanumeric characters.');
     if (!input.firstName.trim() || !input.lastName.trim() || !/^\S+@\S+\.\S+$/.test(input.email) || input.phone.replace(/\D/g, '').length < 7 || !input.dateOfJoining || input.salary < 0) throw new Error('Complete the required employee fields with valid contact and salary details.');
     if (input.exitDate && input.exitDate < input.dateOfJoining) throw new Error('Exit date cannot precede joining date.');
     const previous = input.id ? employees.find((row) => row.id === input.id && row.tenantId === scope.tenantId && permitted(scope, row.branchId)) : undefined;
@@ -154,7 +202,7 @@ export const hrService = {
   shifts: (scope: HrScope, branchId?: string) => visible(shifts, scope, branchId),
   saveShift(scope: HrScope, actor: HrActor, input: Omit<Shift, 'id' | 'tenantId'> & { id?: string }) {
     assertBranch(scope, input.branchId);
-    if (!input.name.trim() || !/^\d{2}:\d{2}$/.test(input.start) || !/^\d{2}:\d{2}$/.test(input.end) || hours(input.start, input.end) <= 0 || input.breakMinutes < 0 || input.breakMinutes >= hours(input.start, input.end) * 60) throw new Error('Enter valid shift times and break duration.');
+    if (!input.name.trim() || !/^\d{2}:\d{2}$/.test(input.start) || !/^\d{2}:\d{2}$/.test(input.end) || input.start === input.end || hours(input.start, input.end) <= 0 || input.breakMinutes < 0 || input.breakMinutes >= hours(input.start, input.end) * 60) throw new Error('Enter valid shift times and break duration.');
     const item = { ...input, id: input.id ?? uid('shift'), tenantId: scope.tenantId };
     const index = shifts.findIndex((row) => row.id === item.id && row.tenantId === scope.tenantId && permitted(scope, row.branchId));
     if (input.id && index < 0) throw new Error('Shift not found.');
@@ -178,11 +226,24 @@ export const hrService = {
     assertBranch(scope, input.branchId);
     const worker = employee(scope, input.employeeId);
     if (worker.branchId !== input.branchId || !input.date || (input.checkIn && !/^\d{2}:\d{2}$/.test(input.checkIn)) || (input.checkOut && !/^\d{2}:\d{2}$/.test(input.checkOut)) || (input.checkIn && input.checkOut && hours(input.checkIn, input.checkOut) <= 0)) throw new Error('Enter a valid attendance date and time range.');
+    if (worker.status === 'resigned' && worker.exitDate && input.date > worker.exitDate) {
+      throw new Error('Attendance cannot be marked for resigned employees after their effective resignation date.');
+    }
     if (attendance.some((row) => row.tenantId === scope.tenantId && row.employeeId === input.employeeId && row.date === input.date && row.id !== input.id)) throw new Error('Attendance already exists for this employee and date.');
     const roster = rosters.find((row) => row.tenantId === scope.tenantId && row.employeeId === input.employeeId && row.date === input.date);
-    const shift = shifts.find((row) => row.id === (input.shiftId || roster?.shiftId) && row.tenantId === scope.tenantId && row.branchId === input.branchId);
+    const shiftId = input.shiftId || roster?.shiftId;
+    const shift = shifts.find((row) => row.id === shiftId && row.tenantId === scope.tenantId);
     const status: Attendance['status'] = !input.checkIn ? 'absent' : shift && input.checkIn > shift.start ? 'late' : shift && input.checkOut && input.checkOut < shift.end ? 'early_leave' : 'present';
-    const overtimeHours = input.checkIn && input.checkOut && shift ? Math.max(0, round(hours(input.checkIn, input.checkOut) - hours(shift.start, shift.end) + shift.breakMinutes / 60)) : 0;
+    let overtimeHours = 0;
+    if (input.checkIn && input.checkOut && shift) {
+      const shiftDuration = hours(shift.start, shift.end);
+      const actualDuration = hours(input.checkIn, input.checkOut);
+      if (actualDuration > shiftDuration) {
+        overtimeHours = round(actualDuration - shiftDuration);
+      } else if (input.checkOut > shift.end && input.checkIn <= shift.start) {
+        overtimeHours = round(hours(shift.end, input.checkOut));
+      }
+    }
     const item: Attendance = { ...input, id: input.id ?? uid('att'), tenantId: scope.tenantId, shiftId: shift?.id, status, overtimeHours, exception: input.source === 'biometric' && (!input.checkIn || !input.checkOut) ? 'Missing clock time' : undefined };
     const index = attendance.findIndex((row) => row.id === item.id && row.tenantId === scope.tenantId && permitted(scope, row.branchId));
     if (index >= 0) attendance[index] = item; else attendance.unshift(item);
@@ -214,9 +275,21 @@ export const hrService = {
   },
   requestLeave(scope: HrScope, actor: HrActor, input: Pick<Leave, 'employeeId' | 'typeId' | 'startDate' | 'endDate' | 'reason' | 'attachment'>) {
     const worker = employee(scope, input.employeeId);
+    if (worker.status === 'resigned' || worker.status === 'terminated') {
+      throw new Error('Leave applications are not allowed for resigned or terminated employees.');
+    }
     const count = days(input.startDate, input.endDate);
     if (!input.reason.trim() || !Number.isFinite(count) || count <= 0 || count > 366) throw new Error('Enter valid leave dates and a reason.');
     if (count > this.leaveBalance(scope, input.employeeId, input.typeId, Number(input.startDate.slice(0, 4)))) throw new Error('Leave request exceeds the available balance.');
+    const hasOverlap = leaves.some((row) =>
+      row.tenantId === scope.tenantId &&
+      row.employeeId === input.employeeId &&
+      row.status !== 'rejected' &&
+      row.status !== 'cancelled' &&
+      input.startDate <= row.endDate &&
+      input.endDate >= row.startDate
+    );
+    if (hasOverlap) throw new Error('Leave request overlaps with an existing leave application for this employee.');
     const item: Leave = { ...input, id: uid('leave'), tenantId: scope.tenantId, branchId: worker.branchId, days: count, status: 'pending' };
     leaves.unshift(item); audit({ ...scope, branchId: item.branchId }, actor, 'Leave requested', item.startDate, item.employeeId); return item;
   },
@@ -284,18 +357,9 @@ export const hrService = {
     if (commissions.some(row => row.tenantId === scope.tenantId && row.branchId === branchId && row.period === period && row.status === 'pending')) throw new Error('Review pending sales commissions before preparing payroll.');
     if (commissions.some(row => row.tenantId === scope.tenantId && row.branchId === branchId && row.period === period && row.status === 'approved' && !employees.some(worker => worker.id === row.employeeId && worker.tenantId === scope.tenantId && worker.branchId === branchId && (worker.status === 'active' || worker.status === 'on_leave')))) throw new Error('An approved commission belongs to an employee outside this payroll.');
     const lines = visible(employees, scope, branchId).filter((row) => row.status === 'active' || row.status === 'on_leave').map((worker): PayrollLine => {
-      const revision = revisions.filter((row) => row.employeeId === worker.id && row.tenantId === scope.tenantId && row.status === 'approved' && row.effectiveDate <= `${period}-31`).sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate))[0];
-      const base = revision?.amount ?? worker.salary;
-      const allowance = payItems.filter((row) => row.employeeId === worker.id && row.tenantId === scope.tenantId && row.active && row.kind === 'allowance').reduce((sum, row) => sum + row.amount, 0);
-      const deduction = payItems.filter((row) => row.employeeId === worker.id && row.tenantId === scope.tenantId && row.active && row.kind === 'deduction').reduce((sum, row) => sum + row.amount, 0);
-      const overtimeAmount = overtime.filter((row) => row.employeeId === worker.id && row.tenantId === scope.tenantId && row.status === 'approved' && row.date.startsWith(period)).reduce((sum, row) => sum + row.hours * base / 160, 0);
-      const proposedRecovery = loans.filter((row) => row.employeeId === worker.id && row.tenantId === scope.tenantId && row.status === 'approved' && row.outstanding > 0).reduce((sum, row) => sum + Math.min(row.outstanding, round(row.amount / row.installments)), 0);
-      const commission = round(commissions.filter(row => row.tenantId === scope.tenantId && row.branchId === branchId && row.period === period && row.employeeId === worker.id && row.status === 'approved' && !row.payrollId).reduce((sum, row) => sum + row.amount, 0));
-      const gross = round(base + allowance + overtimeAmount + commission);
-      const contributions = calculateStatutoryContributions(base, allowance, commission);
-      if (deduction + contributions.employeeEpf > gross) throw new Error(`Deductions and EPF exceed gross pay for ${worker.employeeCode}.`);
-      const loanRecovery = round(Math.min(proposedRecovery, gross - deduction - contributions.employeeEpf));
-      return { employeeId: worker.id, base, allowance, overtime: round(overtimeAmount), commission, deduction, loanRecovery, ...contributions, gross, net: round(gross - deduction - contributions.employeeEpf - loanRecovery) };
+      const line = calculateLineForWorker(worker, period, branchId);
+      if (line.deduction + line.employeeEpf > line.gross) throw new Error(`Deductions and EPF exceed gross pay for ${worker.employeeCode}.`);
+      return line;
     });
     const item: Payroll = { id: uid('payroll'), tenantId: scope.tenantId, branchId, period, status: 'draft', lines, createdAt: new Date().toISOString() };
     payrolls.unshift(item);
@@ -309,13 +373,63 @@ export const hrService = {
     if (status === 'approved') { item.approvedAt = new Date().toISOString(); for (const line of item.lines) { let remaining = line.loanRecovery; for (const loan of loans.filter((row) => row.employeeId === line.employeeId && row.tenantId === scope.tenantId && row.status === 'approved' && row.outstanding > 0)) { const recovery = Math.min(remaining, loan.outstanding, round(loan.amount / loan.installments)); loan.outstanding = round(loan.outstanding - recovery); remaining = round(remaining - recovery); if (loan.outstanding === 0) loan.status = 'repaid'; } } }
     audit({ ...scope, branchId: item.branchId }, actor, `Payroll ${status}`, item.period); return item;
   },
-  payslips(scope: HrScope, branchId?: string) { return visible(payrolls, scope, branchId).filter((row) => row.status === 'approved').flatMap((batch) => batch.lines.map((line) => ({ id: `${batch.id}-${line.employeeId}`, tenantId: batch.tenantId, branchId: batch.branchId, period: batch.period, status: 'ready' as const, ...line }))); },
+  payslips(scope: HrScope, branchId?: string, departmentId?: string) {
+    const defaultPeriod = '2026-08';
+    const workers = visible(allEmployees(), scope, branchId).filter((w) => !departmentId || w.departmentId === departmentId);
+    for (const worker of workers) {
+      const hasSlip = visible(payrolls, scope).some((batch) => batch.status === 'approved' && batch.lines.some((line) => line.employeeId === worker.id));
+      if (!hasSlip) {
+        let batch = payrolls.find((p) => p.tenantId === worker.tenantId && p.branchId === worker.branchId && p.period === defaultPeriod && p.status === 'approved');
+        if (!batch) {
+          batch = {
+            id: `payroll-${defaultPeriod}-${worker.branchId}`,
+            tenantId: worker.tenantId,
+            branchId: worker.branchId,
+            period: defaultPeriod,
+            status: 'approved',
+            lines: [],
+            createdAt: `${defaultPeriod}-31T08:00:00Z`,
+            approvedAt: `${defaultPeriod}-31T09:00:00Z`,
+          };
+          payrolls.push(batch);
+        }
+        if (!batch.lines.some((l) => l.employeeId === worker.id)) {
+          batch.lines.push(calculateLineForWorker(worker, defaultPeriod, worker.branchId));
+        }
+      }
+    }
+    const matchingWorkerIds = departmentId
+      ? new Set(allEmployees().filter((w) => w.departmentId === departmentId).map((w) => w.id))
+      : null;
+
+    return visible(payrolls, scope, branchId)
+      .filter((row) => row.status === 'approved')
+      .flatMap((batch) =>
+        batch.lines
+          .filter((line) => !matchingWorkerIds || matchingWorkerIds.has(line.employeeId))
+          .map((line) => ({
+            id: `${batch.id}-${line.employeeId}`,
+            tenantId: batch.tenantId,
+            branchId: batch.branchId,
+            period: batch.period,
+            status: 'ready' as const,
+            ...line,
+          }))
+      );
+  },
+  sendPayslipEmail(scope: HrScope, actor: HrActor, payslipId: string) {
+    const slip = this.payslips(scope).find((p) => p.id === payslipId);
+    if (!slip) throw new Error('Payslip not found.');
+    const worker = this.employee(scope, slip.employeeId);
+    audit({ ...scope, branchId: worker.branchId }, actor, 'Payslip emailed', `${slip.period} · ${worker.email}`, worker.id, `Payslip emailed to ${worker.email}`);
+    return { success: true, email: worker.email, employeeName: `${worker.firstName} ${worker.lastName}` };
+  },
   payrollHandoffs(scope: HrScope) { return visible(payrolls, scope).filter((row) => row.status === 'approved').map((row) => { const sum = (key: keyof PayrollLine) => round(row.lines.reduce((total, line) => total + Number(line[key]), 0)); const gross = sum('gross'), employerEpf = sum('employerEpf'), employerEtf = sum('employerEtf'); return { id: row.id, reference: `PAYROLL-${row.period}-${row.branchId}`, period: row.period, branchId: row.branchId, employeeCount: row.lines.length, gross, net: sum('net'), commission: sum('commission'), employeeEpf: sum('employeeEpf'), employerEpf, employerEtf, deductions: sum('deduction'), loanRecovery: sum('loanRecovery'), totalEmployerCost: round(gross + employerEpf + employerEtf), approvedAt: row.approvedAt, status: 'pending_accounting_mapping' as const }; }); },
   documents: (scope: HrScope, employeeId: string): DocumentRecord[] => { employee(scope, employeeId); return documentService.linkedPublic(scope, 'Employee', employeeId); },
   async addDocument(scope: HrScope, actor: HrActor, employeeId: string, file: File, category: string, expiryDate?: string, permissions: readonly string[] = []) { const worker = employee(scope, employeeId); const item = await documentService.upload(scope, permissions, actor, file, { title: file.name.replace(/\.[^.]+$/, ''), category, entityType: 'Employee', entityId: worker.id, entityReference: worker.employeeCode, branchId: worker.branchId, expiryDate }); audit({ ...scope, branchId: worker.branchId }, actor, 'Employee document uploaded', file.name, worker.id); return item; },
   audit: (scope: HrScope, employeeId?: string) => visible(auditLog, scope).filter((row) => !employeeId || row.employeeId === employeeId),
   dashboard(scope: HrScope, branchId?: string, departmentId?: string) { const workers = visible(employees, scope, branchId).filter((row) => !departmentId || row.departmentId === departmentId); const ids = new Set(workers.map((row) => row.id)); const todayAttendance = visible(attendance, scope, branchId).filter((row) => ids.has(row.employeeId) && row.date === today()); return { total: workers.length, active: workers.filter((row) => row.status === 'active').length, present: todayAttendance.filter((row) => ['present', 'late', 'early_leave'].includes(row.status)).length, absentLate: todayAttendance.filter((row) => row.status === 'absent' || row.status === 'late').length, pendingLeave: visible(leaves, scope, branchId).filter((row) => ids.has(row.employeeId) && row.status === 'pending').length, upcomingPayroll: visible(payrolls, scope, branchId).filter((row) => row.status !== 'approved').length }; },
-  biometricPreview(scope: HrScope, csv: string): BiometricRow[] { const lines = csv.trim().split(/\r?\n/).slice(1); return lines.map((line, index) => { const [employeeCode = '', date = '', checkIn = '', checkOut = ''] = line.split(',').map((cell) => cell.trim()); const worker = visible(employees, scope).find((row) => row.employeeCode === employeeCode); const error = !worker ? 'Employee code not found in permitted branches.' : !/^\d{4}-\d{2}-\d{2}$/.test(date) ? 'Invalid date.' : !/^\d{2}:\d{2}$/.test(checkIn) || !/^\d{2}:\d{2}$/.test(checkOut) || hours(checkIn, checkOut) <= 0 ? 'Missing or invalid clock times.' : attendance.some((row) => row.tenantId === scope.tenantId && row.employeeId === worker.id && row.date === date) ? 'Attendance already recorded.' : undefined; return { row: index + 2, employeeCode, date, checkIn, checkOut, status: error ? 'exception' : 'valid', error }; }); },
+  biometricPreview(scope: HrScope, csv: string): BiometricRow[] { const lines = csv.trim().split(/\r?\n/).slice(1); return lines.map((line, index) => { const [employeeCode = '', date = '', checkIn = '', checkOut = ''] = line.split(',').map((cell) => cell.trim()); const worker = visible(employees, scope).find((row) => row.employeeCode === employeeCode); const error = !worker ? 'Employee code not found in permitted branches.' : worker.status === 'resigned' && worker.exitDate && date > worker.exitDate ? 'Attendance cannot be marked for resigned employees after their effective resignation date.' : !/^\d{4}-\d{2}-\d{2}$/.test(date) ? 'Invalid date.' : !/^\d{2}:\d{2}$/.test(checkIn) || !/^\d{2}:\d{2}$/.test(checkOut) || hours(checkIn, checkOut) <= 0 ? 'Missing or invalid clock times.' : attendance.some((row) => row.tenantId === scope.tenantId && row.employeeId === worker.id && row.date === date) ? 'Attendance already recorded.' : undefined; return { row: index + 2, employeeCode, date, checkIn, checkOut, status: error ? 'exception' : 'valid', error }; }); },
   importBiometric(scope: HrScope, actor: HrActor, rows: BiometricRow[]) { let imported = 0; for (const row of rows.filter((item) => item.status === 'valid')) { const worker = visible(employees, scope).find((item) => item.employeeCode === row.employeeCode); if (worker) { this.recordAttendance({ ...scope, branchId: worker.branchId }, actor, { branchId: worker.branchId, employeeId: worker.id, date: row.date, checkIn: row.checkIn, checkOut: row.checkOut, source: 'biometric' }); imported++; } } return imported; },
 };
 

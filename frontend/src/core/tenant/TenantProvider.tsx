@@ -4,7 +4,7 @@ import type { Tenant } from '@/core/tenant/types/tenant';
 import { mockTenants } from '@/core/tenant/mocks/tenants';
 import { useAuth } from '@/core/auth/auth-context';
 import { TenantContext } from './tenant-context';
-import { TENANT_MODULES, tenantEntitlementService } from './tenantEntitlements';
+import { TENANT_MODULES, tenantEntitlementService, computeSubscriptionStatus } from './tenantEntitlements';
 
 export function TenantProvider({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -25,6 +25,13 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     return { ...tenant, entitlements };
   }, [user]);
 
+  const { subscriptionStatus, subscriptionExpiry } = useMemo(() => {
+    if (!currentTenant) return { subscriptionStatus: 'active' as const, subscriptionExpiry: undefined };
+    const status = computeSubscriptionStatus(currentTenant.entitlements.subscription);
+    const expiry = currentTenant.entitlements.subscription?.expiry;
+    return { subscriptionStatus: status, subscriptionExpiry: expiry };
+  }, [currentTenant]);
+
   const setTenant = useCallback((tenant: Tenant) => {
     if (!user || user.isSuperAdmin || tenant.id !== user.tenantId) return;
     // Tenant users stay pinned to the tenant assigned to their authenticated identity.
@@ -38,6 +45,8 @@ export function TenantProvider({ children }: { children: ReactNode }) {
         tenantId: currentTenant?.id ?? null,
         isLoading,
         setTenant,
+        subscriptionStatus,
+        subscriptionExpiry,
       }}
     >
       {children}

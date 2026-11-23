@@ -259,6 +259,14 @@ public final class StateStore {
         if (SUPPORT_COLLECTION.equals(collection)) {
             return isTenantAdministrator(principal) || principal.userId().equals(row.path("createdBy").path("id").asText());
         }
+        if (RecordGuards.TRANSFERS.equals(collection)) {
+            String src = Sql.text(row, "sourceBranchId");
+            String dst = Sql.text(row, "destinationBranchId");
+            return allowedBranches.isEmpty() || (src != null && allowedBranches.contains(src)) || (dst != null && allowedBranches.contains(dst));
+        }
+        if (RecordGuards.WAREHOUSES.equals(collection) || RecordGuards.LOCATIONS.equals(collection)) {
+            return true;
+        }
         String branchId = Sql.text(row, "branchId");
         if (branchId != null && !branchId.isBlank() && !allowedBranches.contains(branchId)
                 && !(AUDIT_COLLECTION.equals(collection) && isTenantAdministrator(principal))) return false;
@@ -310,6 +318,16 @@ public final class StateStore {
     private Set<String> allowedBranches(Connection connection, Principal principal) throws SQLException {
         if (principal.superAdmin()) return Set.of();
         Set<String> result = new LinkedHashSet<>();
+        if (isTenantAdministrator(principal)) {
+            try (PreparedStatement statement = Sql.prepare(connection,
+                    "SELECT record_id FROM erp_records WHERE tenant_id = ? AND collection = 'core.branches' "
+                            + "AND NOT deleted AND COALESCE(data->>'isActive', 'true') = 'true'",
+                    principal.tenantId());
+                 ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) result.add(rows.getString(1));
+            }
+            if (!result.isEmpty()) return result;
+        }
         try (PreparedStatement statement = Sql.prepare(connection,
                 "SELECT profile FROM app_users WHERE id = ? AND tenant_id = ?", principal.userId(), principal.tenantId());
              ResultSet rows = statement.executeQuery()) {
@@ -466,7 +484,7 @@ public final class StateStore {
         // Feature services may add richer workflow context even when the actor cannot view the audit screen.
         // Accept only new append-only events and overwrite all identity/time fields from the authenticated session.
         if (AUDIT_COLLECTION.equals(collection)) {
-            if (change.isDelete()) return Decision.ignored();
+            if (change.isDelete() || isReserved(recordId)) return Decision.ignored();
             JsonNode storedAudit = storedData(connection, tenant, collection, recordId);
             if (storedAudit != null && !storedAudit.isNull()) {
                 if (storedAudit.equals(change.data())) return Decision.ignored();
@@ -690,6 +708,11 @@ public final class StateStore {
             @Override
             public List<JsonNode> flashSales() {
                 return new ArrayList<>(load.apply("sales.flashSales").values());
+            }
+
+            @Override
+            public List<JsonNode> orders() {
+                return new ArrayList<>(load.apply(WEB_ORDERS).values());
             }
 
             @Override
@@ -947,6 +970,15 @@ public final class StateStore {
         }
         if (tenantScope && RecordGuards.CREDIT_NOTES.equals(change.collection()) && !principal.superAdmin()) {
             guardCreditNote(connection, permissions, tenant, change);
+        }
+        if (tenantScope && RecordGuards.FLASH_SALES.equals(change.collection()) && !principal.superAdmin()) {
+            guardFlashSale(connection, principal, permissions, tenant, change);
+        }
+        if (tenantScope && RecordGuards.PURCHASE_REQUESTS.equals(change.collection()) && !principal.superAdmin()) {
+            guardPurchaseRequest(connection, principal, permissions, tenant, change);
+        }
+        if (tenantScope && RecordGuards.TRANSFERS.equals(change.collection())) {
+            guardStockTransfer(connection, principal, permissions, tenant, change);
         }
         if (tenantScope && change.collection().startsWith("notifications.")) {
             guardNotificationChange(connection, principal, permissions, tenant, change);
@@ -1235,6 +1267,71 @@ public final class StateStore {
         RecordGuards.checkCreditNote(permissions, stored, change.isDelete() ? null : change.data());
     }
 
+    private void guardFlashSale(Connection connection, Principal principal, Permissions permissions, String tenant, Change change) throws SQLException {
+        String recordId = change.recordId();
+        if (ORDER_RECORD.equals(recordId)) return;
+        if (isReserved(recordId)) throw ApiException.badRequest("Flash sales must be saved one by one.");
+        JsonNode incoming = change.isDelete() ? null : change.data();
+        if (incoming != null && !recordId.equals(Sql.text(incoming, "id"))) throw ApiException.badRequest("The flash sale id does not match its content.");
+        if (incoming != null && !allowedBranches(connection, principal).contains(Sql.text(incoming, "branchId"))) throw ApiException.forbidden("The flash sale branch is not permitted.");
+        JsonNode product = incoming == null ? null : storedData(connection, tenant, RecordGuards.PRODUCTS, Sql.text(incoming, "productId"));
+        JsonNode stored = storedData(connection, tenant, RecordGuards.FLASH_SALES, recordId);
+        RecordGuards.checkFlashSale(permissions, principal, tenant, product, stored, incoming, collectionRecords(connection, tenant, RecordGuards.FLASH_SALES).values());
+    }
+
+    private void guardPurchaseRequest(Connection connection, Principal principal, Permissions permissions, String tenant, Change change) throws SQLException {
+        String recordId = change.recordId();
+        if (ORDER_RECORD.equals(recordId)) return;
+        if (isReserved(recordId)) throw ApiException.badRequest("Purchase requests must be saved one by one.");
+        JsonNode incoming = change.isDelete() ? null : change.data();
+        if (incoming != null && !recordId.equals(Sql.text(incoming, "id"))) throw ApiException.badRequest("The purchase request id does not match its content.");
+        if (incoming != null && !tenant.equals(Sql.text(incoming, "tenantId"))) throw ApiException.forbidden("The purchase request belongs to another organization.");
+        if (incoming != null && !allowedBranches(connection, principal).contains(Sql.text(incoming, "branchId"))) throw ApiException.forbidden("The purchase request branch is not permitted.");
+        JsonNode stored = storedData(connection, tenant, RecordGuards.PURCHASE_REQUESTS, recordId);
+        RecordGuards.checkPurchaseRequest(permissions, principal, stored, incoming);
+    }
+
+    private void guardStockTransfer(Connection connection, Principal principal, Permissions permissions, String tenant, Change change) throws SQLException {
+        String recordId = change.recordId();
+        if (ORDER_RECORD.equals(recordId)) return;
+        if (isReserved(recordId)) throw ApiException.badRequest("Stock transfers must be saved one record at a time.");
+        JsonNode incoming = change.isDelete() ? null : change.data();
+        if (incoming != null && !recordId.equals(Sql.text(incoming, "id"))) {
+            throw ApiException.badRequest("The stock transfer id does not match its content.");
+        }
+        JsonNode stored = storedData(connection, tenant, RecordGuards.TRANSFERS, recordId);
+        Set<String> allowedBranches = allowedBranches(connection, principal);
+        RecordGuards.checkStockTransfer(
+                permissions,
+                principal,
+                allowedBranches,
+                tenant,
+                stored,
+                incoming,
+                id -> {
+                    try {
+                        return storedData(connection, tenant, RecordGuards.BRANCHES, id);
+                    } catch (SQLException e) {
+                        throw new RuntimeException(e);
+                    }
+                },
+                id -> {
+                    try {
+                        return storedData(connection, tenant, RecordGuards.WAREHOUSES, id);
+                    } catch (SQLException e) {
+                        throw new RuntimeException(e);
+                    }
+                },
+                id -> {
+                    try {
+                        return storedData(connection, tenant, RecordGuards.LOCATIONS, id);
+                    } catch (SQLException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+        );
+    }
+
     /** Customer contact details must identify only one customer inside a tenant. */
     private void guardCustomer(Connection connection, String tenant, Change change) throws SQLException {
         String recordId = change.recordId();
@@ -1312,6 +1409,7 @@ public final class StateStore {
         Map<String, JsonNode> before = access.roles(connection, tenant);
         boolean hadAdministrator = hasAdministrator(connection, tenant, before);
         Map<String, JsonNode> after = new LinkedHashMap<>(before);
+        Set<String> enabledModules = access.enabledModules(connection, tenant);
         if (ALL_RECORD.equals(recordId)) {
             Map<String, JsonNode> incoming = new LinkedHashMap<>();
             if (change.isDelete() || change.data() == null || !change.data().isArray()) {
@@ -1323,12 +1421,12 @@ public final class StateStore {
             }
             for (Map.Entry<String, JsonNode> entry : incoming.entrySet()) {
                 if (!entry.getValue().equals(before.get(entry.getKey()))) {
-                    RecordGuards.checkRole(permissions, principal.roleId(), tenant, entry.getKey(), before.get(entry.getKey()), entry.getValue());
+                    RecordGuards.checkRole(permissions, principal.roleId(), tenant, entry.getKey(), before.get(entry.getKey()), entry.getValue(), enabledModules);
                 }
             }
             for (String removed : before.keySet()) {
                 if (!incoming.containsKey(removed)) {
-                    RecordGuards.checkRole(permissions, principal.roleId(), tenant, removed, before.get(removed), null);
+                    RecordGuards.checkRole(permissions, principal.roleId(), tenant, removed, before.get(removed), null, enabledModules);
                     requireRoleUnused(connection, tenant, removed);
                 }
             }
@@ -1336,12 +1434,12 @@ public final class StateStore {
         } else if (isReserved(recordId)) {
             throw ApiException.badRequest("Roles must be saved as a list of role records.");
         } else if (change.isDelete()) {
-            RecordGuards.checkRole(permissions, principal.roleId(), tenant, recordId, before.get(recordId), null);
+            RecordGuards.checkRole(permissions, principal.roleId(), tenant, recordId, before.get(recordId), null, enabledModules);
             requireRoleUnused(connection, tenant, recordId);
             after.remove(recordId);
         } else {
             if (!change.data().equals(before.get(recordId))) {
-                RecordGuards.checkRole(permissions, principal.roleId(), tenant, recordId, before.get(recordId), change.data());
+                RecordGuards.checkRole(permissions, principal.roleId(), tenant, recordId, before.get(recordId), change.data(), enabledModules);
             }
             after.put(recordId, change.data());
         }
@@ -1567,6 +1665,40 @@ public final class StateStore {
         if (Sql.queryLong(connection, "SELECT COUNT(*) FROM app_users WHERE lower(email) = lower(?) AND id <> ?", email, id) > 0) {
             throw ApiException.conflict("The email address " + email + " is already used by another account.");
         }
+
+        // Validate user limits before creating or activating a user
+        boolean isNew = !exists;
+        boolean isActivating = exists && !"active".equals(existingStatus) && "active".equals(status);
+        if ((isNew || isActivating) && "active".equals(status) && !principal.superAdmin()) {
+            String tenantProfileJson = Sql.queryString(connection, "SELECT profile FROM tenants WHERE id = ?", tenant);
+            if (tenantProfileJson != null) {
+                JsonNode tenantProfile = Sql.readJson(mapper, tenantProfileJson);
+                JsonNode limits = tenantProfile == null ? null : tenantProfile.path("entitlements").path("limits");
+                if (limits != null && limits.has("maxUsers")) {
+                    int maxUsers = limits.get("maxUsers").asInt(10);
+                    boolean includeAdmin = limits.path("includeAdminInUserLimit").asBoolean(false);
+                    String adminEmail = tenantProfile.path("admin").path("email").asText(null);
+
+                    long countedUsers;
+                    if (includeAdmin) {
+                        countedUsers = Sql.queryLong(connection,
+                                "SELECT COUNT(*) FROM app_users WHERE tenant_id = ? AND super_admin = FALSE AND status <> 'inactive'",
+                                tenant);
+                    } else {
+                        countedUsers = Sql.queryLong(connection,
+                                "SELECT COUNT(*) FROM app_users WHERE tenant_id = ? AND super_admin = FALSE AND status <> 'inactive' AND role_id <> 'role-001' AND (email <> CAST(? AS text) OR CAST(? AS text) IS NULL)",
+                                tenant, adminEmail, adminEmail);
+                    }
+                    boolean isTargetAdmin = "role-001".equals(roleId) || (adminEmail != null && adminEmail.equalsIgnoreCase(email));
+                    if (includeAdmin || !isTargetAdmin) {
+                        if (countedUsers >= maxUsers) {
+                            throw ApiException.forbidden("User limit of " + maxUsers + " reached for this company. Contact Super Admin to increase your user limit.");
+                        }
+                    }
+                }
+            }
+        }
+
         String profileJson = Sql.writeJson(mapper, profile);
         if (exists) {
             // Losing access (deactivation, suspension, email change) also ends the user's open sessions.
@@ -1592,8 +1724,8 @@ public final class StateStore {
             String id = Sql.text(tenant, "id");
             String status = Sql.text(tenant, "status");
             if (id == null || Principal.PLATFORM_TENANT.equals(id)) continue;
-            if (!"active".equals(status) && !"suspended".equals(status)) {
-                throw ApiException.validation("status", "Tenant status must be active or suspended.");
+            if (!"active".equals(status) && !"suspended".equals(status) && !"pending".equals(status)) {
+                throw ApiException.validation("status", "Tenant status must be active, suspended, or pending.");
             }
             ObjectNode entitlements = TenantEntitlementPolicy.validatedEntitlements(mapper, tenant);
             Sql.update(connection, "UPDATE tenants SET status = ?, profile = jsonb_set(jsonb_set(profile, '{status}', "

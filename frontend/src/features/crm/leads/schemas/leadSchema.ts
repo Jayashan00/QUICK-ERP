@@ -12,7 +12,7 @@ import {
 function personName(label: string) {
   return requiredString(label, 80).refine(
     (value) => /^\p{L}+$/u.test(value),
-    `${label} must contain letters only.`,
+    `${label} can only contain alphabetic letters. Please remove numbers, spaces, or special characters.`,
   );
 }
 
@@ -24,11 +24,11 @@ export const leadSchema = z.object({
   phone: phoneSchema,
   source: z.enum(
     ['website', 'referral', 'social_media', 'email', 'phone', 'event', 'advertisement', 'other'],
-    { error: 'Select a valid lead source.' },
+    { error: 'Please select a lead source from the dropdown.' },
   ),
   status: z.enum(
     ['new', 'contacted', 'qualified', 'unqualified', 'converted', 'lost'],
-    { error: 'Select a valid lead status.' },
+    { error: 'Please select a lead status from the dropdown.' },
   ),
   assignedTo: optionalString('Assigned user', 100),
   estimatedCurrency: optionalString('Estimated currency', 3).optional(),
@@ -41,13 +41,13 @@ export const leadSchema = z.object({
   lostNote: optionalString('Lost note', 1000),
 }).superRefine((data, context) => {
   if (data.estimatedValue !== undefined && !data.estimatedCurrency) {
-    context.addIssue({ code: 'custom', path: ['estimatedCurrency'], message: 'Select an estimated value currency.' });
+    context.addIssue({ code: 'custom', path: ['estimatedCurrency'], message: 'Estimated currency is required when an estimated value is entered. Please select a currency.' });
   }
   if (data.status === 'lost' && !data.lostReason) {
-    context.addIssue({ code: 'custom', path: ['lostReason'], message: 'Select a lost reason.' });
+    context.addIssue({ code: 'custom', path: ['lostReason'], message: 'Please select a lost reason explaining why this lead was lost.' });
   }
   if (data.status === 'lost' && data.lostReason === 'other' && !data.lostNote) {
-    context.addIssue({ code: 'custom', path: ['lostNote'], message: 'Add a note for the lost reason.' });
+    context.addIssue({ code: 'custom', path: ['lostNote'], message: 'Please provide an explanatory note describing the reason this lead was lost.' });
   }
 });
 

@@ -7,7 +7,10 @@ export type InventoryReportFilters = { branchId?: string; asOf?: string; thresho
 const day = 86_400_000;
 const age = (date: string, asOf: string) => Math.max(0, Math.floor((Date.parse(`${asOf}T00:00:00Z`) - Date.parse(`${date.slice(0, 10)}T00:00:00Z`)) / day));
 const permits = (scope: InventoryReportScope, branchId: string, filters: InventoryReportFilters) => Boolean(scope.tenantId) && scope.permittedBranchIds.includes(branchId) && (!filters.branchId || filters.branchId === branchId);
-const productName = (tenantId: string, id: string) => productStore.all().find((row) => row.tenantId === tenantId && row.id === id)?.name ?? id;
+const productName = (tenantId: string, id: string) =>
+  productStore.all().find((row) => (!row.tenantId || row.tenantId === tenantId) && row.id === id)?.name ??
+  productStore.all().find((row) => row.id === id)?.name ??
+  id;
 
 export const inventoryReportService = {
   margins(scope: InventoryReportScope, filters: InventoryReportFilters = {}) {
@@ -42,9 +45,9 @@ export const inventoryReportService = {
     return inventoryStore.balances().filter((row) => row.tenantId === scope.tenantId && permits(scope, row.branchId, filters) && row.quantityOnHand > 0).map((row) => { const last = inventoryStore.movements().filter((item) => item.tenantId === scope.tenantId && item.branchId === row.branchId && item.productId === row.productId && item.warehouseId === row.warehouseId && item.locationId === row.locationId && item.movementDate.slice(0, 10) <= asOf).sort((a, b) => b.movementDate.localeCompare(a.movementDate))[0]; const lastDate = last?.movementDate.slice(0, 10) ?? row.lastMovementAt?.slice(0, 10) ?? ''; return { id: row.id, branchId: row.branchId, productId: row.productId, product: productName(scope.tenantId, row.productId), warehouseId: row.warehouseId, locationId: row.locationId, quantity: row.quantityOnHand, lastMovement: lastDate, idleDays: lastDate ? age(lastDate, asOf) : null, status: lastDate ? 'No recent movement' : 'Movement date unknown' }; }).filter((row) => row.idleDays === null || row.idleDays >= threshold);
   },
   wastage(scope: InventoryReportScope, filters: InventoryReportFilters = {}) {
-    return inventoryStore.returnsWastage().filter((row) => row.tenantId === scope.tenantId && permits(scope, row.branchId, filters) && row.workflowType === 'wastage' && (!filters.asOf || row.createdAt.slice(0, 10) <= filters.asOf)).map((row) => ({ id: row.id, branchId: row.branchId, reference: row.referenceNumber, date: row.createdAt.slice(0, 10), reason: row.reason, condition: row.condition, status: row.status, quantity: row.lines.reduce((sum, line) => sum + line.quantity, 0), products: row.lines.map((line) => line.productId).join(', ') }));
+    return inventoryStore.returnsWastage().filter((row) => row.tenantId === scope.tenantId && permits(scope, row.branchId, filters) && row.workflowType === 'wastage' && (!filters.asOf || row.createdAt.slice(0, 10) <= filters.asOf)).map((row) => ({ id: row.id, branchId: row.branchId, reference: row.referenceNumber, date: row.createdAt.slice(0, 10), reason: row.reason, condition: row.condition, status: row.status, quantity: row.lines.reduce((sum, line) => sum + line.quantity, 0), products: row.lines.map((line) => productName(scope.tenantId, line.productId)).join(', ') }));
   },
   inTransit(scope: InventoryReportScope, filters: InventoryReportFilters = {}) {
-    return inventoryStore.transfers().filter((row) => row.tenantId === scope.tenantId && ['dispatched', 'in_transit'].includes(row.status) && (permits(scope, row.sourceBranchId, filters) || permits(scope, row.destinationBranchId, filters)) && (!filters.asOf || row.createdAt.slice(0, 10) <= filters.asOf)).map((row) => ({ id: row.id, reference: row.referenceNumber, sourceBranchId: row.sourceBranchId, destinationBranchId: row.destinationBranchId, date: row.createdAt.slice(0, 10), status: row.status, quantity: row.lines.reduce((sum, line) => sum + line.quantity, 0), products: row.lines.map((line) => line.productId).join(', ') }));
+    return inventoryStore.transfers().filter((row) => row.tenantId === scope.tenantId && ['dispatched', 'in_transit'].includes(row.status) && (permits(scope, row.sourceBranchId, filters) || permits(scope, row.destinationBranchId, filters)) && (!filters.asOf || row.createdAt.slice(0, 10) <= filters.asOf)).map((row) => ({ id: row.id, reference: row.referenceNumber, sourceBranchId: row.sourceBranchId, destinationBranchId: row.destinationBranchId, date: row.createdAt.slice(0, 10), status: row.status, quantity: row.lines.reduce((sum, line) => sum + line.quantity, 0), products: row.lines.map((line) => productName(scope.tenantId, line.productId)).join(', ') }));
   },
 };

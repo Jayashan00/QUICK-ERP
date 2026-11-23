@@ -28,6 +28,7 @@ export const companyService = {
       const newCompany: Company = {
         ...mockCompany,
         ...data,
+        id: `comp-${tenantId}`,
         tenantId,
         updatedAt: now,
       };

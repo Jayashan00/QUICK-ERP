@@ -1,4 +1,5 @@
-import { useForm, Controller } from 'react-hook-form';
+import { Controller } from 'react-hook-form';
+import { useAppForm } from '@/shared/hooks';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Save } from 'lucide-react';
 import { Card } from '@/shared/components/common/Card';
@@ -41,7 +42,7 @@ export function BranchForm({
     control,
     setValue,
     formState: { errors, isSubmitting },
-  } = useForm<BranchFormValues>({
+  } = useAppForm<BranchFormValues>({
     resolver: zodResolver(branchSchema),
     defaultValues: {
       name: initialData?.name || '',

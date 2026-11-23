@@ -34,7 +34,7 @@ export async function aggregateInventoryDashboard(context: ModuleDashboardContex
       const categories = new Map(products.data.map(row => [row.id, row.categoryName ?? row.categoryId]));
       output.charts.push({ id: 'valuation', title: 'Stock Value by Category', subtitle: 'Current Inventory valuation grouped by Product category', currency: true, data: ranked(group(balances, row => categories.get(row.productId) ?? 'Uncategorized', row => row.stockValue)) });
     }
-    addList(context, 'Low Stock Alerts', low.sort((a, b) => a.quantityAvailable - b.quantityAvailable).map(row => ({ id: row.id, title: row.productName, description: `${row.sku} / ${row.warehouseName} / ${row.locationName} / Available ${row.quantityAvailable}, reorder at ${row.reorderLevel}`, status: row.alertStatus, to: `/inventory/stock/${row.productId}${row.variantId ? `?variantId=${row.variantId}` : ''}` })), { to: '/inventory/reorder', emptyMessage: 'No low stock items.' });
+    addList(context, 'Low Stock Alerts', low.sort((a, b) => a.quantityAvailable - b.quantityAvailable).map(row => ({ id: row.id, title: row.productName, description: `${row.sku} / ${row.warehouseName} / ${row.locationName} / Available ${row.quantityAvailable}, low stock level ${row.reorderLevel}`, status: row.alertStatus, to: `/inventory/stock/${row.productId}${row.variantId ? `?variantId=${row.variantId}` : ''}` })), { to: '/inventory/reorder', emptyMessage: 'No low stock items.' });
   }
   if (movements) {
     const selected = movements.filter(row => inPeriod(row.movementDate));
@@ -46,5 +46,4 @@ export async function aggregateInventoryDashboard(context: ModuleDashboardContex
     addList(context, 'Expiry Alerts', expiry.map(row => ({ id: row.id, title: row.product, description: `Batch ${row.batch} / ${row.quantity} units`, date: row.expiryDate, status: row.status.toLowerCase().replace(/ /g, '_'), to: '/inventory/expiry' })), { to: '/inventory/expiry', emptyMessage: 'No batches expired or expiring soon.' });
   }
   if (transfers) addList(context, 'Pending Transfers', transfers.data.filter(row => !['received', 'completed'].includes(row.status)).map(row => ({ id: row.id, title: row.referenceNumber, description: row.createdByName, date: row.createdAt, status: row.status, to: recordLink('/inventory/transfers', row.id, row.referenceNumber) })), { to: '/inventory/transfers' });
-  output.workflow = [['Stock', '/inventory/stocks', 'inventory.stock.view'], ['Movements', '/inventory/movements', 'inventory.movements.view'], ['Transfers', '/inventory/transfers', 'inventory.transfers.view'], ['Adjustments', '/inventory/adjustments', 'inventory.adjustments.view'], ['Expiry', '/inventory/expiry', 'inventory.expiry.view']].filter(([, , permission]) => can(permission)).map(([label, to]) => ({ label, to }));
 }

@@ -23,54 +23,54 @@ function validateBarcodeChecksum(
   context: z.RefinementCtx,
 ) {
   if (value.barcodeType === 'EAN13' && value.barcode && /^\d{13}$/.test(value.barcode) && !hasValidGtinCheckDigit(value.barcode)) {
-    context.addIssue({ code: 'custom', path: ['barcode'], message: 'Enter a valid EAN-13 barcode check digit.' });
+    context.addIssue({ code: 'custom', path: ['barcode'], message: 'Enter a valid EAN-13 barcode check digit. Please verify the code.' });
   }
   if (value.barcodeType === 'UPC_A' && value.barcode && /^\d{12}$/.test(value.barcode) && !hasValidGtinCheckDigit(value.barcode)) {
-    context.addIssue({ code: 'custom', path: ['barcode'], message: 'Enter a valid UPC-A barcode check digit.' });
+    context.addIssue({ code: 'custom', path: ['barcode'], message: 'Enter a valid UPC-A barcode check digit. Please verify the code.' });
   }
 }
 
 const priceTierInputSchema = z.object({
   id: z.string().optional(),
-  name: z.string().trim().min(1, 'Tier name is required.').max(60, 'Tier name cannot exceed 60 characters.'),
-  minimumQuantity: z.number().int('Minimum quantity must be a whole number.').positive('Minimum quantity must be greater than zero.'),
-  price: z.number().positive('Tier price must be greater than zero.'),
+  name: z.string().trim().min(1, 'Tier name is required. Please enter a name for this price tier.').max(60, 'Tier name cannot exceed 60 characters. Please shorten it to continue.'),
+  minimumQuantity: z.number().int('Minimum quantity must be a whole number. Please enter an integer.').positive('Minimum quantity must be greater than zero. Please enter 1 or more.'),
+  price: z.number().positive('Tier price must be greater than zero. Please enter a positive amount.'),
 });
 
 const priceTierSchema = priceTierInputSchema.extend({ id: z.string().min(1) });
 
 const productEditableFields = {
-  name: z.string().trim().min(2, 'Product name must contain at least 2 characters.').max(150),
+  name: z.string().trim().min(2, 'Product name must contain at least 2 characters. Please enter a full name.').max(150, 'Product name cannot exceed 150 characters. Please shorten the name.'),
   shortName: optionalText(60),
   sku: z
     .string()
     .trim()
-    .min(2, 'SKU must contain at least 2 characters.')
-    .max(50, 'SKU cannot exceed 50 characters.')
-    .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/, 'Use letters, numbers, dots, underscores, slashes or hyphens.'),
+    .min(2, 'SKU must contain at least 2 characters. Please enter a longer SKU.')
+    .max(50, 'SKU cannot exceed 50 characters. Please shorten the SKU.')
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/, 'SKU contains invalid characters. Please use letters, numbers, dots, underscores, slashes, or hyphens.'),
   internalCode: optionalText(50),
   barcode: z.union([
     z.literal(''),
     z
       .string()
       .trim()
-      .min(4, 'Barcode must contain at least 4 characters.')
-      .max(64, 'Barcode cannot exceed 64 characters.')
-      .regex(/^[A-Za-z0-9-]+$/, 'Barcode may contain only letters, numbers and hyphens.'),
+      .min(4, 'Barcode must contain at least 4 characters. Please enter a longer barcode.')
+      .max(64, 'Barcode cannot exceed 64 characters. Please shorten the barcode.')
+      .regex(/^[A-Za-z0-9-]+$/, 'Barcode contains invalid characters. Please use only letters, numbers, and hyphens.'),
   ]).optional(),
   barcodeType: z.enum(barcodeTypes).optional(),
   qrValue: optionalText(250),
   brandId: optionalText(100),
   brand: optionalText(80),
   description: optionalText(1000),
-  type: z.enum(productTypes, { message: 'Select a product type.' }),
-  status: z.enum(productStatuses, { message: 'Select a product status.' }),
-  categoryId: z.string().trim().min(1, 'Select a category.'),
+  type: z.enum(productTypes, { message: 'Please select a product type from the options.' }),
+  status: z.enum(productStatuses, { message: 'Please select a product status from the options.' }),
+  categoryId: z.string().trim().min(1, 'Please select a category from the dropdown.'),
   uomId: z.string().trim(),
   purchaseUomId: optionalText(100),
-  sellingPrice: z.number().min(0, 'Selling price cannot be negative.'),
-  costPrice: z.number().min(0, 'Cost price cannot be negative.'),
-  priceTiers: z.array(priceTierInputSchema).max(20, 'A product can have at most 20 price tiers.'),
+  sellingPrice: z.number().min(0, 'Selling price cannot be negative. Please enter an amount of 0.00 or higher.'),
+  costPrice: z.number().min(0, 'Cost price cannot be negative. Please enter an amount of 0.00 or higher.'),
+  priceTiers: z.array(priceTierInputSchema).max(20, 'A product can have at most 20 price tiers. Please remove extra tiers.'),
   taxCode: optionalText(40),
   pricesIncludeTax: z.boolean(),
   isSellable: z.boolean(),
@@ -80,9 +80,9 @@ const productEditableFields = {
   trackBySerialNumber: z.boolean(),
   trackExpiry: z.boolean(),
   allowNegativeStock: z.boolean(),
-  minStockLevel: z.number().min(0, 'Minimum stock cannot be negative.').optional(),
-  reorderLevel: z.number().min(0, 'Reorder level cannot be negative.').optional(),
-  maxStockLevel: z.number().min(0, 'Maximum stock cannot be negative.').optional(),
+  minStockLevel: z.number().min(0, 'Minimum stock cannot be negative. Please enter 0 or higher.').optional(),
+  reorderLevel: z.number().min(0, 'Low stock level cannot be negative. Please enter 0 or higher.').optional(),
+  maxStockLevel: z.number().min(0, 'Maximum stock cannot be negative. Please enter 0 or higher.').optional(),
 };
 
 function validateStockLimits(
@@ -103,30 +103,30 @@ function validateStockLimits(
   context: z.RefinementCtx,
 ) {
   if (value.type !== 'service' && !value.uomId) {
-    context.addIssue({ code: 'custom', path: ['uomId'], message: 'Select a unit of measure.' });
+    context.addIssue({ code: 'custom', path: ['uomId'], message: 'Please select a unit of measure from the dropdown.' });
   }
   if (value.barcode && !value.barcodeType) {
-    context.addIssue({ code: 'custom', path: ['barcodeType'], message: 'Select the barcode format.' });
+    context.addIssue({ code: 'custom', path: ['barcodeType'], message: 'Please select a barcode format from the dropdown.' });
   }
   if (value.barcodeType === 'EAN13' && value.barcode && !/^\d{13}$/.test(value.barcode)) {
-    context.addIssue({ code: 'custom', path: ['barcode'], message: 'EAN-13 barcodes must contain exactly 13 digits.' });
+    context.addIssue({ code: 'custom', path: ['barcode'], message: 'EAN-13 barcodes must contain exactly 13 digits. Please check and re-enter.' });
   }
   if (value.barcodeType === 'UPC_A' && value.barcode && !/^\d{12}$/.test(value.barcode)) {
-    context.addIssue({ code: 'custom', path: ['barcode'], message: 'UPC-A barcodes must contain exactly 12 digits.' });
+    context.addIssue({ code: 'custom', path: ['barcode'], message: 'UPC-A barcodes must contain exactly 12 digits. Please check and re-enter.' });
   }
   if (!value.trackInventory) {
     if (value.trackByBatch) {
-      context.addIssue({ code: 'custom', path: ['trackByBatch'], message: 'Batch tracking requires inventory tracking.' });
+      context.addIssue({ code: 'custom', path: ['trackByBatch'], message: 'Batch tracking requires inventory tracking. Please enable Track inventory first.' });
     }
     if (value.trackBySerialNumber) {
-      context.addIssue({ code: 'custom', path: ['trackBySerialNumber'], message: 'Serial number tracking requires inventory tracking.' });
+      context.addIssue({ code: 'custom', path: ['trackBySerialNumber'], message: 'Serial number tracking requires inventory tracking. Please enable Track inventory first.' });
     }
     if (value.trackExpiry) {
-      context.addIssue({ code: 'custom', path: ['trackExpiry'], message: 'Expiry tracking requires inventory tracking.' });
+      context.addIssue({ code: 'custom', path: ['trackExpiry'], message: 'Expiry tracking requires inventory tracking. Please enable Track inventory first.' });
     }
   }
   if (value.trackExpiry && !value.trackByBatch) {
-    context.addIssue({ code: 'custom', path: ['trackExpiry'], message: 'Expiry tracking requires batch tracking.' });
+    context.addIssue({ code: 'custom', path: ['trackExpiry'], message: 'Expiry tracking requires batch tracking. Please enable Track by batch first.' });
   }
   if (
     value.trackInventory &&
@@ -137,7 +137,7 @@ function validateStockLimits(
     context.addIssue({
       code: 'custom',
       path: ['minStockLevel'],
-      message: 'Minimum stock cannot exceed maximum stock.',
+      message: 'Minimum stock cannot exceed maximum stock. Please adjust the minimum or maximum limit.',
     });
   }
   if (
@@ -149,7 +149,7 @@ function validateStockLimits(
     context.addIssue({
       code: 'custom',
       path: ['reorderLevel'],
-      message: 'Reorder level cannot exceed maximum stock.',
+      message: 'Low stock level cannot exceed maximum stock. Please adjust the low stock or maximum limit.',
     });
   }
   if (
@@ -161,7 +161,7 @@ function validateStockLimits(
     context.addIssue({
       code: 'custom',
       path: ['reorderLevel'],
-      message: 'Reorder level cannot be below minimum stock.',
+      message: 'Low stock level cannot be below minimum stock. Please adjust the low stock or minimum limit.',
     });
   }
 

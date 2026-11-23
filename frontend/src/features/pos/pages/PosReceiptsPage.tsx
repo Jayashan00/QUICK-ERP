@@ -3,6 +3,7 @@ import { useAuth } from "@/core/auth/auth-context";
 import { useTenant } from "@/core/tenant/tenant-context";
 import { usePermissions } from "@/core/permissions/permission-context";
 import { SyncStatusBadge, useSync } from "@/features/sync";
+import { customerService } from "@/features/customers/services/customerService";
 import { posService } from "../posService";
 import { posSettingsService } from "../posSettings";
 import { ReceiptMessagePanel } from "../components/ReceiptMessagePanel";
@@ -54,7 +55,7 @@ export function PosReceiptsPage() {
               className="mb-2 flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               onClick={() => setSaleId(item.id)}
             >
-              <span>#{item.id.slice(0, 8)} · {formatMoney(item.total)}</span>
+              <span>{posService.getReceiptNumber(item)} · {formatMoney(item.total)}</span>
               <SyncStatusBadge status={sync.getRecordStatus("pos", item.id)} />
             </button>
           ))}
@@ -66,8 +67,8 @@ export function PosReceiptsPage() {
               <h2 className="text-lg font-semibold">Receipt</h2>
               <SyncStatusBadge status={sync.getRecordStatus("pos", sale.id)} />
             </div>
-            <p className="text-xs">#{sale.id.slice(0, 8)} · {new Date(sale.at).toLocaleString()}</p>
-            <p className="text-xs">Customer: {sale.customerId ?? "Walk-in"}</p>
+            <p className="text-xs">{posService.getReceiptNumber(sale)} · {new Date(sale.at).toLocaleString()}</p>
+            <p className="text-xs">Customer: {sale.customerName || (sale.customerId ? (customerService.getCachedCustomerById(scope, sale.customerId)?.name || sale.customerId) : "Walk-in")}</p>
             <div className="my-3 border-y py-2 text-sm">
               {sale.lines.map((line) => <div key={line.productId} className="flex justify-between"><span>{line.name} × {line.quantity}</span><span>{formatMoney(line.unitPrice * line.quantity)}</span></div>)}
             </div>

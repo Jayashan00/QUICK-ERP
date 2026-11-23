@@ -34,6 +34,7 @@ export interface SettingsNavItem {
   icon: LucideIcon;
   description: string;
   permission?: string;
+  tenantAdminOnly?: boolean;
 }
 
 export interface SettingsNavGroup {
@@ -165,6 +166,7 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
         icon: BadgePercent,
         description: 'Tax rates, validity dates, and defaults',
         permission: PERMISSIONS.SETTINGS.TAXES_VIEW,
+        tenantAdminOnly: true,
       },
       {
         label: 'Payment Terms',

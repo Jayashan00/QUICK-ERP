@@ -56,7 +56,6 @@ const platformAreas = [
   { icon: UserRoundSearch, title: 'CRM & customer records', details: 'Leads, activities, reminders, opportunities, sales pipeline, customer profiles, purchase history and supplier contacts.' },
   { icon: Users, title: 'HR & payroll', details: 'Employees, departments, attendance, rosters, leave, overtime, payroll, payslips, recruitment, onboarding, training, performance, policies, assets and exits.' },
   { icon: FolderKanban, title: 'Projects & delivery', details: 'Projects, milestones, tasks, dependencies, timesheets, approvals, project expenses, billing, profitability and reports.' },
-  { icon: ClipboardList, title: 'Reports & analytics', details: 'Dashboards and 63 service-derived reports across sales, CRM, purchasing, inventory, finance, HR, projects and POS.' },
   { icon: FileText, title: 'Documents, support & updates', details: 'Shared documents, versions, expiry reminders, support tickets, notifications, notices, acknowledgements and templates.' },
   { icon: ShieldCheck, title: 'Company, access & controls', details: 'Company profile, branches, departments, users, roles, permissions, login activity, audit logs, localization, numbering and settings.' },
   { icon: CloudCog, title: 'Sync & continuity', details: 'Sync queue, retry status, offline POS and stock activity, conflict review and operational alerts.' },

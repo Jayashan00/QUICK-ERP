@@ -41,6 +41,8 @@ import { calculateAvailableQuantity, getStockAlertStatus } from "../utils/stockC
 import { inventoryStore } from "./inventoryStore";
 import { inventoryService } from "./inventoryService";
 import { inventorySettingsService } from "./inventorySettingsService";
+import { purchasingStore } from "@/features/purchases/services/purchasingStore";
+import { productRelationshipStore } from "@/features/products/services/productRelationshipStore";
 import { registerSet } from '@/core/persistence/stateRegistry';
 
 export type StockWorkflowKind =
@@ -604,8 +606,8 @@ export const stockWorkflowService = {
         inventoryStore.transfers().filter(
           (item) =>
             item.tenantId === scope.tenantId &&
-            params.permittedBranchIds.includes(item.sourceBranchId) &&
-            params.permittedBranchIds.includes(item.destinationBranchId),
+            (params.permittedBranchIds.includes(item.sourceBranchId) ||
+            params.permittedBranchIds.includes(item.destinationBranchId)),
         ),
         params,
         (item) => [item.sourceBranchId, item.destinationBranchId],
@@ -859,8 +861,43 @@ export const stockWorkflowService = {
   async createTransfer(scope: TenantBranchScope, permittedBranchIds: string[], values: StockTransferFormValues, actor: WorkflowActor, sourceRequestId?: string) {
     requireScope(scope, permittedBranchIds);
     const data = stockTransferSchema.parse(values);
+    if (data.sourceBranchId === data.destinationBranchId) {
+      throw new Error("Source and destination branches must be different.");
+    }
+    if (data.sourceWarehouseId === data.destinationWarehouseId) {
+      throw new Error("Source and destination warehouses must be different.");
+    }
+    if (data.sourceLocationId === data.destinationLocationId) {
+      throw new Error("Source and destination locations must be different.");
+    }
     requireLocation(scope.tenantId, permittedBranchIds, data.sourceBranchId, data.sourceWarehouseId, data.sourceLocationId);
-    requireLocation(scope.tenantId, permittedBranchIds, data.destinationBranchId, data.destinationWarehouseId, data.destinationLocationId);
+    const destinationBranch = (await branchService.getAllBranches(scope.tenantId)).find(
+      (b) => b.id === data.destinationBranchId && b.tenantId === scope.tenantId && b.isActive,
+    );
+    if (!destinationBranch) {
+      throw new Error("The selected destination branch is invalid or inactive.");
+    }
+    const destinationWarehouse = inventoryStore.warehouses().find(
+      (item) =>
+        item.tenantId === scope.tenantId &&
+        item.branchId === data.destinationBranchId &&
+        item.id === data.destinationWarehouseId &&
+        item.isActive,
+    );
+    if (!destinationWarehouse) {
+      throw new Error("The selected destination warehouse is invalid or inactive.");
+    }
+    const destinationLocation = inventoryStore.locations().find(
+      (item) =>
+        item.tenantId === scope.tenantId &&
+        item.branchId === data.destinationBranchId &&
+        item.warehouseId === data.destinationWarehouseId &&
+        item.id === data.destinationLocationId &&
+        item.isActive,
+    );
+    if (!destinationLocation) {
+      throw new Error("The selected destination location is invalid or inactive.");
+    }
     const lines = documentLines(data);
     for (const line of lines) {
       validateTracking(scope.tenantId, data.sourceLocationId, line, true);
@@ -891,7 +928,7 @@ export const stockWorkflowService = {
 
   async advanceTransfer(scope: TenantBranchScope, permittedBranchIds: string[], id: string, action: "approve" | "dispatch" | "mark_in_transit" | "receive" | "complete", actor: WorkflowActor, remarks?: string) {
     requireScope(scope, permittedBranchIds);
-    const index = inventoryStore.transfers().findIndex((item) => item.id === id && item.tenantId === scope.tenantId && permittedBranchIds.includes(item.sourceBranchId) && permittedBranchIds.includes(item.destinationBranchId));
+    const index = inventoryStore.transfers().findIndex((item) => item.id === id && item.tenantId === scope.tenantId && (permittedBranchIds.includes(item.sourceBranchId) || permittedBranchIds.includes(item.destinationBranchId)));
     if (index < 0) throw new Error("Stock transfer not found.");
     const current = inventoryStore.transfers()[index];
     const expected = { approve: "draft", dispatch: "approved", mark_in_transit: "dispatched", receive: "in_transit", complete: "received" } as const;
@@ -1252,9 +1289,47 @@ export const stockWorkflowService = {
     ]);
     return balances
       .filter((item) => getStockAlertStatus(item.quantityAvailable, item.minStockLevel, item.reorderLevel) !== "healthy")
+      .filter((item) => !purchasingStore.requests().some((request) =>
+        request.sourceReorder?.balanceId === item.id &&
+        !["draft", "returned", "cancelled"].includes(request.status)))
       .map((item) => {
         const product = productFor(scope.tenantId, item.productId);
         const key = `${scope.tenantId}:${item.id}`;
+        const openPurchaseQuantity = purchasingStore.orders()
+          .filter((order) => order.tenantId === scope.tenantId &&
+            order.branchId === item.branchId &&
+            ["approved", "sent", "partially_received"].includes(order.status))
+          .reduce((total, order) => total + order.items
+            .filter((line) => line.productId === item.productId && (line.variantId ?? "") === (item.variantId ?? ""))
+            .reduce((sum, line) => sum + line.quantity, 0), 0);
+        const projectedAvailable = item.quantityAvailable + openPurchaseQuantity + item.quantityInTransit;
+        const transferSource = inventoryStore.balances()
+          .filter((balance) => balance.tenantId === scope.tenantId &&
+            balance.branchId !== item.branchId &&
+            balance.productId === item.productId &&
+            (balance.variantId ?? "") === (item.variantId ?? "") &&
+            calculateAvailableQuantity(balance.quantityOnHand, balance.quantityCommitted) > 0)
+          .sort((left, right) => calculateAvailableQuantity(right.quantityOnHand, right.quantityCommitted) -
+            calculateAvailableQuantity(left.quantityOnHand, left.quantityCommitted))[0];
+        const transferSuggestion = transferSource ? (() => {
+          const warehouse = inventoryStore.warehouses().find((row) => row.id === transferSource.warehouseId);
+          const location = inventoryStore.locations().find((row) => row.id === transferSource.locationId);
+          const branch = branches.find((row) => row.id === transferSource.branchId);
+          return {
+            branchId: transferSource.branchId,
+            branchName: branch?.name ?? transferSource.branchId,
+            warehouseId: transferSource.warehouseId,
+            warehouseName: warehouse?.name ?? transferSource.warehouseId,
+            locationId: transferSource.locationId,
+            locationName: location?.name ?? transferSource.locationId,
+            available: calculateAvailableQuantity(transferSource.quantityOnHand, transferSource.quantityCommitted),
+          };
+        })() : undefined;
+        const preferredSupplier = productRelationshipStore.suppliers()
+          .filter((relationship) => relationship.tenantId === scope.tenantId &&
+            relationship.productId === item.productId && relationship.isActive)
+          .sort((left, right) => Number(right.isPreferred) - Number(left.isPreferred))[0];
+        const leadTimeDays = preferredSupplier?.leadTimeDays ?? 14;
         return {
           balanceId: item.id,
           tenantId: item.tenantId,
@@ -1272,6 +1347,11 @@ export const stockWorkflowService = {
           reorderLevel: item.reorderLevel,
           maxStockLevel: product.maxStockLevel,
           suggestedQuantity: Math.max(1, (product.maxStockLevel ?? item.reorderLevel * 2) - item.quantityAvailable),
+          openPurchaseQuantity,
+          projectedAvailable,
+          quantityInTransit: item.quantityInTransit,
+          leadTimeDays,
+          transferSuggestion,
           handoffStatus: preparedReorders.has(key) ? "prepared" : "ready",
         };
       });

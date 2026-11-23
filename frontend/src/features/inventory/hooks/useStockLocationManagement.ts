@@ -100,6 +100,23 @@ export function useStockLocationOptions(warehouseId?: string) {
     enabled: Boolean(tenantId),
   });
 }
+export function useDestinationStockLocationOptions(warehouseId?: string) {
+  const { tenantId } = useTenant();
+  return useQuery({
+    queryKey: [
+      ...inventoryKeys.locationOptions(tenantId ?? "", warehouseId),
+      "destination-options",
+    ],
+    queryFn: () =>
+      stockLocationService.options(
+        tenantId ?? "",
+        undefined,
+        warehouseId,
+        false,
+      ),
+    enabled: Boolean(tenantId && warehouseId),
+  });
+}
 export function useStockLocationMutations() {
   const { tenantId } = useTenant();
   const { branches } = useBranch();

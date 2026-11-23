@@ -87,7 +87,7 @@ export const stockLocationService = {
   },
   async options(
     tenantId: string,
-    permittedBranchIds: string[],
+    permittedBranchIds?: string[],
     warehouseId?: string,
     includeInactive = false,
   ) {
@@ -97,7 +97,7 @@ export const stockLocationService = {
       .filter(
         (item) =>
           item.tenantId === tenantId &&
-          permittedBranchIds.includes(item.branchId) &&
+          (!permittedBranchIds || permittedBranchIds.includes(item.branchId)) &&
           (!warehouseId || item.warehouseId === warehouseId) &&
           (includeInactive || item.isActive),
       )

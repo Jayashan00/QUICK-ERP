@@ -31,6 +31,33 @@ export interface WarehouseListResult {
 const wait = () =>
   new Promise((resolve) => globalThis.setTimeout(resolve, 180));
 
+function generateWarehouseCode(tenantId: string) {
+  const highestSequence = inventoryStore.warehouses().reduce((highest, item) => {
+    if (item.tenantId !== tenantId) return highest;
+    const match = /^WH-(\d+)$/.exec(item.code);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+
+  return `WH-${String(highestSequence + 1).padStart(4, "0")}`;
+}
+
+function clearBranchDefault(
+  tenantId: string,
+  branchId: string,
+  excludedWarehouseId?: string,
+) {
+  inventoryStore.warehouses().forEach((item, index) => {
+    if (
+      item.tenantId === tenantId &&
+      item.branchId === branchId &&
+      item.id !== excludedWarehouseId &&
+      item.isDefault
+    ) {
+      inventoryStore.replaceWarehouse(index, { ...item, isDefault: false });
+    }
+  });
+}
+
 async function enrich(
   tenantId: string,
   warehouses: Warehouse[],
@@ -107,7 +134,7 @@ export const warehouseService = {
   },
   async options(
     tenantId: string,
-    permittedBranchIds: string[],
+    permittedBranchIds?: string[],
     branchId?: string,
     includeInactive = false,
   ) {
@@ -117,7 +144,7 @@ export const warehouseService = {
       .filter(
         (item) =>
           item.tenantId === tenantId &&
-          permittedBranchIds.includes(item.branchId) &&
+          (!permittedBranchIds || permittedBranchIds.includes(item.branchId)) &&
           (!branchId || item.branchId === branchId) &&
           (includeInactive || item.isActive),
       )
@@ -141,32 +168,29 @@ export const warehouseService = {
   ) {
     await wait();
     const data = warehouseSchema.parse(values);
-    const normalizedCode = data.code.toUpperCase();
     if (!permittedBranchIds.includes(data.branchId))
       throw new Error("Selected branch is outside your permitted scope.");
-    if (
-      inventoryStore
-        .warehouses()
-        .some(
-          (item) =>
-            item.tenantId === tenantId &&
-            item.code.toUpperCase() === normalizedCode,
-        )
-    )
-      throw new Error("A warehouse with this code already exists.");
     const branch = await branchService.getBranchById(tenantId, data.branchId);
     if (!branch) throw new Error("Selected branch is unavailable.");
+    const hasBranchDefault = inventoryStore.warehouses().some(
+      (item) =>
+        item.tenantId === tenantId &&
+        item.branchId === data.branchId &&
+        item.isDefault,
+    );
     const now = new Date().toISOString();
     const item: Warehouse = {
       ...data,
-      code: normalizedCode,
+      code: generateWarehouseCode(tenantId),
       managerId: data.managerId || undefined,
       description: data.description || undefined,
+      isDefault: data.isDefault || !hasBranchDefault,
       id: `warehouse-${crypto.randomUUID().slice(0, 8)}`,
       tenantId,
       createdAt: now,
       updatedAt: now,
     };
+    if (item.isDefault) clearBranchDefault(tenantId, item.branchId);
     inventoryStore.insertWarehouse(item);
     return { ...item };
   },
@@ -187,32 +211,43 @@ export const warehouseService = {
       );
     if (index < 0) throw new Error("Warehouse not found.");
     const data = warehouseSchema.parse(values);
-    const normalizedCode = data.code.toUpperCase();
     if (!permittedBranchIds.includes(data.branchId))
       throw new Error("Selected branch is outside your permitted scope.");
-    if (
-      inventoryStore
-        .warehouses()
-        .some(
-          (item) =>
-            item.tenantId === tenantId &&
-            item.id !== id &&
-            item.code.toUpperCase() === normalizedCode,
-        )
-    )
-      throw new Error("A warehouse with this code already exists.");
     const branch = await branchService.getBranchById(tenantId, data.branchId);
     if (!branch) throw new Error("Selected branch is unavailable.");
     const current = inventoryStore.warehouses()[index];
+    const hasOtherBranchDefault = inventoryStore.warehouses().some(
+      (item) =>
+        item.tenantId === tenantId &&
+        item.branchId === data.branchId &&
+        item.id !== id &&
+        item.isDefault,
+    );
+    const hasOtherOriginalBranchDefault = inventoryStore.warehouses().some(
+      (item) =>
+        item.tenantId === tenantId &&
+        item.branchId === current.branchId &&
+        item.id !== id &&
+        item.isDefault,
+    );
+    if (current.isDefault && !data.isDefault && !hasOtherBranchDefault)
+      throw new Error("Each branch must have one default warehouse.");
+    if (
+      current.isDefault &&
+      current.branchId !== data.branchId &&
+      !hasOtherOriginalBranchDefault
+    )
+      throw new Error("Each branch must have one default warehouse.");
     const item: Warehouse = {
       ...current,
       ...data,
-      code: normalizedCode,
+      code: current.code,
       managerId: data.managerId || undefined,
       description: data.description || undefined,
       tenantId,
       updatedAt: new Date().toISOString(),
     };
+    if (item.isDefault) clearBranchDefault(tenantId, item.branchId, id);
     inventoryStore.replaceWarehouse(index, item);
     return { ...item };
   },

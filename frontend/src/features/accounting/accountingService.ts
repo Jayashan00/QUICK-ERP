@@ -59,7 +59,7 @@ let referenceRecords: ReferenceRecord[] = [
   { id: 'budget-001', tenantId: tenant, branchId: 'branch-001', date: '2026-09-01', reference: 'BUD-001', name: 'Office expenses · September', status: 'active', category: 'budgets', amount: 5000, accountId: 'acct-6100', costCenterId: 'cc-001' },
   { id: 'asset-001', tenantId: tenant, branchId: 'branch-001', date: '2026-09-02', reference: 'FA-001', name: 'Office laptop', status: 'in_use', category: 'fixed-assets', amount: 1500, notes: 'Acquisition cost; depreciation policy pending.' },
   { id: 'memo-001', tenantId: tenant, branchId: 'branch-001', date: '2026-09-27', reference: 'CM-001', name: 'Customer credit adjustment', status: 'draft', category: 'credit-memos', amount: 120, notes: 'Accounting effect pending approval.' },
-  { id: 'rec-001', tenantId: tenant, branchId: 'branch-001', date: '2026-09-28', reference: 'REC-001', name: 'Monthly office allocation', status: 'active', category: 'recurring', amount: 300, notes: 'Monthly mock schedule; no automatic posting.' },
+  { id: 'rec-001', tenantId: tenant, branchId: 'branch-001', date: '2026-09-28', reference: 'REC-001', name: 'Monthly office allocation', status: 'active', category: 'recurring', amount: 300, notes: 'Monthly recurring schedule; no automatic posting.' },
 ];
 const auditEvents: AuditEvent[] = [];
 const id = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
@@ -80,15 +80,43 @@ function audit(scope: AccountingScope, actor: Actor, action: string, reference: 
 function journalTotals(lines: JournalLine[]) {
   return { debit: round(lines.reduce((sum, line) => sum + line.debit, 0)), credit: round(lines.reduce((sum, line) => sum + line.credit, 0)) };
 }
-function validateLines(lines: JournalLine[], tenantId: string) {
+function validateLines(lines: JournalLine[], tenantId: string, scope?: AccountingScope) {
   if (lines.length < 2) throw new Error('Enter at least two journal lines.');
   for (const line of lines) {
     if (!accounts.some((account) => account.id === line.accountId && account.tenantId === tenantId && account.active)) throw new Error('Select an active account on every line.');
     if (line.costCenterId && !referenceRecords.some((center) => center.id === line.costCenterId && center.tenantId === tenantId && center.category === 'cost-centers' && center.status === 'active')) throw new Error('Select an active cost center.');
     if (line.debit < 0 || line.credit < 0 || (line.debit > 0 && line.credit > 0) || (line.debit === 0 && line.credit === 0)) throw new Error('Each line needs a positive debit or credit.');
   }
+
+  // Prevent selecting the same account for both Debit and Credit lines within a single Journal Entry
+  const debitAccountIds = new Set(lines.filter((l) => l.debit > 0 && l.accountId).map((l) => l.accountId));
+  const duplicate = lines.find((l) => l.credit > 0 && l.accountId && debitAccountIds.has(l.accountId));
+  if (duplicate) {
+    throw new Error('The same account cannot be selected for both Debit and Credit lines within a single Journal Entry.');
+  }
+
   const totals = journalTotals(lines);
   if (totals.debit === 0 || totals.debit !== totals.credit) throw new Error('Journal debits and credits must balance.');
+
+  // Validate transfers do not exceed available account balance
+  if (scope) {
+    const creditSums = new Map<string, number>();
+    for (const line of lines) {
+      if (line.credit > 0 && line.accountId) {
+        creditSums.set(line.accountId, (creditSums.get(line.accountId) ?? 0) + line.credit);
+      }
+    }
+    for (const [accountId, totalCredit] of creditSums.entries()) {
+      const account = accounts.find((a) => a.id === accountId && a.tenantId === tenantId);
+      if (account) {
+        const available = accountingService.availableBalance(scope, accountId);
+        const isRestricted = Boolean(account.cashKind) || (account.type === 'asset' && available > 0);
+        if (isRestricted && totalCredit > available) {
+          throw new Error(`Insufficient balance: Transfer amount (${totalCredit.toFixed(2)}) exceeds available balance (${available.toFixed(2)}) for account ${account.name}.`);
+        }
+      }
+    }
+  }
 }
 const payableRows = (scope: AccountingScope, filters: Filters = {}) => visible(purchasingStore.invoices(), scope, filters).filter((invoice) => (!filters.from || invoice.invoiceDate >= filters.from) && (!filters.to || invoice.invoiceDate <= filters.to)).map((invoice) => {
   const paid = settlementStore.records().filter((item) => item.tenantId === scope.tenantId && item.kind === 'payment' && item.documentId === invoice.id).reduce((sum, item) => sum + (item.documentAmount ?? item.amount), invoice.paidAmount);
@@ -334,21 +362,59 @@ export const accountingService = {
     return item;
   },
   openingBalances: (scope: AccountingScope, filters: Filters = {}) => visible(openingBalances, scope, filters),
-  addOpeningBalance(scope: AccountingScope, actor: Actor, input: Omit<OpeningBalance, 'id' | 'tenantId' | 'history'>) {
+  saveOpeningBalance(scope: AccountingScope, actor: Actor, input: Omit<OpeningBalance, 'id' | 'tenantId' | 'history'> & { id?: string }) {
     assertScope(scope, input.branchId);
-    assertOpenAccountingPeriod(scope.tenantId, input.date, 'enter an opening balance');
-    if (!Number.isFinite(input.amount) || input.amount <= 0 || !accounts.some((item) => item.id === input.accountId && item.tenantId === scope.tenantId)) throw new Error('Choose an account and a positive amount.');
+    assertOpenAccountingPeriod(scope.tenantId, input.date, input.id ? 'update an opening balance' : 'enter an opening balance');
+    if (!accounts.some((item) => item.id === input.accountId && item.tenantId === scope.tenantId)) throw new Error('Please select an account.');
+    if (!input.reference?.trim()) throw new Error('Please enter a reference.');
+    if (!Number.isFinite(input.amount) || input.amount <= 0) throw new Error('Please enter a valid amount.');
+
+    if (input.id) {
+      const index = openingBalances.findIndex((row) => row.id === input.id && row.tenantId === scope.tenantId && allowed(scope, row.branchId));
+      if (index < 0) throw new Error('Opening balance not found in permitted branches.');
+      const previous = openingBalances[index];
+      const event = audit(scope, actor, 'Opening balance edited', input.reference);
+      const item: OpeningBalance = {
+        ...input,
+        id: input.id,
+        tenantId: scope.tenantId,
+        history: [...(previous.history ?? []), event],
+      };
+      openingBalances[index] = item;
+      return item;
+    }
+
     const event = audit(scope, actor, 'Opening balance entered', input.reference);
-    const item = { ...input, id: id('opening'), tenantId: scope.tenantId, history: [event] };
+    const item: OpeningBalance = { ...input, id: id('opening'), tenantId: scope.tenantId, history: [event] };
     openingBalances.unshift(item);
     return item;
   },
+  addOpeningBalance(scope: AccountingScope, actor: Actor, input: Omit<OpeningBalance, 'id' | 'tenantId' | 'history'>) {
+    return this.saveOpeningBalance(scope, actor, input);
+  },
+  deleteOpeningBalance(scope: AccountingScope, actor: Actor, id: string) {
+    assertScope(scope, scope.branchId);
+    const index = openingBalances.findIndex((row) => row.id === id && row.tenantId === scope.tenantId && allowed(scope, row.branchId));
+    if (index < 0) throw new Error('Opening balance not found in permitted branches.');
+    const item = openingBalances[index];
+    assertOpenAccountingPeriod(scope.tenantId, item.date, 'delete an opening balance');
+    audit(scope, actor, 'Opening balance deleted', item.reference);
+    openingBalances.splice(index, 1);
+    return item;
+  },
   journals: (scope: AccountingScope, filters: Filters = {}) => visible(journals, scope, filters),
+  availableBalance(scope: AccountingScope, accountId: string): number {
+    const account = accounts.find((a) => a.id === accountId && a.tenantId === scope.tenantId);
+    if (!account) return 0;
+    const lines = this.ledger(scope).filter((row) => row.accountId === accountId);
+    const net = lines.reduce((sum, row) => sum + row.debit - row.credit, 0);
+    return round(net);
+  },
   saveJournal(scope: AccountingScope, actor: Actor, input: Pick<Journal, 'branchId' | 'date' | 'reference' | 'notes' | 'lines' | 'attachments'> & { id?: string }) {
     assertScope(scope, input.branchId);
     if (!input.date || !input.reference.trim()) throw new Error('Date and reference are required.');
     assertOpenAccountingPeriod(scope.tenantId, input.date, 'save a journal');
-    validateLines(input.lines, scope.tenantId);
+    validateLines(input.lines, scope.tenantId, scope);
     const previous = journals.find((item) => item.id === input.id && item.tenantId === scope.tenantId && allowed(scope, item.branchId));
     if (input.id && (!previous || !['draft', 'rejected'].includes(previous.status))) throw new Error('Only draft or rejected journals can be edited.');
     const event = audit(scope, actor, input.id ? 'Journal edited' : 'Journal created', input.reference);
@@ -398,6 +464,12 @@ export const accountingService = {
     const documentAmount = input.documentAmount ?? input.amount;
     if (!Number.isFinite(input.amount) || input.amount <= 0 || !Number.isFinite(documentAmount) || documentAmount <= 0 || documentAmount > document.outstanding) throw new Error('Amount must be positive and cannot exceed the outstanding balance.');
     if (!accounts.some((row) => row.id === input.accountId && row.tenantId === scope.tenantId && row.type === 'asset' && row.active && Boolean(row.cashKind))) throw new Error('Select an active cash or bank account linked to Finance settings.');
+    if (input.kind === 'payment') {
+      const available = this.availableBalance(scope, input.accountId);
+      if (input.amount > available) {
+        throw new Error(`Insufficient balance: Transfer amount (${input.amount.toFixed(2)}) exceeds available balance (${available.toFixed(2)}).`);
+      }
+    }
     if (input.kind === 'receipt') {
       if (!salesStore.invoices().some((row) => row.id === input.documentId && row.tenantId === scope.tenantId && row.branchId === input.branchId)) throw new Error('The customer invoice is unavailable.');
       const receivableAccount = accounts.find((row) => row.tenantId === scope.tenantId && row.code === '1300' && row.active)?.id;

@@ -5,7 +5,7 @@ import {
   Plus,
 } from "lucide-react";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { useBranch } from "@/core/branch/branch-context";
 import { useTenant } from "@/core/tenant/tenant-context";
 import { useAuth } from "@/core/auth/auth-context";
@@ -37,7 +37,6 @@ import { getErrorMessage } from "@/shared/utils/errors";
 import { downloadCsv } from "@/shared/utils/fileExport";
 import { appToast } from "@/shared/utils/toast";
 import {
-  RecurringInvoiceFormModal,
   SalesOrderFormModal,
   SalesInvoiceFormModal,
   SalesQuotationFormModal,
@@ -47,8 +46,6 @@ import {
   useCreditNotes,
   useCreditNotePdf,
   useDeliveryNotes,
-  useRecurringInvoices,
-  useSalesCommissions,
   useSalesCustomerOptions,
   useSalesInvoicePdf,
   useSalesInvoices,
@@ -61,7 +58,6 @@ import {
 } from "../hooks/useSales";
 import type { SalesKind, SalesListResult } from "../services/salesService";
 import type {
-  CommissionSummary,
   SalesDocument,
   SalesInvoice,
   SalesOrder,
@@ -1585,102 +1581,5 @@ export function CreditNotesPage() {
       onCreate={() => undefined}
       amount={(row) => row.amount}
     />
-  );
-}
-export function RecurringInvoicesPage() {
-  const filters = useFilters(),
-    query = useRecurringInvoices(filters.params),
-    mutations = useSalesMutations(),
-    [open, setOpen] = useState(false);
-  return (
-    <>
-      <SalesListPage
-        kind="recurring"
-        title="Recurring Invoices"
-        description="Configure frontend-only customer billing schedules without Accounting posting."
-        statuses={["active", "paused", "completed", "cancelled"]}
-        query={query}
-        filters={filters}
-        canCreate={usePermission(PERMISSIONS.SALES_WORKFLOW.INVOICE_CREATE)}
-        createLabel="New Schedule"
-        onCreate={() => setOpen(true)}
-        amount={(row) => row.totalAmount}
-        actions={(row) =>
-          ["active", "paused"].includes(row.status) ? (
-            <ConfirmAction
-              label={row.status === "active" ? "Pause" : "Resume"}
-              message={`${row.status === "active" ? "Pause" : "Resume"} ${row.referenceNumber}?`}
-              onConfirm={async () => {
-                await mutations.toggleRecurring(row.id);
-              }}
-            />
-          ) : null
-        }
-      />
-      <RecurringInvoiceFormModal isOpen={open} onClose={() => setOpen(false)} />
-    </>
-  );
-}
-export function SalesCommissionsPage() {
-  const query = useSalesCommissions(),
-    currency = useTenantCurrency();
-  const columns: Column<CommissionSummary>[] = [
-    { key: "salespersonName", header: "Salesperson" },
-    {
-      key: "invoicedSales",
-      header: "Invoiced Sales",
-      align: "right",
-      render: (row) => currency.formatMoney(row.invoicedSales),
-    },
-    {
-      key: "collectedSales",
-      header: "Collected Sales",
-      align: "right",
-      render: (row) => currency.formatMoney(row.collectedSales),
-    },
-    {
-      key: "commissionRate",
-      header: "Rate",
-      align: "right",
-      render: (row) => `${row.commissionRate}%`,
-    },
-    {
-      key: "preparedCommission",
-      header: "Prepared Commission",
-      align: "right",
-      render: (row) => currency.formatMoney(row.preparedCommission),
-    },
-    {
-      key: "payrollStatus",
-      header: "Payroll Handoff",
-      render: (row) => (
-        <StatusBadge status={row.payrollStatus} label={row.payrollStatus.replace(/_/g, ' ')} tone={row.payrollStatus === 'included' ? 'success' : 'warning'} />
-      ),
-    },
-  ];
-  return (
-    <PageContainer>
-      <PageHeader
-        title="Salesperson Commissions"
-        description="Track commissions from collected sales payments through HR review and payroll inclusion."
-      />
-      <Link className="mb-4 inline-block text-sm text-blue-700 underline" to="/hr/payroll">Review commission inputs in Payroll</Link>
-      {query.error ? (
-        <ErrorState
-          title="Unable to load commissions"
-          message="Commission preparation is unavailable."
-          onRetry={() => void query.refetch()}
-        />
-      ) : (
-        <DataTable
-          columns={columns}
-          data={query.data ?? []}
-          keyField="salespersonId"
-          isLoading={query.isLoading}
-          emptyTitle="No commission data"
-          emptyMessage="Paid customer invoices will create commission preparation rows."
-        />
-      )}
-    </PageContainer>
   );
 }

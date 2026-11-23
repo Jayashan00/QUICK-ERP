@@ -210,6 +210,11 @@ class PersistenceBridge {
     const known = new Set(data.collections);
     const seeding: string[] = [];
     for (const accessor of getStateAccessors()) {
+      // Platform collections (platform.*) belong strictly to Super Admin ("platform" scope).
+      // Tenant accounts (tenant admin, managers, staff) must never seed or persist platform collections.
+      if (scopeId !== 'platform' && accessor.key.startsWith('platform.')) {
+        continue;
+      }
       this.loadedKeys.add(accessor.key);
       const stored = grouped.get(accessor.key);
       if (known.has(accessor.key) || stored) {
@@ -300,6 +305,13 @@ class PersistenceBridge {
     }, MUTATION_DEBOUNCE_MS);
   }
 
+  /** Manually flushes local changes and pulls latest server changes. */
+  async sync(): Promise<void> {
+    if (this.mode === 'idle') return;
+    await this.flush();
+    if (this.mode === 'tenant') await this.pull();
+  }
+
   private async tick() {
     if (this.mode === 'idle') return;
     await this.flush();
@@ -328,6 +340,7 @@ class PersistenceBridge {
       let changed = false;
       for (const [recordId, json] of upserts) {
         if (isPublic && (recordId === ORDER_RECORD || recordId === ALL_RECORD || recordId === VALUE_RECORD)) continue;
+        if (accessor.key === 'core.auditEvents' && (recordId === ORDER_RECORD || recordId === ALL_RECORD || recordId === VALUE_RECORD)) continue;
         changes.push({ collection: accessor.key, recordId, data: JSON.parse(json) as unknown, deleted: false, baseVersion: this.baseVersionOf(accessor.key, recordId) });
         changed = true;
       }
@@ -490,6 +503,17 @@ class PersistenceBridge {
   }
 
   private handleError(error: unknown) {
+    if (error instanceof ApiError && error.isMaintenance && this.mode === 'tenant') {
+      import('@/core/maintenance/maintenanceState').then(({ triggerMaintenance }) => {
+        triggerMaintenance({
+          message: error.message,
+          startAt: error.startAt,
+          endAt: error.endAt,
+        });
+      }).catch(() => undefined);
+      this.setStatus('offline');
+      return;
+    }
     if (error instanceof ApiError && error.status === 401 && this.mode === 'tenant') {
       this.unauthorizedHandler?.();
       return;

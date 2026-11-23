@@ -21,4 +21,9 @@ export interface ApiErrorResponse {
   message: string;
   errors?: Record<string, string[]>;
   code?: string;
+  expectedStartTime?: string;
+  expectedEndTime?: string;
+  startAt?: string;
+  endAt?: string;
+  details?: Record<string, unknown>;
 }

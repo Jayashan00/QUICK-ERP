@@ -87,7 +87,7 @@ export const dashboardService = {
       metric('stockValue', 'Stock value', rows.reduce((sum, row) => sum + row.stockValue, 0), true);
       metric('outOfStock', 'Out of stock', rows.filter(row => row.alertStatus === 'out_of_stock').length, false, 'Current product / location balances');
       result.lowStock = low.slice(0, 5).map(row => ({ id: row.id, product: row.productName, sku: row.sku, available: row.quantityAvailable, minimum: row.reorderLevel, location: `${row.branchName} / ${row.warehouseName}`, to: `/inventory/stock/${row.productId}` }));
-      if (low.length) result.alerts.push({ id: 'low-stock', title: `${low.length} stock balances need attention`, description: 'Review availability and reorder levels.', to: '/inventory/reorder', severity: 'warning' });
+      if (low.length) result.alerts.push({ id: 'low-stock', title: `${low.length} stock balances need attention`, description: 'Review availability and low stock levels.', to: '/inventory/reorder', severity: 'warning' });
     }});
     if (can(P.INVENTORY.VIEW) && can(P.INVENTORY.ADJUSTMENTS_VIEW) && can(P.INVENTORY.STOCK_APPROVE)) jobs.push({ name: 'Stock approvals', run: async () => { const rows = await stockWorkflowService.listAdjustments(scope, params); rows.data.filter(row => row.status === 'pending_approval').forEach(row => approval({ id: row.id, module: 'Stock adjustment', reference: row.referenceNumber, description: row.reason, requester: row.createdByName, date: row.createdAt.slice(0, 10), status: row.status, to: `/inventory/adjustments?record=${row.id}&reference=${encodeURIComponent(row.referenceNumber)}` })); }});
     if (can(P.FINANCE.RECEIVABLES_VIEW)) jobs.push({ name: 'Receivables', run: () => {

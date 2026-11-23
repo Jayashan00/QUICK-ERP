@@ -14,6 +14,7 @@ import { stockWorkflowService } from "../src/features/inventory/services/stockWo
 import { inventorySettingsService } from "../src/features/inventory/services/inventorySettingsService";
 import { stockVelocityService } from "../src/features/inventory/services/stockVelocityService";
 import { stockLocationService } from "../src/features/inventory/services/stockLocationService";
+import { stockLocationSchema } from "../src/features/inventory/schemas/inventorySchemas";
 import { warehouseService } from "../src/features/inventory/services/warehouseService";
 import {
   calculateAvailableQuantity,
@@ -30,6 +31,10 @@ assert.ok(inventoryReportService.aging(reportScope, { asOf: "2026-10-05" }).ever
 assert.ok(inventoryReportService.expiry(reportScope, { asOf: "2026-10-05" }).every((row) => row.branchId === "branch-001"));
 assert.ok(inventoryReportService.deadStock(reportScope, { asOf: "2026-10-05", thresholdDays: 90 }).every((row) => row.branchId === "branch-001"));
 assert.ok(inventoryReportService.wastage(reportScope).every((row) => row.branchId === "branch-001"));
+const wastageRows = inventoryReportService.wastage(reportScope);
+assert(wastageRows.length > 0);
+assert.equal(wastageRows[0].products, "24-inch IPS Office Monitor");
+assert.notEqual(wastageRows[0].products, "prod-002");
 assert.equal(inventoryReportService.aging(otherReportScope).length, 0);
 assert.equal(inventoryReportService.inTransit(otherReportScope).length, 0);
 const margins = inventoryReportService.margins(reportScope);
@@ -142,6 +147,44 @@ assert(
       item.branchId === "branch-001" &&
       item.warehouseId === "warehouse-hq-main",
   ),
+);
+
+// Stock location name validation: reject names with only numbers, only special characters, or numbers and symbols
+assert.equal(
+  stockLocationSchema.safeParse({
+    name: "12345",
+    code: "LOC-01",
+    warehouseId: "warehouse-hq-main",
+    isActive: true,
+  }).success,
+  false,
+);
+assert.equal(
+  stockLocationSchema.safeParse({
+    name: "!@#$%",
+    code: "LOC-02",
+    warehouseId: "warehouse-hq-main",
+    isActive: true,
+  }).success,
+  false,
+);
+assert.equal(
+  stockLocationSchema.safeParse({
+    name: "123-456",
+    code: "LOC-03",
+    warehouseId: "warehouse-hq-main",
+    isActive: true,
+  }).success,
+  false,
+);
+assert.equal(
+  stockLocationSchema.safeParse({
+    name: "Main Storage B",
+    code: "LOC-04",
+    warehouseId: "warehouse-hq-main",
+    isActive: true,
+  }).success,
+  true,
 );
 
 const batches = await inventoryTrackingService.listBatches(mainScope, {
@@ -470,6 +513,110 @@ const qaTransfer = await stockWorkflowService.createTransfer(
   },
   qaActor,
 );
+
+// Source & Destination validation: same branch rejected
+await assert.rejects(
+  stockWorkflowService.createTransfer(
+    mainScope,
+    ["branch-001"],
+    {
+      sourceBranchId: "branch-001",
+      sourceWarehouseId: "warehouse-hq-main",
+      sourceLocationId: "loc-hq-main",
+      destinationBranchId: "branch-001",
+      destinationWarehouseId: "warehouse-west-main",
+      destinationLocationId: "loc-west-main",
+      lines: [{ productId: "prod-002", quantity: 1, serialReferences: [] }],
+    },
+    qaActor,
+  ),
+  /Source and destination branches must be different/,
+);
+
+// Source & Destination validation: same warehouse rejected
+await assert.rejects(
+  stockWorkflowService.createTransfer(
+    mainScope,
+    ["branch-001"],
+    {
+      sourceBranchId: "branch-001",
+      sourceWarehouseId: "warehouse-hq-main",
+      sourceLocationId: "loc-hq-main",
+      destinationBranchId: "branch-002",
+      destinationWarehouseId: "warehouse-hq-main",
+      destinationLocationId: "loc-west-main",
+      lines: [{ productId: "prod-002", quantity: 1, serialReferences: [] }],
+    },
+    qaActor,
+  ),
+  /Source and destination warehouses must be different/,
+);
+
+// Source & Destination validation: same location rejected
+await assert.rejects(
+  stockWorkflowService.createTransfer(
+    mainScope,
+    ["branch-001"],
+    {
+      sourceBranchId: "branch-001",
+      sourceWarehouseId: "warehouse-hq-main",
+      sourceLocationId: "loc-hq-main",
+      destinationBranchId: "branch-002",
+      destinationWarehouseId: "warehouse-west-main",
+      destinationLocationId: "loc-hq-main",
+      lines: [{ productId: "prod-002", quantity: 1, serialReferences: [] }],
+    },
+    qaActor,
+  ),
+  /Source and destination locations must be different/,
+);
+
+// Unauthorized source branch rejected
+await assert.rejects(
+  stockWorkflowService.createTransfer(
+    { tenantId: "tenant-001", branchId: "branch-001" },
+    ["branch-001"],
+    {
+      sourceBranchId: "branch-002",
+      sourceWarehouseId: "warehouse-west-main",
+      sourceLocationId: "loc-west-main",
+      destinationBranchId: "branch-001",
+      destinationWarehouseId: "warehouse-hq-main",
+      destinationLocationId: "loc-hq-main",
+      lines: [{ productId: "prod-002", quantity: 1, serialReferences: [] }],
+    },
+    qaActor,
+  ),
+  /outside your permitted scope/,
+);
+
+// Cross-branch transfer allowed without user being assigned to destination branch
+const crossBranchTransfer = await stockWorkflowService.createTransfer(
+  { tenantId: "tenant-001", branchId: "branch-001" },
+  ["branch-001"], // User only has branch-001
+  {
+    sourceBranchId: "branch-001",
+    sourceWarehouseId: "warehouse-hq-main",
+    sourceLocationId: "loc-hq-main",
+    destinationBranchId: "branch-002", // Destination is branch-002
+    destinationWarehouseId: "warehouse-west-main",
+    destinationLocationId: "loc-west-main",
+    notes: "Cross branch from branch-001 only user",
+    lines: [{ productId: "prod-002", quantity: 1, serialReferences: [] }],
+  },
+  qaActor,
+);
+assert.equal(crossBranchTransfer.destinationBranchId, "branch-002");
+
+// Verify destination warehouse & location options load correctly without branch permission restrictions
+const destWhOptions = await warehouseService.options("tenant-001", undefined, "branch-002");
+assert(destWhOptions.some((w) => w.id === "warehouse-west-main"));
+assert(destWhOptions.every((w) => w.tenantId === "tenant-001" && w.branchId === "branch-002"));
+
+const destLocOptions = await stockLocationService.options("tenant-001", undefined, "warehouse-west-main");
+assert(destLocOptions.some((l) => l.id === "loc-west-main"));
+assert(destLocOptions.every((l) => l.tenantId === "tenant-001" && l.warehouseId === "warehouse-west-main"));
+
 for (const action of ["approve", "dispatch", "mark_in_transit", "receive", "complete"] as const)
   await stockWorkflowService.advanceTransfer(mainScope, mainBranches, qaTransfer.id, action, qaActor);
 const completedTransfer = inventoryStore.transfers().find((item) => item.id === qaTransfer.id);

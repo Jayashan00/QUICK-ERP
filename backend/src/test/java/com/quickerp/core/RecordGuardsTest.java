@@ -82,6 +82,92 @@ class RecordGuardsTest {
     }
 
     @Test
+    void flashSalesAreProductOnlyAndUseMakerCheckerApproval() throws Exception {
+        Principal creator = new Principal("usr-sales", "tenant-001", false, "role-sales", "sales@test");
+        Principal approver = new Principal("usr-manager", "tenant-001", false, "role-manager", "manager@test");
+        Permissions creatorPermissions = Permissions.of(List.of(
+                "sales.flash_sales.create", "sales.flash_sales.edit", "sales.flash_sales.submit"));
+        Permissions approvalPermissions = Permissions.of(List.of("sales.flash_sales.approve"));
+        JsonNode product = mapper.readTree("{\"id\":\"prod-1\",\"type\":\"goods\",\"status\":\"active\","
+                + "\"isSellable\":true,\"sellingPrice\":100,\"costPrice\":60}");
+        JsonNode service = mapper.readTree("{\"id\":\"svc-1\",\"type\":\"service\",\"status\":\"active\","
+                + "\"isSellable\":true,\"sellingPrice\":100,\"costPrice\":0}");
+        JsonNode draft = mapper.readTree("{\"id\":\"flash-1\",\"tenantId\":\"tenant-001\",\"branchId\":\"branch-1\","
+                + "\"name\":\"Weekend deal\",\"productId\":\"prod-1\",\"salePrice\":80,"
+                + "\"startsAt\":\"2026-12-01T00:00:00Z\",\"endsAt\":\"2026-12-02T00:00:00Z\","
+                + "\"channels\":[\"pos\",\"storefront\"],\"minimumQuantity\":1,"
+                + "\"allowAdditionalDiscounts\":false,\"status\":\"draft\",\"enabled\":false,"
+                + "\"createdBy\":\"usr-sales\",\"consumedQuantity\":0}");
+
+        assertDoesNotThrow(() -> RecordGuards.checkFlashSale(
+                creatorPermissions, creator, "tenant-001", product, null, draft, List.of()));
+        assertThrows(ApiException.class, () -> RecordGuards.checkFlashSale(
+                creatorPermissions, creator, "tenant-001", service, null, draft, List.of()));
+
+        JsonNode belowCost = draft.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) belowCost).put("salePrice", 50);
+        assertThrows(ApiException.class, () -> RecordGuards.checkFlashSale(
+                creatorPermissions, creator, "tenant-001", product, null, belowCost, List.of()));
+
+        JsonNode pending = draft.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) pending).put("status", "pending_approval");
+        assertDoesNotThrow(() -> RecordGuards.checkFlashSale(
+                creatorPermissions, creator, "tenant-001", product, draft, pending, List.of()));
+
+        JsonNode approved = pending.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) approved).put("status", "approved").put("enabled", true);
+        assertThrows(ApiException.class, () -> RecordGuards.checkFlashSale(
+                approvalPermissions, creator, "tenant-001", product, pending, approved, List.of()));
+        assertDoesNotThrow(() -> RecordGuards.checkFlashSale(
+                approvalPermissions, approver, "tenant-001", product, pending, approved, List.of()));
+
+        JsonNode overlapping = draft.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) overlapping).put("id", "flash-2");
+        assertThrows(ApiException.class, () -> RecordGuards.checkFlashSale(
+                creatorPermissions, creator, "tenant-001", product, null, overlapping, List.of(approved)));
+    }
+
+    @Test
+    void purchaseRequestsUseMakerCheckerAndReturnForCorrection() throws Exception {
+        Principal requester = new Principal("usr-requester", "tenant-001", false, "role-requester", "requester@test");
+        Principal approver = new Principal("usr-approver", "tenant-001", false, "role-approver", "approver@test");
+        Permissions requesterPermissions = Permissions.of(List.of(
+                "purchases.requests.create", "purchases.requests.edit", "purchases.requests.submit", "purchases.requests.cancel"));
+        Permissions approverPermissions = Permissions.of(List.of("purchases.requests.approve", "purchases.requests.return"));
+        JsonNode draft = mapper.readTree("{\"id\":\"pr-1\",\"tenantId\":\"tenant-001\",\"branchId\":\"branch-1\","+
+                "\"warehouseId\":\"wh-1\",\"departmentId\":\"dept-operations\",\"departmentName\":\"Operations\","+
+                "\"costCenterId\":\"cc-ops-hq\",\"costCenterName\":\"OPS-HQ\",\"priority\":\"normal\","+
+                "\"requiredDate\":\"2026-12-01\",\"reason\":\"Replenish stock\",\"estimatedTotal\":250,"+
+                "\"items\":[{\"productId\":\"prod-1\",\"quantity\":5}],\"status\":\"draft\","+
+                "\"requesterId\":\"usr-requester\",\"createdBy\":\"usr-requester\"}");
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(requesterPermissions, requester, null, draft));
+
+        JsonNode submitted = draft.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) submitted).put("status", "submitted");
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(requesterPermissions, requester, draft, submitted));
+
+        JsonNode approved = submitted.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) approved).put("status", "approved");
+        assertThrows(ApiException.class, () -> RecordGuards.checkPurchaseRequest(approverPermissions, requester, submitted, approved));
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(Permissions.everything(), requester, submitted, approved));
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(approverPermissions, approver, submitted, approved));
+
+        JsonNode returnedWithoutReason = submitted.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) returnedWithoutReason).put("status", "returned");
+        assertThrows(ApiException.class, () -> RecordGuards.checkPurchaseRequest(approverPermissions, approver, submitted, returnedWithoutReason));
+        JsonNode returned = returnedWithoutReason.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) returned).put("returnReason", "Clarify the required quantity.");
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(approverPermissions, approver, submitted, returned));
+
+        JsonNode corrected = returned.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) corrected).put("reason", "Replenish verified stock shortage");
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(requesterPermissions, requester, returned, corrected));
+        JsonNode resubmitted = corrected.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) resubmitted).put("status", "submitted").remove("returnReason");
+        assertDoesNotThrow(() -> RecordGuards.checkPurchaseRequest(requesterPermissions, requester, corrected, resubmitted));
+    }
+
+    @Test
     void customerCreditNotesFollowFinanceWorkflowAndLockAfterPosting() throws Exception {
         JsonNode pending = mapper.readTree("{\"id\":\"cn-1\",\"status\":\"pending_approval\",\"amount\":100,\"auditEntries\":[]}");
         JsonNode approved = mapper.readTree("{\"id\":\"cn-1\",\"status\":\"approved\",\"amount\":100,\"auditEntries\":[]}");
@@ -158,5 +244,104 @@ class RecordGuardsTest {
         assertThrows(ApiException.class, () -> RecordGuards.checkRole(Permissions.everything(), "r1", "t1", "r9", null, platform));
         assertThrows(ApiException.class, () -> RecordGuards.checkRole(Permissions.everything(), "r1", "t2", "r9", null, cashier));
         assertDoesNotThrow(() -> RecordGuards.checkRole(Permissions.everything(), "r9", "t1", "r9", cashier, promoted));
+    }
+
+    @Test
+    void stockTransferValidatesDifferencesPermissionsTenantsAndLocations() throws Exception {
+        Permissions transferUser = Permissions.of(List.of("stock.transfer"));
+        Permissions noTransferUser = Permissions.of(List.of("pos.sell"));
+        Principal user = new Principal("usr-1", "tenant-1", false, "role-1", "user@test");
+
+        java.util.Set<String> allowedBranches = java.util.Set.of("branch-1"); // User only assigned to branch-1!
+
+        java.util.Map<String, JsonNode> branches = java.util.Map.of(
+                "branch-1", mapper.readTree("{\"id\":\"branch-1\",\"tenantId\":\"tenant-1\",\"isActive\":true}"),
+                "branch-2", mapper.readTree("{\"id\":\"branch-2\",\"tenantId\":\"tenant-1\",\"isActive\":true}"),
+                "branch-other-tenant", mapper.readTree("{\"id\":\"branch-other-tenant\",\"tenantId\":\"tenant-2\",\"isActive\":true}")
+        );
+
+        java.util.Map<String, JsonNode> warehouses = java.util.Map.of(
+                "wh-1", mapper.readTree("{\"id\":\"wh-1\",\"tenantId\":\"tenant-1\",\"branchId\":\"branch-1\",\"isActive\":true}"),
+                "wh-2", mapper.readTree("{\"id\":\"wh-2\",\"tenantId\":\"tenant-1\",\"branchId\":\"branch-2\",\"isActive\":true}"),
+                "wh-inactive", mapper.readTree("{\"id\":\"wh-inactive\",\"tenantId\":\"tenant-1\",\"branchId\":\"branch-2\",\"isActive\":false}")
+        );
+
+        java.util.Map<String, JsonNode> locations = java.util.Map.of(
+                "loc-1", mapper.readTree("{\"id\":\"loc-1\",\"tenantId\":\"tenant-1\",\"branchId\":\"branch-1\",\"warehouseId\":\"wh-1\",\"isActive\":true}"),
+                "loc-2", mapper.readTree("{\"id\":\"loc-2\",\"tenantId\":\"tenant-1\",\"branchId\":\"branch-2\",\"warehouseId\":\"wh-2\",\"isActive\":true}")
+        );
+
+        java.util.function.Function<String, JsonNode> bLookup = branches::get;
+        java.util.function.Function<String, JsonNode> wLookup = warehouses::get;
+        java.util.function.Function<String, JsonNode> lLookup = locations::get;
+
+        // Valid cross-branch transfer: source branch-1 -> destination branch-2 (user only assigned to branch-1)
+        JsonNode validTransfer = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-2\",\"destinationWarehouseId\":\"wh-2\",\"destinationLocationId\":\"loc-2\"}");
+
+        assertDoesNotThrow(() -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, validTransfer, bLookup, wLookup, lLookup
+        ));
+
+        // 1. Same branch rejected
+        JsonNode sameBranch = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-1\",\"destinationWarehouseId\":\"wh-2\",\"destinationLocationId\":\"loc-2\"}");
+        ApiException e1 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, sameBranch, bLookup, wLookup, lLookup
+        ));
+        assertEquals("Source and destination branches must be different.", e1.getMessage());
+
+        // 2. Same warehouse rejected
+        JsonNode sameWarehouse = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-2\",\"destinationWarehouseId\":\"wh-1\",\"destinationLocationId\":\"loc-2\"}");
+        ApiException e2 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, sameWarehouse, bLookup, wLookup, lLookup
+        ));
+        assertEquals("Source and destination warehouses must be different.", e2.getMessage());
+
+        // 3. Same location rejected
+        JsonNode sameLocation = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-2\",\"destinationWarehouseId\":\"wh-2\",\"destinationLocationId\":\"loc-1\"}");
+        ApiException e3 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, sameLocation, bLookup, wLookup, lLookup
+        ));
+        assertEquals("Source and destination locations must be different.", e3.getMessage());
+
+        // 4. Missing permissions rejected
+        ApiException e4 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                noTransferUser, user, allowedBranches, "tenant-1", null, validTransfer, bLookup, wLookup, lLookup
+        ));
+        assertEquals("You do not have permission to initiate stock transfers.", e4.getMessage());
+
+        // 5. Unauthorized source branch rejected (user has branch-1, but source is branch-2)
+        JsonNode unauthorizedSource = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-2\",\"sourceWarehouseId\":\"wh-2\",\"sourceLocationId\":\"loc-2\","
+                + "\"destinationBranchId\":\"branch-1\",\"destinationWarehouseId\":\"wh-1\",\"destinationLocationId\":\"loc-1\"}");
+        ApiException e5 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, unauthorizedSource, bLookup, wLookup, lLookup
+        ));
+        assertEquals("You are not authorized to transfer stock from the selected source branch.", e5.getMessage());
+
+        // 6. Cross-tenant destination rejected
+        JsonNode crossTenant = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-other-tenant\",\"destinationWarehouseId\":\"wh-2\",\"destinationLocationId\":\"loc-2\"}");
+        ApiException e6 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, crossTenant, bLookup, wLookup, lLookup
+        ));
+        assertEquals("The destination branch belongs to another organization.", e6.getMessage());
+
+        // 7. Inactive warehouse rejected
+        JsonNode inactiveWh = mapper.readTree("{\"id\":\"trf-1\",\"tenantId\":\"tenant-1\","
+                + "\"sourceBranchId\":\"branch-1\",\"sourceWarehouseId\":\"wh-1\",\"sourceLocationId\":\"loc-1\","
+                + "\"destinationBranchId\":\"branch-2\",\"destinationWarehouseId\":\"wh-inactive\",\"destinationLocationId\":\"loc-2\"}");
+        ApiException e7 = assertThrows(ApiException.class, () -> RecordGuards.checkStockTransfer(
+                transferUser, user, allowedBranches, "tenant-1", null, inactiveWh, bLookup, wLookup, lLookup
+        ));
+        assertEquals("The selected destination warehouse is invalid or inactive.", e7.getMessage());
     }
 }

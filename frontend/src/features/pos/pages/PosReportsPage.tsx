@@ -36,5 +36,5 @@ function PosDetailedReports({ overview }: { overview: ModuleDashboardOverview })
   </div>;
 }
 export function PosReportsPage() {
-  return <PageContainer><PageHeader title="POS Analytics" description="Sales, tenders, cashier performance and Z-reports for the active branch." /><ModuleDashboardPanel module="pos" after={overview => <PosDetailedReports overview={overview} />} /></PageContainer>;
+  return <PageContainer><PageHeader title="POS Analytics" description="Sales, tenders, cashier performance and Z-reports for the active branch." /><ModuleDashboardPanel module="pos" showWorkflow={false} after={overview => <PosDetailedReports overview={overview} />} /></PageContainer>;
 }

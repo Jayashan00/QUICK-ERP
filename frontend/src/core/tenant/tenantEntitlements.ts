@@ -1,7 +1,7 @@
 export const TENANT_MODULES = [
   'hr', 'inventory', 'stock', 'crm', 'customers', 'suppliers', 'products', 'sales',
   'purchases', 'finance', 'projects', 'pos', 'web_store', 'reports', 'documents',
-  'notifications', 'settings',
+  'notifications', 'chatbot', 'settings',
 ] as const;
 
 export type TenantModule = (typeof TENANT_MODULES)[number];
@@ -19,6 +19,7 @@ export interface TenantLimits {
   maxBranches: number;
   maxWarehouses?: number;
   maxStorageGb?: number;
+  includeAdminInUserLimit?: boolean;
 }
 
 export interface TenantUsage {
@@ -35,11 +36,20 @@ export interface TenantAdmin {
   lastActiveAt?: string;
 }
 
+export interface TenantSubscriptionInfo {
+  plan?: string;
+  start?: string;
+  expiry?: string;
+  status?: 'active' | 'suspended' | 'expired' | 'pending';
+  daysRemaining?: number;
+}
+
 export interface TenantEntitlements {
   enabledModules: TenantModule[];
   limits: TenantLimits;
   usage: TenantUsage;
   admin: TenantAdmin;
+  subscription?: TenantSubscriptionInfo;
 }
 
 export const TENANT_MODULE_CATALOG: TenantModuleDefinition[] = [
@@ -59,6 +69,7 @@ export const TENANT_MODULE_CATALOG: TenantModuleDefinition[] = [
   { id: 'reports', label: 'Reports', group: 'Workspace', description: 'Operational and analytical reporting.' },
   { id: 'documents', label: 'Documents', group: 'Workspace', description: 'Company documents and attachments.' },
   { id: 'notifications', label: 'Notifications', group: 'Workspace', description: 'Role-aware notifications, notices and delivery preferences.' },
+  { id: 'chatbot', label: 'AI Chatbot', group: 'Workspace', description: 'AI assistant access and conversational ERP help.' },
   { id: 'settings', label: 'Settings', group: 'Workspace', description: 'Tenant users, roles, branches and company settings.' },
 ];
 
@@ -73,6 +84,7 @@ const clone = (value: TenantEntitlements): TenantEntitlements => structuredClone
 export const tenantEntitlementService = {
   get(tenantId: string): TenantEntitlements | null { const value = records.get(tenantId); return value ? clone(value) : null; },
   set(tenantId: string, value: TenantEntitlements): TenantEntitlements { records.set(tenantId, clone(value)); return clone(value); },
+  delete(tenantId: string) { records.delete(tenantId); },
   updateUsage(tenantId: string, usage: Partial<TenantUsage>) { const current = records.get(tenantId); if (current) current.usage = { ...current.usage, ...usage }; },
   isModuleEnabled(tenantId: string, module: TenantModule) { return records.get(tenantId)?.enabledModules.includes(module) ?? false; },
 };
@@ -80,10 +92,11 @@ export const tenantEntitlementService = {
 const permissionModuleAliases: Record<string, TenantModule> = {
   hr: 'hr', payroll: 'hr', employees: 'hr', inventory: 'inventory', stock: 'stock', warehouses: 'inventory',
   crm: 'crm', leads: 'crm', opportunities: 'crm', customers: 'customers', suppliers: 'suppliers',
-  products: 'products', sales: 'sales', quotation: 'sales', salesOrder: 'sales', delivery: 'sales', invoice: 'sales', payment: 'sales', salesReturn: 'sales',
+  products: 'products', sales: 'sales', quotation: 'sales', salesOrder: 'sales', delivery: 'sales', invoice: 'sales', payment: 'sales', salesReturn: 'sales', creditNote: 'sales',
   pos: 'pos', purchases: 'purchases', purchasing: 'purchases', purchase: 'purchases', rfq: 'purchases', grn: 'purchases', purchaseInvoice: 'purchases',
   finance: 'finance', accounting: 'finance', projects: 'projects', storefront: 'web_store', reports: 'reports',
   documents: 'documents', notifications: 'notifications', notices: 'notifications', notificationPreferences: 'notifications',
+  ai_assistant: 'chatbot', chatbot: 'chatbot',
   settings: 'settings', users: 'settings', roles: 'settings', branches: 'settings',
 };
 
@@ -143,7 +156,7 @@ export function moduleForPath(path: string): TenantModule | null {
     ['/hr', 'hr'], ['/inventory', 'inventory'], ['/stock', 'stock'], ['/crm', 'crm'], ['/customers', 'customers'],
     ['/suppliers', 'suppliers'], ['/products', 'products'], ['/sales', 'sales'], ['/purchases', 'purchases'],
     ['/accounting', 'finance'], ['/finance', 'finance'], ['/projects', 'projects'], ['/pos', 'pos'], ['/storefront', 'web_store'],
-    ['/reports', 'reports'], ['/documents', 'documents'], ['/notifications', 'notifications'], ['/settings', 'settings'],
+    ['/documents', 'documents'], ['/notifications', 'notifications'], ['/settings', 'settings'],
   ];
   return mappings.find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`))?.[1] ?? null;
 }
@@ -158,4 +171,25 @@ export function expandModuleDependencies(modules: TenantModule[]): TenantModule[
     }
   }
   return TENANT_MODULES.filter((module) => result.has(module));
+}
+
+export function computeSubscriptionStatus(subscription?: TenantSubscriptionInfo): 'active' | 'suspended' | 'expired' | 'pending' {
+  if (!subscription) return 'active';
+  if (subscription.status === 'pending') return 'pending';
+  if (subscription.status === 'suspended') return 'suspended';
+  if (subscription.status === 'expired') return 'expired';
+  if (subscription.expiry) {
+    const exp = new Date(subscription.expiry);
+    exp.setHours(23, 59, 59, 999);
+    if (exp < new Date()) return 'expired';
+  }
+  return subscription.status ?? 'active';
+}
+
+export function computeDaysRemaining(expiry?: string): number | null {
+  if (!expiry) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const exp = new Date(expiry + 'T00:00:00');
+  return Math.ceil((exp.getTime() - today.getTime()) / 86_400_000);
 }

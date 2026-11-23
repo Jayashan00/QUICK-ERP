@@ -1,6 +1,7 @@
 import type { TenantBranchScope } from '@/core/tenant/dataScope';
 import { userService } from '@/core/auth/userService';
 import { hrService, type HrScope } from '@/features/hr/hrService';
+import { advancedHrService } from '@/features/hr/advancedHrService';
 import { inventoryService } from '@/features/inventory/services/inventoryService';
 import { inventoryTrackingService } from '@/features/inventory/services/inventoryTrackingService';
 import { accountingService } from '@/features/accounting/accountingService';
@@ -10,6 +11,9 @@ import { syncService } from '@/features/sync/services/syncService';
 import { projectService } from '@/features/projects/projectService';
 import { documentService } from '@/features/documents/documentService';
 import { tenantSettingsService } from '@/features/settings/finance/services/tenantSettingsService';
+import { platformService } from '@/features/platform/services/platformService';
+import { convertPlatformCurrency } from '@/core/currency/platformCurrency';
+import { formatCurrency } from '@/shared/utils/formatters';
 import type { NotificationEventGroup } from '@/features/settings/finance/types/tenant-settings';
 import { mockNotifications, mockNotices } from '../mocks/notifications';
 import type { Notice, NoticeInput, NotificationFilters, NotificationListResult, NotificationRecord, NotificationScope, NotificationUserState } from '../types/notifications';
@@ -85,8 +89,37 @@ async function deriveOperational(scope: NotificationScope): Promise<Notification
   ]);
   const createdAt = now();
   const records: NotificationRecord[] = [];
+  if (isTenantAdministrator(scope)) {
+    const tenant = await platformService.getTenant(scope.tenantId);
+    const foundation = await platformService.getFoundation();
+    if (tenant?.revenue) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const renewal = new Date(`${tenant.revenue.renewalDate}T00:00:00`);
+      const daysRemaining = Math.ceil((renewal.getTime() - today.getTime()) / 86_400_000);
+      if (daysRemaining >= 0 && daysRemaining <= 7) {
+        const baseCurrency = foundation.settings.baseCurrency;
+        const converted = convertPlatformCurrency(tenant.revenue.amount, tenant.revenue.currency, baseCurrency);
+        records.push(operational({
+          id: `tenant-renewal-${tenant.id}-${tenant.revenue.renewalDate}`,
+          title: 'Company subscription renewal due soon',
+          message: `Your ${tenant.revenue.billingCycle} renewal is due on ${tenant.revenue.renewalDate}. Revenue: ${formatCurrency(converted, baseCurrency)}.`,
+          type: 'reminder',
+          priority: daysRemaining <= 3 ? 'urgent' : 'high',
+          module: 'system',
+          relatedEntity: 'tenant_subscription',
+          relatedRecordId: tenant.id,
+          reference: tenant.revenue.renewalDate,
+          actionLabel: 'View billing',
+          actionUrl: '/settings',
+          createdAt,
+          sourceKey: `tenant:renewal:${tenant.id}:${tenant.revenue.renewalDate}`,
+        }));
+      }
+    }
+  }
   balances.filter((item) => item.alertStatus !== 'healthy').slice(0, 8).forEach((item) => records.push(operational({
-    id: `inventory-${item.id}-${item.alertStatus}`, branchId: item.branchId, title: item.alertStatus === 'out_of_stock' ? `${item.productName} is out of stock` : `${item.productName} requires reorder attention`, message: `${item.quantityAvailable} available at ${item.warehouseName} / ${item.locationName}; reorder level ${item.reorderLevel}.`, type: 'alert', priority: item.alertStatus === 'out_of_stock' ? 'urgent' : 'high', module: 'inventory', relatedEntity: 'stock_balance', relatedRecordId: item.id, reference: item.sku, actionLabel: 'View stock', actionUrl: `/inventory/stock/${item.productId}`, requiredPermission: 'inventory.view', createdAt, sourceKey: `inventory:${item.id}:${item.alertStatus}`,
+    id: `inventory-${item.id}-${item.alertStatus}`, branchId: item.branchId, title: item.alertStatus === 'out_of_stock' ? `${item.productName} is out of stock` : `${item.productName} requires reorder attention`, message: `${item.quantityAvailable} available at ${item.warehouseName} / ${item.locationName}; low stock level ${item.reorderLevel}.`, type: 'alert', priority: item.alertStatus === 'out_of_stock' ? 'urgent' : 'high', module: 'inventory', relatedEntity: 'stock_balance', relatedRecordId: item.id, reference: item.sku, actionLabel: 'View stock', actionUrl: `/inventory/stock/${item.productId}`, requiredPermission: 'inventory.view', createdAt, sourceKey: `inventory:${item.id}:${item.alertStatus}`,
   })));
   batches.data.filter((item) => item.expiryStatus === 'expired' || item.expiryStatus === 'expiring_soon').slice(0, 8).forEach((item) => records.push(operational({ id: `inventory-expiry-${item.id}-${item.expiryStatus}`, branchId: item.branchId, title: item.expiryStatus === 'expired' ? `${item.productName} batch expired` : `${item.productName} batch expires soon`, message: `Batch ${item.batchNumber} at ${item.locationName} ${item.expiryStatus === 'expired' ? 'has expired' : `has ${item.daysRemaining ?? 0} day(s) remaining`}.`, type: 'alert', priority: item.expiryStatus === 'expired' ? 'urgent' : 'high', module: 'inventory', relatedEntity: 'batch', relatedRecordId: item.id, reference: item.batchNumber, actionLabel: 'View expiry alerts', actionUrl: '/inventory/expiry', requiredPermission: 'inventory.view_expiry', createdAt: item.updatedAt, sourceKey: `inventory:expiry:${item.id}:${item.expiryStatus}` })));
   quotations.data.filter((item) => item.status === 'pending_approval').forEach((item) => records.push(operational({ id: `sales-approval-${item.id}`, branchId: item.branchId, title: 'Quotation requires approval', message: `${item.referenceNumber} is waiting for an approval decision.`, type: 'approval', priority: 'high', module: 'sales', relatedEntity: 'quotation', relatedRecordId: item.id, reference: item.referenceNumber, actionLabel: 'Open quotation', actionUrl: `/sales/quotations?open=${item.id}`, requiredPermission: 'quotation.approve', createdAt: item.updatedAt, sourceKey: `sales:quotation:${item.id}:${item.status}` })));
@@ -99,6 +132,25 @@ async function deriveOperational(scope: NotificationScope): Promise<Notification
   hrService.leaves(hrScope).filter((item) => item.status === 'pending').forEach((item) => records.push(operational({ id: `hr-leave-${item.id}`, branchId: item.branchId, title: 'Leave request requires approval', message: `${item.days} day leave request is waiting for a decision.`, type: 'approval', priority: 'normal', module: 'hr', relatedEntity: 'leave', relatedRecordId: item.id, actionLabel: 'Approve leave', actionUrl: '/hr/leave', requiredPermission: 'hr.leave.approve', createdAt, sourceKey: `hr:leave:${item.id}:${item.status}` })));
   hrService.corrections(hrScope).filter((item) => item.status === 'pending').forEach((item) => records.push(operational({ id: `hr-correction-${item.id}`, branchId: item.branchId, title: 'Attendance correction pending', message: 'An attendance correction requires review.', type: 'approval', priority: 'normal', module: 'hr', relatedEntity: 'attendance_correction', relatedRecordId: item.id, actionLabel: 'Review correction', actionUrl: '/hr/attendance', requiredPermission: 'hr.attendance.approve', createdAt, sourceKey: `hr:correction:${item.id}:${item.status}` })));
   hrService.payrolls(hrScope).filter((item) => item.status === 'draft').forEach((item) => records.push(operational({ id: `hr-payroll-${item.id}-${item.status}`, branchId: item.branchId, title: 'Payroll requires approval', message: `Payroll for ${item.period} is prepared and waiting for approval.`, type: 'approval', priority: 'high', module: 'hr', relatedEntity: 'payroll', relatedRecordId: item.id, reference: item.period, actionLabel: 'Review payroll', actionUrl: '/hr/payroll', requiredPermission: 'hr.payroll.approve', createdAt: item.createdAt, sourceKey: `hr:payroll:${item.id}:${item.status}` })));
+  const hrEventsInSevenDays = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  const todayForHrEvents = new Date().toISOString().slice(0, 10);
+  advancedHrService.calendarEvents(hrScope).filter((item) => item.date >= todayForHrEvents && item.date <= hrEventsInSevenDays).forEach((item) => records.push(operational({
+    id: `hr-calendar-event-${item.id}`,
+    branchId: item.branchId,
+    title: 'HR calendar event coming up',
+    message: `${item.title} is scheduled for ${item.date}.${item.description ? ` ${item.description}` : ''}`,
+    type: 'reminder',
+    priority: 'high',
+    module: 'hr',
+    relatedEntity: 'hr_calendar_event',
+    relatedRecordId: item.id,
+    reference: item.title,
+    actionLabel: 'View HR calendar',
+    actionUrl: '/hr/calendar',
+    requiredPermission: 'hr.employees.view',
+    createdAt,
+    sourceKey: `hr:calendar:${item.id}:${item.date}`,
+  })));
 
   const projectScope = { tenantId: scope.tenantId, branchId: scope.activeBranchId, permittedBranchIds: allowed };
   const today = new Date().toISOString().slice(0, 10);

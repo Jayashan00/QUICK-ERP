@@ -15,7 +15,7 @@ import { mockTenants } from '@/core/tenant/mocks/tenants';
 import type { User } from '@/core/auth/types/user';
 import type { Tenant } from '@/core/tenant/types/tenant';
 import { toUrlSlug } from '@/shared/utils/slug';
-import { TENANT_MODULES, expandModuleDependencies, tenantEntitlementService, type TenantEntitlements, type TenantModule } from '@/core/tenant/tenantEntitlements';
+import { TENANT_MODULES, expandModuleDependencies, tenantEntitlementService, type TenantEntitlements, type TenantModule, type TenantSubscriptionInfo } from '@/core/tenant/tenantEntitlements';
 
 const KEYS = APP_CONSTANTS.STORAGE_KEYS;
 
@@ -43,7 +43,7 @@ export function isBackendEnabled(): boolean {
 
 function readJson<T>(key: string): T | null {
   try {
-    const value = localStorage.getItem(key);
+    const value = localStorage.getItem(key) ?? sessionStorage.getItem(key);
     return value ? (JSON.parse(value) as T) : null;
   } catch {
     return null;
@@ -52,7 +52,7 @@ function readJson<T>(key: string): T | null {
 
 export function getBackendToken(): string | null {
   try {
-    return localStorage.getItem(KEYS.AUTH_TOKEN);
+    return localStorage.getItem(KEYS.AUTH_TOKEN) ?? sessionStorage.getItem(KEYS.AUTH_TOKEN);
   } catch {
     return null;
   }
@@ -89,11 +89,22 @@ export function tenantEntitlementsFromServer(tenant: Tenant): TenantEntitlements
     ? configured.enabledModules.filter((module): module is TenantModule => known.has(module))
     : [];
   const enabledModules = listed.length > 0 ? expandModuleDependencies(listed) : [...TENANT_MODULES];
+  // Parse subscription block forwarded by the server in tenantView().
+  const rawSub = (tenant as { subscription?: Record<string, string> }).subscription;
+  const subscription: TenantSubscriptionInfo | undefined = rawSub
+    ? {
+        plan: rawSub['plan'],
+        start: rawSub['start'],
+        expiry: rawSub['expiry'],
+        status: rawSub['status'] as 'active' | 'suspended' | 'expired' | undefined,
+      }
+    : undefined;
   return {
     enabledModules,
     limits: { maxUsers: 1000, maxBranches: 100, ...(configured?.limits ?? {}) },
     usage: { currentUsers: 0, currentBranches: 0, ...(configured?.usage ?? {}) },
     admin: configured?.admin ?? { name: tenant.contactName || tenant.name, email: tenant.ownerEmail || '', status: 'active' },
+    subscription,
   };
 }
 
@@ -112,15 +123,30 @@ export function upsertIdentity(user: User, tenant: Tenant | null): void {
   }
 }
 
-export function storeBackendSession(response: BackendLoginResponse): User {
+export function storeBackendSession(response: BackendLoginResponse, remember: boolean = true): User {
   if (!response.token) throw new Error('The server did not return a session.');
   const user = normalizeBackendUser(response.user);
-  localStorage.setItem(KEYS.AUTH_TOKEN, response.token);
-  localStorage.setItem(KEYS.USER, JSON.stringify(user));
-  if (response.tenant) localStorage.setItem(KEYS.TENANT, JSON.stringify(response.tenant));
-  else localStorage.removeItem(KEYS.TENANT);
+  const target = remember ? localStorage : sessionStorage;
+  const other = remember ? sessionStorage : localStorage;
+  [KEYS.AUTH_TOKEN, KEYS.USER, KEYS.TENANT].forEach((key) => other.removeItem(key));
+  target.setItem(KEYS.AUTH_TOKEN, response.token);
+  target.setItem(KEYS.USER, JSON.stringify(user));
+  if (response.tenant) target.setItem(KEYS.TENANT, JSON.stringify(response.tenant));
+  else target.removeItem(KEYS.TENANT);
   upsertIdentity(user, response.tenant);
   return user;
+}
+
+export function updateBackendSessionPersistence(remember: boolean): void {
+  const source = remember ? sessionStorage : localStorage;
+  const target = remember ? localStorage : sessionStorage;
+  [KEYS.AUTH_TOKEN, KEYS.USER, KEYS.TENANT].forEach((key) => {
+    const value = source.getItem(key);
+    if (value !== null) {
+      target.setItem(key, value);
+      source.removeItem(key);
+    }
+  });
 }
 
 /** Called once before the React tree renders, so a refresh restores the signed-in identity. */
@@ -171,6 +197,9 @@ export async function authenticateWithBackend(email: string, password: string): 
     return user;
   } catch (error) {
     if (error instanceof ApiError) {
+      if (error.isMaintenance) {
+        throw new Error(error.message || 'VYRO ERP is temporarily unavailable while maintenance is being performed.');
+      }
       if (error.status === 401) throw new Error('Invalid email or password.');
       if (error.status === 403) throw new Error(error.message || 'This account is inactive. Contact your administrator.');
       if (error.status === 429) throw new Error(error.message || 'Too many sign-in attempts. Wait a few minutes and try again.');

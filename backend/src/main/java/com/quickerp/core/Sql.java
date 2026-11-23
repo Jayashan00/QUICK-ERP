@@ -11,12 +11,12 @@ import java.sql.SQLException;
 import java.util.Collection;
 
 /** JDBC and JSON helpers shared by the core services. */
-final class Sql {
+public final class Sql {
 
     private Sql() {
     }
 
-    static PreparedStatement prepare(Connection connection, String sql, Object... params) throws SQLException {
+    public static PreparedStatement prepare(Connection connection, String sql, Object... params) throws SQLException {
         PreparedStatement statement = connection.prepareStatement(sql);
         for (int index = 0; index < params.length; index++) {
             Object value = params[index];
@@ -29,31 +29,31 @@ final class Sql {
         return statement;
     }
 
-    static int update(Connection connection, String sql, Object... params) throws SQLException {
+    public static int update(Connection connection, String sql, Object... params) throws SQLException {
         try (PreparedStatement statement = prepare(connection, sql, params)) {
             return statement.executeUpdate();
         }
     }
 
-    static long queryLong(Connection connection, String sql, Object... params) throws SQLException {
+    public static long queryLong(Connection connection, String sql, Object... params) throws SQLException {
         try (PreparedStatement statement = prepare(connection, sql, params); ResultSet rows = statement.executeQuery()) {
             return rows.next() ? rows.getLong(1) : 0L;
         }
     }
 
-    static String queryString(Connection connection, String sql, Object... params) throws SQLException {
+    public static String queryString(Connection connection, String sql, Object... params) throws SQLException {
         try (PreparedStatement statement = prepare(connection, sql, params); ResultSet rows = statement.executeQuery()) {
             return rows.next() ? rows.getString(1) : null;
         }
     }
 
-    static void lock(Connection connection, String key) throws SQLException {
+    public static void lock(Connection connection, String key) throws SQLException {
         try (PreparedStatement statement = prepare(connection, "SELECT pg_advisory_xact_lock(hashtext(?))", key)) {
             statement.execute(); // the lock is held until the transaction ends
         }
     }
 
-    static JsonNode readJson(ObjectMapper mapper, String text) {
+    public static JsonNode readJson(ObjectMapper mapper, String text) {
         if (text == null) return NullNode.getInstance();
         try {
             return mapper.readTree(text);
@@ -62,7 +62,7 @@ final class Sql {
         }
     }
 
-    static String writeJson(ObjectMapper mapper, JsonNode node) {
+    public static String writeJson(ObjectMapper mapper, JsonNode node) {
         try {
             return mapper.writeValueAsString(node == null ? NullNode.getInstance() : node);
         } catch (JsonProcessingException error) {
@@ -70,7 +70,7 @@ final class Sql {
         }
     }
 
-    static String text(JsonNode node, String field) {
+    public static String text(JsonNode node, String field) {
         if (node == null || !node.isObject()) return null;
         JsonNode value = node.get(field);
         return value != null && value.isTextual() ? value.asText() : null;

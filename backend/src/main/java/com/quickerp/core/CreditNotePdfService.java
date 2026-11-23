@@ -18,6 +18,7 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 
 /** Generates tenant- and branch-scoped customer credit note PDFs. */
 public final class CreditNotePdfService {
@@ -52,8 +53,8 @@ public final class CreditNotePdfService {
         String branchId = text(credit, "branchId");
         if (branchId == null || !allowedBranches(connection, principal).contains(branchId)) throw ApiException.notFound("Customer credit note not found.");
         ObjectNode customer = record(connection, principal.tenantId(), CUSTOMERS, text(credit, "customerId"));
-        String company = Sql.queryString(connection, "SELECT name FROM tenants WHERE id = ?", principal.tenantId());
-        return new PreparedCredit(firstNonBlank(text(credit, "referenceNumber"), id), firstNonBlank(company, "Quick ERP"),
+        CompanyPdfBranding company = CompanyPdfBranding.load(connection, principal.tenantId(), mapper);
+        return new PreparedCredit(firstNonBlank(text(credit, "referenceNumber"), id), company,
                 firstNonBlank(customer == null ? null : text(customer, "name"), text(credit, "customerId"), "Customer"),
                 firstNonBlank(text(credit, "invoiceId"), "-"), firstNonBlank(text(credit, "issueDate"), "-"),
                 firstNonBlank(text(credit, "status"), "-"), firstNonBlank(text(credit, "currency")),
@@ -76,7 +77,8 @@ public final class CreditNotePdfService {
     private byte[] createPdf(PreparedCredit credit, PdfCurrencyDisplay display) {
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Writer writer = new Writer(document);
-            writer.heading(credit.companyName()); writer.title("CUSTOMER CREDIT NOTE");
+            writer.drawCompanyHeader(credit.company());
+            writer.title("CUSTOMER CREDIT NOTE");
             writer.line("Credit note: " + credit.reference()); writer.line("Status: " + titleCase(credit.status()));
             writer.line("Issue date: " + credit.issueDate()); writer.line("Customer: " + credit.customerName());
             writer.line("Original invoice: " + credit.invoiceId()); writer.line("Reason: " + credit.reason()); writer.space();
@@ -110,12 +112,66 @@ public final class CreditNotePdfService {
     private static String safeFileName(String value) { String safe = value == null ? "credit-note" : value.replaceAll("[^A-Za-z0-9._-]", "-"); return safe.isBlank() ? "credit-note" : safe; }
     private static String titleCase(String value) { String clean = value == null ? "" : value.replace('_', ' '); return clean.isBlank() ? "-" : Character.toUpperCase(clean.charAt(0)) + clean.substring(1); }
     private record CreditLine(String name, BigDecimal quantity, BigDecimal unitPrice, BigDecimal tax, BigDecimal total) {}
-    private record PreparedCredit(String reference, String companyName, String customerName, String invoiceId, String issueDate, String status, String currency, String reason, BigDecimal amount, BigDecimal applied, BigDecimal unapplied, List<CreditLine> lines) {}
+    private record PreparedCredit(String reference, CompanyPdfBranding company, String customerName, String invoiceId, String issueDate, String status, String currency, String reason, BigDecimal amount, BigDecimal applied, BigDecimal unapplied, List<CreditLine> lines) {
+        public String companyName() {
+            return company != null && company.companyName() != null ? company.companyName() : "Quick ERP";
+        }
+    }
     public record PdfDocument(String fileName, byte[] bytes) {}
     private static final class Writer {
         private final PDDocument document; private PDPageContentStream content; private float y;
         private Writer(PDDocument document) throws IOException { this.document = document; newPage(); }
         private void newPage() throws IOException { if (content != null) content.close(); PDPage page = new PDPage(PDRectangle.A4); document.addPage(page); content = new PDPageContentStream(document, page); y = 790; }
+        private void drawLogo(byte[] logoBytes, float maxWidth, float maxHeight) {
+            try {
+                PDImageXObject image = CompanyPdfBranding.createImage(document, logoBytes);
+                if (image == null) return;
+                float imgW = image.getWidth();
+                float imgH = image.getHeight();
+                float scale = Math.min(maxWidth / imgW, maxHeight / imgH);
+                float drawW = imgW * scale;
+                float drawH = imgH * scale;
+                if (y - drawH < 55) newPage();
+                content.drawImage(image, 45, y - drawH, drawW, drawH);
+                y -= (drawH + 10);
+            } catch (Exception ignored) {
+            }
+        }
+        private void divider() throws IOException {
+            if (y < 55) newPage();
+            content.setStrokingColor(200, 200, 200);
+            content.setLineWidth(0.75f);
+            content.moveTo(45, y);
+            content.lineTo(550, y);
+            content.stroke();
+            content.setStrokingColor(0, 0, 0);
+            y -= 10;
+        }
+        private void drawCompanyHeader(CompanyPdfBranding branding) throws IOException {
+            if (branding != null && branding.logoBytes() != null) {
+                drawLogo(branding.logoBytes(), 140, 48);
+            }
+            heading(branding != null ? branding.companyName() : "Quick ERP");
+            if (branding != null && branding.address() != null && !branding.address().isBlank()) {
+                line(branding.address());
+            }
+            List<String> contacts = new ArrayList<>();
+            if (branding != null && branding.phone() != null && !branding.phone().isBlank()) contacts.add("Tel: " + branding.phone());
+            if (branding != null && branding.email() != null && !branding.email().isBlank()) contacts.add("Email: " + branding.email());
+            if (branding != null && branding.website() != null && !branding.website().isBlank()) contacts.add("Web: " + branding.website());
+            if (!contacts.isEmpty()) {
+                line(String.join(" | ", contacts));
+            }
+            List<String> taxReg = new ArrayList<>();
+            if (branding != null && branding.taxNumber() != null && !branding.taxNumber().isBlank()) taxReg.add("Tax / VAT No: " + branding.taxNumber());
+            if (branding != null && branding.registrationNumber() != null && !branding.registrationNumber().isBlank()) taxReg.add("Reg No: " + branding.registrationNumber());
+            if (!taxReg.isEmpty()) {
+                line(String.join(" | ", taxReg));
+            }
+            space();
+            divider();
+            space();
+        }
         private void heading(String value) throws IOException { write(value, PDType1Font.HELVETICA_BOLD, 16, 22); }
         private void title(String value) throws IOException { write(value, PDType1Font.HELVETICA_BOLD, 14, 24); }
         private void bold(String value) throws IOException { write(value, PDType1Font.HELVETICA_BOLD, 10, 16); }
