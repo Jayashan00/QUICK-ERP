@@ -98,7 +98,11 @@ public final class StateStore {
     public record BatchRequest(String clientId, List<Change> changes, List<String> seeded) {
     }
 
-    public record Rejection(String collection, String recordId, String message) {
+    /** A refused change together with the authoritative server state the browser must restore. */
+    public record Rejection(String collection, String recordId, String message, JsonNode data, boolean deleted, long version) {
+        public Rejection(String collection, String recordId, String message) {
+            this(collection, recordId, message, NullNode.getInstance(), true, 0L);
+        }
     }
 
     /** A change refused because someone else saved the record first: the browser shows this latest version instead. */
@@ -441,7 +445,7 @@ public final class StateStore {
                     recordVersion(connection, tenant, effective, versions);
                 } catch (ApiException error) {
                     connection.rollback(savepoint);
-                    rejected.add(new Rejection(change.collection(), change.recordId(), error.getMessage()));
+                    rejected.add(authoritativeRejection(connection, principal, permissions, tenant, change, error.getMessage()));
                 }
             }
             for (String collection : new LinkedHashSet<>(seeded)) {
@@ -455,6 +459,23 @@ public final class StateStore {
         if (ORDER_RECORD.equals(change.recordId())) return;
         StoredState state = storedState(connection, tenant, change.collection(), change.recordId());
         if (state != null) versions.add(new SavedVersion(change.collection(), change.recordId(), state.version()));
+    }
+
+    private Rejection authoritativeRejection(Connection connection, Principal principal, Permissions permissions,
+                                              String tenant, Change change, String message) throws SQLException {
+        StoredState state = storedState(connection, tenant, change.collection(), change.recordId());
+        if (state == null || state.deleted()) {
+            return new Rejection(change.collection(), change.recordId(), message, NullNode.getInstance(), true,
+                    state == null ? 0L : state.version());
+        }
+        JsonNode shown = principal.superAdmin()
+                ? state.data()
+                : visible(connection, principal, permissions, false, allowedBranches(connection, principal),
+                        change.collection(), change.recordId(), state.data());
+        if (shown == null) {
+            return new Rejection(change.collection(), change.recordId(), message, NullNode.getInstance(), true, state.version());
+        }
+        return new Rejection(change.collection(), change.recordId(), message, shown, false, state.version());
     }
 
     private StoredState storedState(Connection connection, String tenant, String collection, String recordId) throws SQLException {

@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { TenantBranchScope } from '@/core/tenant/dataScope';
 import { storefrontService } from './storefrontService';
 import { registerList, replaceArray } from '@/core/persistence/stateRegistry';
+import { apiClient } from '@/core/api';
+import { isBackendEnabled } from '@/core/persistence/backendSession';
 
 export const reviewSchema = z.object({
   target: z.enum(['order', 'product']), productId: z.string(),
@@ -19,6 +21,20 @@ export const reviewService = {
     if (value.target === 'product' && !order.items.some(item => item.productId === value.productId)) throw new Error('You can only review products in this order.');
     if (reviews.some(review => review.tenantId === scope.tenantId && review.branchId === scope.branchId && review.orderId === orderId && review.target === value.target && review.productId === (value.target === 'product' ? value.productId : ''))) throw new Error('You already reviewed this item or order.');
     const review: CustomerReview = { ...value, productId: value.target === 'order' ? '' : value.productId, id: crypto.randomUUID(), tenantId: scope.tenantId, branchId: scope.branchId, orderId, customerName: order.customer.name, status: 'pending', createdAt: new Date().toISOString() };
+    if (isBackendEnabled()) {
+      return apiClient.post<{ rejected: Array<{ message: string }> }>(
+        `/public/shop/${encodeURIComponent(scope.tenantId)}/batch`,
+        {
+          clientId: `storefront-review:${crypto.randomUUID()}`,
+          changes: [{ collection: 'storefront.reviews', recordId: review.id, data: review, deleted: false }],
+          seeded: [],
+        },
+      ).then(({ data }) => {
+        if (data.rejected?.length) throw new Error(data.rejected[0]!.message);
+        reviews.unshift(review);
+        return review;
+      });
+    }
     reviews.unshift(review); return review;
   },
   forOrder(scope: TenantBranchScope, orderId: string, token: string) {

@@ -17,6 +17,8 @@ import java.util.Set;
 
 /**
  * Creates the starter tenant, its login accounts and its data on an empty database.
+ * Existing databases are also repaired with any missing login-less provisioning
+ * template and configuration records.
  *
  * Roles, users and settings are written by the server, so no browser ever has to
  * upload them (the first person to sign in cannot choose their own permissions).
@@ -42,7 +44,10 @@ public final class SeedService {
     }
 
     /**
-     * Seeds an empty database. Returns zeros when the database already has users.
+     * Seeds login accounts only on an empty database. Template tenants and their
+     * configuration are inserted when missing on existing databases as well, so
+     * installations created before template provisioning was introduced can be
+     * upgraded without deleting their current users or tenant data.
      *
      * @param accounts           seed-data.json: tenants and login accounts
      * @param starter            starter-data.json: the starter tenant's collections (may be null)
@@ -56,34 +61,37 @@ public final class SeedService {
         JsonNode seed = mapper.readTree(accounts);
         JsonNode starterData = starter == null ? null : mapper.readTree(starter);
         return db.tx(connection -> {
-            if (Sql.queryLong(connection, "SELECT COUNT(*) FROM app_users") > 0) return new Result(0, 0);
+            boolean hasUsers = Sql.queryLong(connection, "SELECT COUNT(*) FROM app_users") > 0;
             for (JsonNode tenant : seed.path("tenants")) {
+                if (hasUsers && !"template".equals(tenant.path("status").asText())) continue;
                 Sql.update(connection, "INSERT INTO tenants (id, name, status, profile) VALUES (?, ?, ?, CAST(? AS jsonb)) ON CONFLICT (id) DO NOTHING",
                         tenant.path("id").asText(), tenant.path("name").asText(), tenant.path("status").asText("active"),
                         Sql.writeJson(mapper, tenant.path("profile")));
             }
-            Map<String, JsonNode> starterUsers = starterUsers(starterData);
-            String hash = hasher.hash(defaultPassword);
-            Set<String> ids = new HashSet<>();
-            Set<String> emails = new HashSet<>();
             int created = 0;
-            for (JsonNode user : seed.path("users")) {
-                String id = Sql.text(user, "id");
-                String email = Sql.text(user, "email");
-                String tenantId = Sql.text(user, "tenantId");
-                if (id == null || email == null || tenantId == null) continue;
-                if (!ids.add(id) || !emails.add(email.toLowerCase(Locale.ROOT))) continue;
-                if (Sql.queryLong(connection, "SELECT COUNT(*) FROM tenants WHERE id = ?", tenantId) == 0) continue;
-                boolean superAdmin = user.path("isSuperAdmin").asBoolean(false);
-                // The login profile matches the user record the ERP shows, so both stay in step.
-                JsonNode source = !superAdmin && starterUsers.containsKey(id) ? starterUsers.get(id) : user;
-                ObjectNode profile = ((ObjectNode) source).deepCopy();
-                if (!superAdmin) profile.remove("isSuperAdmin");
-                String status = user.path("status").asText("active");
-                Sql.update(connection, "INSERT INTO app_users (id, tenant_id, email, password_hash, status, super_admin, role_id, profile, password_changed_at) "
-                                + "VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), NULL)",
-                        id, tenantId, email, hash, status, superAdmin, Sql.text(user, "roleId"), Sql.writeJson(mapper, profile));
-                created++;
+            if (!hasUsers) {
+                Map<String, JsonNode> starterUsers = starterUsers(starterData);
+                Set<String> ids = new HashSet<>();
+                Set<String> emails = new HashSet<>();
+                String hash = hasher.hash(defaultPassword);
+                for (JsonNode user : seed.path("users")) {
+                    String id = Sql.text(user, "id");
+                    String email = Sql.text(user, "email");
+                    String tenantId = Sql.text(user, "tenantId");
+                    if (id == null || email == null || tenantId == null) continue;
+                    if (!ids.add(id) || !emails.add(email.toLowerCase(Locale.ROOT))) continue;
+                    if (Sql.queryLong(connection, "SELECT COUNT(*) FROM tenants WHERE id = ?", tenantId) == 0) continue;
+                    boolean superAdmin = user.path("isSuperAdmin").asBoolean(false);
+                    // The login profile matches the user record the ERP shows, so both stay in step.
+                    JsonNode source = !superAdmin && starterUsers.containsKey(id) ? starterUsers.get(id) : user;
+                    ObjectNode profile = ((ObjectNode) source).deepCopy();
+                    if (!superAdmin) profile.remove("isSuperAdmin");
+                    String status = user.path("status").asText("active");
+                    Sql.update(connection, "INSERT INTO app_users (id, tenant_id, email, password_hash, status, super_admin, role_id, profile, password_changed_at) "
+                                    + "VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), NULL)",
+                            id, tenantId, email, hash, status, superAdmin, Sql.text(user, "roleId"), Sql.writeJson(mapper, profile));
+                    created++;
+                }
             }
             String templateId = templateTenant(seed);
             int collections = starterData == null ? 0 : seedCollections(connection, starterData, templateId, demoData, configCollections);

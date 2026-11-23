@@ -24,9 +24,10 @@ import java.io.InputStream;
 import java.sql.*;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -43,7 +44,7 @@ public class PlatformAdminController {
             String id, String name, String subdomain, String status,
             String subscriptionPlan, String subscriptionStart, String subscriptionExpiry,
             JsonNode entitlements, JsonNode admin, String ownerEmail, String contactName,
-            String createdAt, String updatedAt, JsonNode onboarding, JsonNode revenue) {
+            String country, String createdAt, String updatedAt, JsonNode onboarding, JsonNode revenue) {
     }
 
     public record CreateCompanyRequest(
@@ -62,6 +63,7 @@ public class PlatformAdminController {
             Integer maxWarehouses, Integer maxStorageGb, String tenantStatus,
             Boolean includeAdminInUserLimit,
             Double revenueAmount, String revenueCurrency, String billingCycle,
+            String renewalDate,
             Double discountAmount, Double additionalCharges, Double taxRatePercent,
             String paymentInstructions, String terms) {
     }
@@ -77,6 +79,9 @@ public class PlatformAdminController {
     }
 
     public record SetStatusRequest(String status) {
+    }
+
+    public record ActivateTenantRequest(String ownerPassword) {
     }
 
     public record AuditLogEntry(
@@ -98,6 +103,14 @@ public class PlatformAdminController {
             Boolean enabled, String message, String startAt, String endAt) {
     }
 
+    public record PlatformUserRequest(String name, String email, String role, String status) {
+    }
+
+    public record PlatformUserResponse(
+            String id, String name, String email, String role, List<String> permissions,
+            String status, String lastActiveAt, boolean isSeed, boolean invitationSent) {
+    }
+
     // ---------------------------------------------------------------- fields
 
     private static final List<String> VALID_STATUSES = List.of("pending", "active", "suspended", "expired");
@@ -107,20 +120,89 @@ public class PlatformAdminController {
     private final ObjectMapper mapper;
     private final Db db;
     private final MaintenanceService maintenanceService;
+    private final PasswordResetService passwordResetService;
+    private final ProvisioningService provisioningService;
 
-    public PlatformAdminController(DataSource dataSource, ObjectMapper mapper, Db db, MaintenanceService maintenanceService) {
+    public PlatformAdminController(DataSource dataSource, ObjectMapper mapper, Db db, MaintenanceService maintenanceService,
+                                   PasswordResetService passwordResetService, ProvisioningService provisioningService) {
         this.dataSource = dataSource;
         this.mapper = mapper;
         this.db = db;
         this.maintenanceService = maintenanceService;
+        this.passwordResetService = passwordResetService;
+        this.provisioningService = provisioningService;
     }
 
     // ---------------------------------------------------------------- helpers
 
     private void requireSuperAdmin(Principal principal) {
-        if (!principal.superAdmin()) {
+        if (!principal.superAdmin() || !"role-003".equals(principal.roleId())) {
             throw ApiException.forbidden("Only Super Admin users can access platform management.");
         }
+    }
+
+    private static String platformRoleId(String role) {
+        return "Platform Administrator".equals(role) ? "role-003" : "role-platform-support";
+    }
+
+    private static String platformRoleName(String roleId) {
+        return "role-003".equals(roleId) ? "Platform Administrator" : "Support";
+    }
+
+    private static List<String> platformPermissions(String role) {
+        return "Platform Administrator".equals(role)
+                ? List.of("*")
+                : List.of("platform.support.view", "platform.support.create", "platform.support.edit",
+                        "platform.support.delete", "platform.support.configure");
+    }
+
+    private PlatformUserRequest validatePlatformUser(PlatformUserRequest body) {
+        if (body == null || body.name() == null || body.name().trim().length() < 2) {
+            throw ApiException.validation("name", "Name must contain at least 2 characters.");
+        }
+        if (body.email() == null || !body.email().trim().matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+            throw ApiException.validation("email", "Enter a valid email address.");
+        }
+        if (!List.of("Platform Administrator", "Support").contains(body.role())) {
+            throw ApiException.validation("role", "Platform role must be Platform Administrator or Support.");
+        }
+        if (!List.of("active", "inactive").contains(body.status())) {
+            throw ApiException.validation("status", "Status must be active or inactive.");
+        }
+        return new PlatformUserRequest(body.name().trim(), body.email().trim().toLowerCase(Locale.ROOT), body.role(), body.status());
+    }
+
+    private PlatformUserResponse platformUser(ResultSet rows, boolean invitationSent) throws SQLException {
+        JsonNode profile = Sql.readJson(mapper, rows.getString("profile"));
+        String role = platformRoleName(rows.getString("role_id"));
+        Timestamp lastActive = rows.getTimestamp("last_login_at");
+        Timestamp created = rows.getTimestamp("created_at");
+        return new PlatformUserResponse(
+                rows.getString("id"), profile.path("name").asText(rows.getString("email")), rows.getString("email"),
+                role, platformPermissions(role), rows.getString("status"),
+                (lastActive != null ? lastActive : created).toInstant().toString(),
+                "usr-superadmin".equals(rows.getString("id")), invitationSent);
+    }
+
+    private PlatformUserResponse findPlatformUser(Connection connection, String userId, boolean invitationSent) throws SQLException {
+        try (PreparedStatement statement = Sql.prepare(connection,
+                "SELECT id, email, status, role_id, profile, last_login_at, created_at FROM app_users "
+                        + "WHERE tenant_id = 'platform' AND super_admin = TRUE AND id = ?", userId);
+             ResultSet rows = statement.executeQuery()) {
+            if (!rows.next()) throw ApiException.notFound("Platform user not found.");
+            return platformUser(rows, invitationSent);
+        }
+    }
+
+    private void protectLastPlatformAdministrator(Connection connection, String userId, String nextRole, String nextStatus) throws SQLException {
+        String currentRole = Sql.queryString(connection,
+                "SELECT role_id FROM app_users WHERE tenant_id = 'platform' AND super_admin = TRUE AND id = ?", userId);
+        if (!"role-003".equals(currentRole)) return;
+        if ("Platform Administrator".equals(nextRole) && "active".equals(nextStatus)) return;
+        long otherAdmins = Sql.queryLong(connection,
+                "SELECT COUNT(*) FROM app_users WHERE tenant_id = 'platform' AND super_admin = TRUE "
+                        + "AND role_id = 'role-003' AND status = 'active' AND id <> ?", userId);
+        if (otherAdmins == 0) throw ApiException.conflict("The last active Platform Administrator cannot be changed or deleted.");
     }
 
     private void recordPlatformAudit(Connection conn, Principal principal,
@@ -184,7 +266,8 @@ public class PlatformAdminController {
         String updatedAt = profile.path("updatedAt").asText(null);
         return new TenantSummary(id, name, profile.path("subdomain").asText(id),
                 status, subPlan, subStart, subExpiry, entitlements, admin,
-                ownerEmail, contactName, createdAt, updatedAt, onboarding, revenue);
+                ownerEmail, contactName, profile.path("country").asText("Sri Lanka"),
+                createdAt, updatedAt, onboarding, revenue);
     }
 
     private TenantSummary buildSummaryFromProfile(String id, String name, ObjectNode profile, Connection conn) throws SQLException {
@@ -221,8 +304,124 @@ public class PlatformAdminController {
         return new TenantSummary(id, name, profile.path("subdomain").asText(id),
                 status, subPlan, subStart, subExpiry, entitlements, admin,
                 profile.path("ownerEmail").asText(null), profile.path("contactName").asText(null),
+                profile.path("country").asText("Sri Lanka"),
                 profile.path("createdAt").asText(null), profile.path("updatedAt").asText(null),
                 onboarding, revenue);
+    }
+
+    // ---------------------------------------------------------------- platform users
+
+    @GetMapping("/users")
+    public List<PlatformUserResponse> listPlatformUsers(HttpServletRequest request) {
+        Principal principal = AuthInterceptor.principal(request);
+        requireSuperAdmin(principal);
+        return db.snapshot(connection -> {
+            List<PlatformUserResponse> users = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT id, email, status, role_id, profile, last_login_at, created_at FROM app_users "
+                            + "WHERE tenant_id = 'platform' AND super_admin = TRUE ORDER BY created_at");
+                 ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) users.add(platformUser(rows, false));
+            }
+            return users;
+        });
+    }
+
+    @PostMapping("/users")
+    public PlatformUserResponse createPlatformUser(@RequestBody PlatformUserRequest rawBody, HttpServletRequest request) {
+        Principal principal = AuthInterceptor.principal(request);
+        requireSuperAdmin(principal);
+        PlatformUserRequest body = validatePlatformUser(rawBody);
+        String userId = "platform-user-" + UUID.randomUUID().toString().substring(0, 8);
+        PlatformUserResponse created = db.tx(connection -> {
+            if (Sql.queryLong(connection, "SELECT COUNT(*) FROM app_users WHERE lower(email) = ?", body.email()) > 0) {
+                throw ApiException.conflict("A login account already uses this email address.");
+            }
+            ObjectNode profile = mapper.createObjectNode();
+            profile.put("name", body.name());
+            profile.put("roleName", body.role());
+            profile.put("department", "Platform");
+            profile.put("jobTitle", body.role());
+            profile.putArray("branchIds");
+            profile.put("defaultBranchId", "");
+            profile.put("createdAt", Instant.now().toString());
+            profile.put("updatedAt", Instant.now().toString());
+            Sql.update(connection,
+                    "INSERT INTO app_users (id, tenant_id, email, password_hash, status, super_admin, role_id, profile) "
+                            + "VALUES (?, 'platform', ?, NULL, ?, TRUE, ?, CAST(? AS jsonb))",
+                    userId, body.email(), body.status(), platformRoleId(body.role()), Sql.writeJson(mapper, profile));
+            recordPlatformAudit(connection, principal, "Platform user created", userId,
+                    "Platform user " + body.email() + " was created with the " + body.role() + " role.");
+            return findPlatformUser(connection, userId, false);
+        });
+        if (!"active".equals(body.status())) return created;
+        try {
+            passwordResetService.invite(userId);
+            return new PlatformUserResponse(created.id(), created.name(), created.email(), created.role(), created.permissions(),
+                    created.status(), created.lastActiveAt(), created.isSeed(), true);
+        } catch (RuntimeException emailFailure) {
+            return created;
+        }
+    }
+
+    @PutMapping("/users/{userId}")
+    public PlatformUserResponse updatePlatformUser(@PathVariable String userId, @RequestBody PlatformUserRequest rawBody,
+                                                   HttpServletRequest request) {
+        Principal principal = AuthInterceptor.principal(request);
+        requireSuperAdmin(principal);
+        PlatformUserRequest body = validatePlatformUser(rawBody);
+        return db.tx(connection -> {
+            PlatformUserResponse current = findPlatformUser(connection, userId, false);
+            if (principal.userId().equals(userId) && (!"active".equals(body.status()) || !"Platform Administrator".equals(body.role()))) {
+                throw ApiException.conflict("You cannot deactivate or remove Platform Administrator access from your own account.");
+            }
+            protectLastPlatformAdministrator(connection, userId, body.role(), body.status());
+            if (!current.email().equalsIgnoreCase(body.email())
+                    && Sql.queryLong(connection, "SELECT COUNT(*) FROM app_users WHERE lower(email) = ? AND id <> ?", body.email(), userId) > 0) {
+                throw ApiException.conflict("A login account already uses this email address.");
+            }
+            ObjectNode profile = mapper.createObjectNode();
+            profile.put("name", body.name());
+            profile.put("roleName", body.role());
+            profile.put("department", "Platform");
+            profile.put("jobTitle", body.role());
+            profile.putArray("branchIds");
+            profile.put("defaultBranchId", "");
+            profile.put("updatedAt", Instant.now().toString());
+            String roleId = platformRoleId(body.role());
+            Sql.update(connection,
+                    "UPDATE app_users SET email = ?, status = ?, role_id = ?, profile = CAST(? AS jsonb), "
+                            + "token_version = CASE WHEN status <> ? OR role_id <> ? THEN token_version + 1 ELSE token_version END, updated_at = now() WHERE id = ?",
+                    body.email(), body.status(), roleId, Sql.writeJson(mapper, profile), body.status(), roleId, userId);
+            recordPlatformAudit(connection, principal, "Platform user updated", userId,
+                    "Platform user " + body.email() + " was updated.");
+            return findPlatformUser(connection, userId, false);
+        });
+    }
+
+    @PostMapping("/users/{userId}/invitation")
+    public ResponseEntity<Void> resendPlatformUserInvitation(@PathVariable String userId, HttpServletRequest request) {
+        Principal principal = AuthInterceptor.principal(request);
+        requireSuperAdmin(principal);
+        db.snapshot(connection -> findPlatformUser(connection, userId, false));
+        passwordResetService.invite(userId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/users/{userId}")
+    public ResponseEntity<Void> deletePlatformUser(@PathVariable String userId, HttpServletRequest request) {
+        Principal principal = AuthInterceptor.principal(request);
+        requireSuperAdmin(principal);
+        if (principal.userId().equals(userId)) throw ApiException.conflict("You cannot delete your own platform account.");
+        db.tx(connection -> {
+            PlatformUserResponse current = findPlatformUser(connection, userId, false);
+            protectLastPlatformAdministrator(connection, userId, "Support", "inactive");
+            Sql.update(connection, "DELETE FROM app_users WHERE id = ?", userId);
+            recordPlatformAudit(connection, principal, "Platform user deleted", userId,
+                    "Platform user " + current.email() + " was deleted.");
+            return null;
+        });
+        return ResponseEntity.noContent().build();
     }
 
     // ---------------------------------------------------------------- GET /platform/tenants
@@ -234,7 +433,7 @@ public class PlatformAdminController {
         return db.snapshot(conn -> {
             List<TenantSummary> tenants = new ArrayList<>();
             String sql = "SELECT id, name, status, profile, subscription_plan, subscription_start, subscription_expiry " +
-                    "FROM tenants WHERE id <> 'platform' ORDER BY name";
+                    "FROM tenants WHERE id NOT IN ('platform', 'tenant-template') ORDER BY name";
             try (PreparedStatement stmt = conn.prepareStatement(sql);
                  ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
@@ -321,19 +520,25 @@ public class PlatformAdminController {
             ObjectNode paymentNode = onboarding.putObject("payment");
             paymentNode.put("status", "unpaid");
 
+            LocalDate today = LocalDate.now();
+            LocalDate defaultExpiry = today.plusMonths(1);
+
             ObjectNode subNode = profile.putObject("subscription");
             subNode.put("plan", "business");
             subNode.put("status", "pending");
+            subNode.put("start", today.toString());
+            subNode.put("expiry", defaultExpiry.toString());
 
             ObjectNode revNode = profile.putObject("revenue");
             revNode.put("amount", 0.0);
             revNode.put("currency", "USD");
             revNode.put("billingCycle", "monthly");
+            revNode.put("renewalDate", defaultExpiry.toString());
 
             Sql.update(conn,
                     "INSERT INTO tenants (id, name, status, profile, subscription_plan, subscription_start, subscription_expiry, created_at, updated_at) " +
-                            "VALUES (?, ?, 'pending', CAST(? AS jsonb), 'business', NULL, NULL, now(), now())",
-                    tenantId, name, Sql.writeJson(mapper, profile));
+                            "VALUES (?, ?, 'pending', CAST(? AS jsonb), 'business', ?, ?, now(), now())",
+                    tenantId, name, Sql.writeJson(mapper, profile), today, defaultExpiry);
 
             syncPlatformFoundation(conn, tenantId, profile);
             recordPlatformAudit(conn, principal, "Tenant created", tenantId,
@@ -477,6 +682,7 @@ public class PlatformAdminController {
             if (body.revenueAmount() != null) revNode.put("amount", body.revenueAmount());
             if (body.revenueCurrency() != null && !body.revenueCurrency().isBlank()) revNode.put("currency", body.revenueCurrency());
             if (body.billingCycle() != null && !body.billingCycle().isBlank()) revNode.put("billingCycle", body.billingCycle());
+            if (body.renewalDate() != null && !body.renewalDate().isBlank()) revNode.put("renewalDate", body.renewalDate());
             if (body.discountAmount() != null) revNode.put("discountAmount", body.discountAmount());
             if (body.additionalCharges() != null) revNode.put("additionalCharges", body.additionalCharges());
             if (body.taxRatePercent() != null) revNode.put("taxRatePercent", body.taxRatePercent());
@@ -501,16 +707,17 @@ public class PlatformAdminController {
 
             String planCol = body.subscriptionPlan();
             String statusCol = newStatus != null ? newStatus : existing.path("status").asText("pending");
-            String startStr = body.subscriptionStart();
-            String expiryStr = body.subscriptionExpiry();
+            LocalDate startDate = optionalDate(body.subscriptionStart(), "subscriptionStart");
+            LocalDate expiryDate = optionalDate(body.subscriptionExpiry(), "subscriptionExpiry");
+            if (startDate != null && expiryDate != null && expiryDate.isBefore(startDate)) {
+                throw ApiException.validation("subscriptionExpiry", "Subscription expiry must be on or after the start date.");
+            }
 
             Sql.update(conn,
-                    "UPDATE tenants SET status = ?, subscription_plan = ?, " +
-                            "subscription_start = ?, subscription_expiry = ?, " +
+                    "UPDATE tenants SET status = ?, subscription_plan = COALESCE(?, subscription_plan), " +
+                            "subscription_start = COALESCE(?, subscription_start), subscription_expiry = COALESCE(?, subscription_expiry), " +
                             "profile = CAST(? AS jsonb), updated_at = now() WHERE id = ?",
-                    statusCol, planCol,
-                    startStr != null && !startStr.isBlank() ? startStr : null,
-                    expiryStr != null && !expiryStr.isBlank() ? expiryStr : null,
+                    statusCol, planCol, startDate, expiryDate,
                     Sql.writeJson(mapper, profile), tenantId);
 
             syncPlatformFoundation(conn, tenantId, profile);
@@ -750,105 +957,24 @@ public class PlatformAdminController {
     // ---------------------------------------------------------------- POST /platform/tenants/{tenantId}/activate
 
     @PostMapping("/tenants/{tenantId}/activate")
-    public TenantSummary activateTenant(@PathVariable String tenantId, HttpServletRequest request) {
+    public TenantSummary activateTenant(@PathVariable String tenantId,
+                                        @RequestBody ActivateTenantRequest body,
+                                        HttpServletRequest request) {
         Principal principal = AuthInterceptor.principal(request);
         requireSuperAdmin(principal);
-        return db.tx(conn -> {
-            Sql.lock(conn, "t:" + tenantId);
+        if (body == null) throw ApiException.badRequest("Request body is required.");
+        AuthService.validatePassword(body.ownerPassword());
+        ProvisioningService.ProvisionRequest provisionRequest = db.snapshot(conn -> {
             String profileText = Sql.queryString(conn, "SELECT profile FROM tenants WHERE id = ?", tenantId);
             if (profileText == null) throw ApiException.notFound("Tenant not found.");
-            String tenantName = Sql.queryString(conn, "SELECT name FROM tenants WHERE id = ?", tenantId);
-            ObjectNode profile = (ObjectNode) Sql.readJson(mapper, profileText).deepCopy();
-            ObjectNode onboarding = (ObjectNode) profile.path("onboarding");
-
-            // Enforce requirement: Prevent duplicate activation
-            if ("active".equalsIgnoreCase(profile.path("status").asText())) {
-                throw ApiException.badRequest("Tenant is already activated. Cannot issue duplicate activation.");
-            }
-
-            // Enforce requirement: Do not activate if invoice is outdated
-            if (onboarding.path("invoice").path("isOutdated").asBoolean(false)) {
-                throw ApiException.forbidden("Tenant access cannot be activated while the invoice is outdated. Please generate an updated invoice and confirm payment.");
-            }
-
-            // Enforce requirement: Do not activate tenant access until payment is fully confirmed as PAID
-            String paymentStatus = onboarding.path("payment").path("status").asText("unpaid");
-            if (!"paid".equalsIgnoreCase(paymentStatus)) {
-                throw ApiException.forbidden("Tenant access cannot be activated until invoice payment is fully confirmed as PAID.");
-            }
-
-            // Set tenant status to ACTIVE
-            profile.put("status", "active");
-
-            // Compute subscription start & expiry based on billing cycle
-            String billingCycle = profile.path("revenue").path("billingCycle").asText("monthly");
-            LocalDate start = LocalDate.now();
-            LocalDate expiry = "yearly".equalsIgnoreCase(billingCycle) ? start.plusYears(1) : start.plusMonths(1);
-
-            ObjectNode subNode = profile.has("subscription") && profile.get("subscription").isObject()
-                    ? (ObjectNode) profile.get("subscription")
-                    : profile.putObject("subscription");
-            subNode.put("status", "active");
-            subNode.put("start", start.toString());
-            subNode.put("expiry", expiry.toString());
-
-            // Generate single-use invitation token
-            String invitationToken = UUID.randomUUID().toString();
-            String expiresAt = Instant.now().plus(48, ChronoUnit.HOURS).toString();
-            String setupUrl = "https://quickerp.cloud/auth/accept-invitation?token=" + invitationToken;
-
-            ObjectNode invNode = onboarding.putObject("invitation");
-            invNode.put("token", invitationToken);
-            invNode.put("sentAt", Instant.now().toString());
-            invNode.put("expiresAt", expiresAt);
-            invNode.put("setupUrl", setupUrl);
-
-            // Advance stage
-            onboarding.put("stage", "access_activated");
-            profile.put("updatedAt", Instant.now().toString());
-
-            // Create or activate Tenant Admin user in app_users
-            String adminEmail = profile.path("admin").path("email").asText(profile.path("ownerEmail").asText(null));
-            String adminName = profile.path("admin").path("name").asText(profile.path("contactName").asText("Administrator"));
-
-            if (adminEmail != null && !adminEmail.isBlank()) {
-                String existingUserId = Sql.queryString(conn,
-                        "SELECT id FROM app_users WHERE tenant_id = ? AND role_id = 'role-001'", tenantId);
-                if (existingUserId == null) {
-                    existingUserId = Sql.queryString(conn,
-                            "SELECT id FROM app_users WHERE tenant_id = ? AND lower(email) = lower(?)", tenantId, adminEmail);
-                }
-
-                if (existingUserId == null) {
-                    String newUserId = "usr-" + UUID.randomUUID().toString().substring(0, 8);
-                    ObjectNode adminProfile = mapper.createObjectNode();
-                    adminProfile.put("name", adminName);
-                    adminProfile.put("email", adminEmail);
-                    adminProfile.put("tenantId", tenantId);
-                    adminProfile.put("roleId", "role-001");
-                    adminProfile.put("status", "active");
-
-                    Sql.update(conn,
-                            "INSERT INTO app_users (id, tenant_id, email, password_hash, status, super_admin, role_id, profile, created_at, updated_at) " +
-                                    "VALUES (?, ?, ?, NULL, 'active', FALSE, 'role-001', CAST(? AS jsonb), now(), now())",
-                            newUserId, tenantId, adminEmail, Sql.writeJson(mapper, adminProfile));
-                } else {
-                    Sql.update(conn,
-                            "UPDATE app_users SET status = 'active', updated_at = now() WHERE id = ?", existingUserId);
-                }
-            }
-
-            // Update tenants table relational columns
-            Sql.update(conn,
-                    "UPDATE tenants SET status = 'active', subscription_start = ?, subscription_expiry = ?, profile = CAST(? AS jsonb), updated_at = now() WHERE id = ?",
-                    start.toString(), expiry.toString(), Sql.writeJson(mapper, profile), tenantId);
-
-            syncPlatformFoundation(conn, tenantId, profile);
-            recordPlatformAudit(conn, principal, "Tenant activated", tenantId,
-                    "Tenant " + tenantName + " activated following confirmed payment. Access invitation token generated for " + adminEmail + ".");
-
-            return buildSummaryFromProfile(tenantId, tenantName, profile, conn);
+            JsonNode profile = Sql.readJson(mapper, profileText);
+            String name = Sql.queryString(conn, "SELECT name FROM tenants WHERE id = ?", tenantId);
+            String ownerName = profile.path("admin").path("name").asText(profile.path("contactName").asText(name));
+            String ownerEmail = profile.path("admin").path("email").asText(profile.path("ownerEmail").asText(""));
+            return new ProvisioningService.ProvisionRequest(name, ownerName, ownerEmail, body.ownerPassword(), null);
         });
+        provisioningService.provision(principal, tenantId, provisionRequest);
+        return getTenant(tenantId, request);
     }
 
     // ---------------------------------------------------------------- PUT /platform/tenants/{tenantId}/status
@@ -907,10 +1033,19 @@ public class PlatformAdminController {
                 throw ApiException.badRequest("A company must be suspended before it can be deleted.");
             }
             String tenantName = Sql.queryString(conn, "SELECT name FROM tenants WHERE id = ?", tenantId);
+            removeTenantFromPlatformFoundation(conn, tenantId);
+            Sql.update(conn,
+                    "DELETE FROM revoked_tokens WHERE user_id IN (SELECT id FROM app_users WHERE tenant_id = ?)",
+                    tenantId);
+            Sql.update(conn,
+                    "DELETE FROM password_reset_tokens WHERE user_id IN (SELECT id FROM app_users WHERE tenant_id = ?)",
+                    tenantId);
             Sql.update(conn, "DELETE FROM stored_files WHERE tenant_id = ?", tenantId);
             Sql.update(conn, "DELETE FROM ai_conversations WHERE tenant_id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM ai_audit_log WHERE tenant_id = ?", tenantId);
             Sql.update(conn, "DELETE FROM erp_records WHERE tenant_id = ?", tenantId);
-            Sql.update(conn, "DELETE FROM erp_change_sequences WHERE tenant_id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM erp_collections WHERE tenant_id = ?", tenantId);
+            Sql.update(conn, "DELETE FROM erp_record_history WHERE tenant_id = ?", tenantId);
             Sql.update(conn, "DELETE FROM app_users WHERE tenant_id = ?", tenantId);
             Sql.update(conn, "DELETE FROM tenants WHERE id = ?", tenantId);
             recordPlatformAudit(conn, principal, "Tenant deleted", tenantId,
@@ -1199,9 +1334,43 @@ public class PlatformAdminController {
         }
 
         Sql.update(conn,
-                "UPDATE erp_records SET data = CAST(? AS jsonb), change_seq = nextval('erp_change_seq'), updated_at = now() " +
+                "UPDATE erp_records SET data = CAST(? AS jsonb), version = version + 1, change_seq = nextval('erp_change_seq'), " +
+                        "updated_at = now(), updated_by = 'server:platform', client_id = 'server:platform' " +
                         "WHERE tenant_id = 'platform' AND collection = 'platform.foundation' AND record_id = '__value__'",
                 Sql.writeJson(mapper, foundation));
+    }
+
+    private void removeTenantFromPlatformFoundation(Connection conn, String tenantId) throws SQLException {
+        String foundationText = Sql.queryString(conn,
+                "SELECT data FROM erp_records WHERE tenant_id = 'platform' AND collection = 'platform.foundation' AND record_id = '__value__' AND NOT deleted");
+        if (foundationText == null) return;
+        JsonNode foundation = Sql.readJson(mapper, foundationText);
+        if (!foundation.isObject() || !foundation.path("tenants").isArray()) return;
+
+        ArrayNode tenants = (ArrayNode) foundation.path("tenants");
+        boolean removed = false;
+        for (int i = tenants.size() - 1; i >= 0; i--) {
+            if (tenantId.equals(Sql.text(tenants.get(i), "id"))) {
+                tenants.remove(i);
+                removed = true;
+            }
+        }
+        if (!removed) return;
+
+        Sql.update(conn,
+                "UPDATE erp_records SET data = CAST(? AS jsonb), version = version + 1, change_seq = nextval('erp_change_seq'), " +
+                        "updated_at = now(), updated_by = 'server:platform', client_id = 'server:platform' " +
+                        "WHERE tenant_id = 'platform' AND collection = 'platform.foundation' AND record_id = '__value__'",
+                Sql.writeJson(mapper, foundation));
+    }
+
+    private static LocalDate optionalDate(String value, String field) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return LocalDate.parse(value.trim());
+        } catch (DateTimeParseException error) {
+            throw ApiException.validation(field, "Enter a valid date in YYYY-MM-DD format.");
+        }
     }
 
     private static String validated(String value, String field, String message) {
