@@ -11,7 +11,6 @@ import { Button } from '@/shared/components/common/Button';
 import { getErrorMessage } from '@/shared/utils/errors';
 import { loginSchema, type LoginValues } from '@/features/auth/schemas/securitySchemas';
 import { resolvePostLoginPath } from '@/core/routing';
-import { loginWebsiteAdmin } from '@/features/inquiry-admin/inquiryStorage';
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -29,10 +28,6 @@ export function LoginPage() {
 
   const submit = async (values: LoginValues) => {
     try {
-      if (await loginWebsiteAdmin(values.email, values.password, values.remember)) {
-        navigate('/inquiry-admin', { replace: true });
-        return;
-      }
       const result = await login(values.email, values.password, values.remember);
       if (result.status === 'captcha_required') navigate('/security-check');
       else if (result.status === 'mfa_required') navigate('/two-factor');

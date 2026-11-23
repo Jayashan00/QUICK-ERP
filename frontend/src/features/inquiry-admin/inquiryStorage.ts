@@ -1,3 +1,5 @@
+import { getBackendToken, isBackendEnabled } from '@/core/persistence/backendSession';
+
 export type InquiryStatus = 'new' | 'contacted' | 'qualified' | 'archived';
 
 export interface Inquiry {
@@ -47,37 +49,20 @@ export async function saveInquiry(details: NewInquiry & { contact_check: string 
 }
 
 export function readInquiries(): Promise<Inquiry[]> {
-  return request(endpoint, {});
+  return request(endpoint, { headers: adminHeaders() });
+}
+
+function adminHeaders(): Record<string, string> {
+  if (!isBackendEnabled()) throw new Error('Website inquiries require the ERP backend. Enable backend mode and sign in with an ERP super admin account.');
+  const token = getBackendToken();
+  if (!token) throw new InquiryApiError('Sign in with your ERP super admin account to view inquiries.', 401);
+  return { Authorization: `Bearer ${token}` };
 }
 
 export function changeInquiryStatus(inquiry: Inquiry, status: InquiryStatus): Promise<Inquiry> {
   return request(`${endpoint}/${inquiry.id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ status, previous: inquiry.status }),
   });
-}
-
-export async function loginWebsiteAdmin(email: string, password: string, remember: boolean): Promise<boolean> {
-  let adminEmail = 'website-admin@vyro.com';
-  try {
-    const response = await fetch('/website-api/auth/config', { cache: 'no-store', signal: AbortSignal.timeout(2500) });
-    if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
-      const config = await response.json();
-      if (typeof config.email === 'string') adminEmail = config.email;
-    }
-  } catch {
-    // The ERP sign-in path remains available when the website service is offline.
-  }
-  if (email.trim().toLowerCase() !== adminEmail) return false;
-  await request('/website-api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, remember }),
-  });
-  return true;
-}
-
-export function logoutWebsiteAdmin() {
-  return request('/website-api/auth/logout', { method: 'POST' });
 }

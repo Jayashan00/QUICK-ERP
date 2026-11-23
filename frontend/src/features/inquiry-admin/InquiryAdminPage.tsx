@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Building2, CalendarDays, Clock3, Inbox, Mail, MessageSquareText, Monitor, RefreshCw, Search, UserRound } from 'lucide-react';
-import { changeInquiryStatus, readInquiries, logoutWebsiteAdmin, InquiryApiError, type Inquiry, type InquiryStatus } from './inquiryStorage';
+import { changeInquiryStatus, readInquiries, InquiryApiError, type Inquiry, type InquiryStatus } from './inquiryStorage';
+import { useAuth } from '@/core/auth/auth-context';
 
 import './inquiryAdmin.css';
 
@@ -26,6 +27,7 @@ export function InquiryAdminPage() {
   const [query, setQuery] = useState('');
 
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -55,15 +57,20 @@ export function InquiryAdminPage() {
       setLoaded(true);
     } catch (cause) {
       if (cause instanceof InquiryApiError && cause.status === 401) {
-        navigate('/login', { replace: true });
+        logout();
+        navigate('/login', { replace: true, state: { from: '/super-admin/inquiries' } });
         return;
+      }
+      if (cause instanceof InquiryApiError && cause.status === 403) {
+        setInquiries([]);
+        setLoaded(false);
       }
       setError(cause instanceof Error ? cause.message : 'Unable to load the inbox.');
     } finally {
       requestInProgress.current = false;
       if (!background) setBusy(false);
     }
-  }, [navigate]);
+  }, [navigate, logout]);
 
   useEffect(() => {
     void loadInbox();
@@ -80,23 +87,6 @@ export function InquiryAdminPage() {
     };
   }, [loadInbox]);
 
-  async function signOut() {
-    if (requestInProgress.current) return;
-    requestInProgress.current = true;
-    setBusy(true);
-    setError('');
-    try {
-      await logoutWebsiteAdmin();
-      setInquiries([]);
-      navigate('/login', { replace: true });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to sign out. Please try again.');
-    } finally {
-      requestInProgress.current = false;
-      setBusy(false);
-    }
-  }
-
   async function updateStatus(status: InquiryStatus) {
     if (!selected || busy || requestInProgress.current) return;
     requestInProgress.current = true;
@@ -107,8 +97,13 @@ export function InquiryAdminPage() {
       setInquiries(items => items.map(item => item.id === updated.id ? updated : item));
     } catch (cause) {
       if (cause instanceof InquiryApiError && cause.status === 401) {
-        navigate('/login', { replace: true });
+        logout();
+        navigate('/login', { replace: true, state: { from: '/super-admin/inquiries' } });
         return;
+      }
+      if (cause instanceof InquiryApiError && cause.status === 403) {
+        setInquiries([]);
+        setLoaded(false);
       }
       setError(cause instanceof Error ? cause.message : 'Unable to save this status.');
     } finally {
@@ -118,19 +113,15 @@ export function InquiryAdminPage() {
   }
 
   if (!loaded) return (
-    <main className="inquiry-admin-app">
+    <section className="inquiry-admin-app" aria-label="Website inquiries">
       <div className="inquiry-admin-content" role="status">
         {error ? <><p role="alert">{error}</p><button className="inquiry-refresh" disabled={busy} onClick={() => void loadInbox()}>Retry</button></> : 'Loading inquiries...'}
       </div>
-    </main>
+    </section>
   );
 
   return (
-    <main className="inquiry-admin-app">
-      <header className="inquiry-admin-topbar">
-        <Link to="/" className="inquiry-brand"><span className="inquiry-brand-mark">V</span><span>VYRO</span></Link>
-        <div className="inquiry-topbar-right"><button className="inquiry-refresh" disabled={busy} onClick={() => void signOut()}>Sign out</button></div>
-      </header>
+    <section className="inquiry-admin-app" aria-label="Website inquiries">
       <div className="inquiry-admin-content">
         <div className="inquiry-page-heading">
           <div><p className="inquiry-admin-kicker">Public website</p><h1>Inquiries</h1><p>Review product questions and follow up with prospective customers.</p></div>
@@ -187,6 +178,6 @@ export function InquiryAdminPage() {
         </div>
         <footer className="inquiry-admin-footer"><span><Monitor size={14} /> Public website</span><span>VYRO inquiry inbox</span></footer>
       </div>
-    </main>
+    </section>
   );
 }

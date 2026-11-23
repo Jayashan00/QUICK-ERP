@@ -1,10 +1,8 @@
 import type { RouteObject } from 'react-router-dom';
-import { lazyPage } from './lazyPage';
+import { Navigate } from 'react-router-dom';
 
-const InquiryAdminPage = lazyPage(() => import('@/features/inquiry-admin/InquiryAdminPage').then(({ InquiryAdminPage }) => ({ default: InquiryAdminPage })));
-
-/** Standalone admin surface for public product inquiries. */
+/** Keep old bookmarks working through the protected super admin console. */
 export const inquiryAdminRoute: RouteObject = {
   path: '/inquiry-admin',
-  element: <InquiryAdminPage />,
+  element: <Navigate to="/super-admin/inquiries" replace />,
 };

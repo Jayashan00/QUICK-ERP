@@ -1,23 +1,63 @@
-# Website inquiry inbox
+# Website inquiries in Super Admin
 
-Staff enter their website admin email and password at the normal /login page and are directed to /inquiry-admin. The website service owns its admin account and sessions.
+Website contact submissions appear in **Super Admin > Inquiries** at `/super-admin/inquiries`.
+Sign in with an existing ERP super admin account at `/login`. Old `/inquiry-admin`
+bookmarks redirect to the protected super admin page. Tenant admins and other tenant
+users cannot read or update this inbox.
+
+The separate website admin login is retired. Its old cookies and credentials no longer
+grant access, and `/website-api/auth/*` endpoints return 404. Password changes and
+sign-out use the existing ERP account controls.
 
 ## Local use
 
-Use Node.js 22.13 or newer. From the project root run `node website-inquiries/server.mjs` and start the frontend in a second terminal. Restart an older running inquiry service after updating.
+Use Node.js 22.13 or newer. Start the ERP backend, run
+`node website-inquiries/server.mjs` from the project root, and start the frontend in
+another terminal. The frontend must use real ERP authentication (`VITE_USE_MOCKS=false`).
+Browser-only demo identities cannot authorize access to real contact inquiries.
 
-On first startup the service creates the account website-admin@vyro.com with a random password. Read `website-inquiries/private/initial-login.txt` locally for the credentials. The file is private and excluded from source control. Store the password in your password manager and remove this initial-login file when it is no longer needed. Authentication uses the salted password hash in admin-account.json.
+The inquiry service validates each admin bearer token with the ERP `/api/v1/auth/me`
+endpoint and requires `user.isSuperAdmin === true`. Expired/revoked sessions and
+disabled accounts are rejected by the ERP. If the ERP is unavailable, admin access
+is denied while public contact submissions can still be saved.
 
-To choose a different account email, set INQUIRY_ADMIN_EMAIL before the account is first created. Choose an email reserved for website administration. Existing accounts keep their configured email across restarts.
+| Variable | Default |
+| --- | --- |
+| `INQUIRY_PORT` | `8011` |
+| `INQUIRY_DATA_DIR` | `website-inquiries/private` |
+| `INQUIRY_ERP_API_URL` | `http://127.0.0.1:8000/api/v1` |
 
-The login page uses the website account email to route website sign-ins. Other accounts continue through ERP sign-in. The website service must be running to sign in to the inbox. The old admin key is no longer accepted.
+Only configure `INQUIRY_ERP_API_URL` to a trusted ERP backend; session tokens are
+sent there. For a remote ERP backend, use HTTPS.
 
-Sessions use HttpOnly, SameSite cookies, last eight hours, or seven days when Keep me signed in is checked, and are revoked on sign-out. Sessions survive service restarts. Expired sessions return the inbox to the login page.
+## Existing data and deployment
 
-## Server installation
+The contact form still posts to `/website-api/inquiries`. Records stay in the same
+`inbox.sqlite` database with their existing IDs, timestamps and statuses. No data
+migration or deletion is needed. Status changes record the ERP super admin's email.
 
-The EC2 setup installs the inquiry service and nginx route. For an existing server, run `sudo bash website-inquiries/install.sh` from the release directory. Apply the website-specific map, rate limit and location from deploy/ec2/nginx-quickerp.conf to the active nginx configuration, validate and reload nginx, and publish the updated frontend. The website proxy must forward Host, X-Real-IP and X-Forwarded-Proto as shown. Serve the public site over HTTPS to protect passwords and enable Secure cookies. For later changes to the inquiry service, rerun the installer.
+Deploy **both** the frontend and the inquiry service. From the updated release folder,
+run `sudo bash website-inquiries/install.sh` to install/restart the service, then publish
+the updated frontend. The existing Jenkins deployment only publishes the ERP backend
+and frontend, so the inquiry-service installation is also required for this update.
+The EC2 full setup script already runs the inquiry installer.
 
-Read initial credentials on the server with `sudo cat /var/lib/vyro-inquiries/initial-login.txt`. Keep credentials and database files outside the web root. Back up the service's private directory while it is stopped, or use SQLite's online backup for the database. ERP database backups do not include the website inbox.
+Keep the nginx `/website-api/` proxy and rate limit from
+`deploy/ec2/nginx-quickerp.conf`. On a fresh installation, apply that configuration,
+validate and reload nginx. Serve the public website over HTTPS.
 
-Existing inquiry records remain in the same database. Old browser preview entries stay on the device where they were created.
+On EC2 the database remains in `/var/lib/vyro-inquiries`. Back up the private directory
+while the service is stopped, or use SQLite's online backup. ERP PostgreSQL backups
+do not include this inbox. Legacy website credential files/tables are unused and are
+not deleted by this update.
+
+## Verification
+
+Run `node --test website-inquiries/server.test.mjs` from the project root and
+`npm run qa:inquiries` from `frontend`. Tests exercise the request handler with a
+temporary SQLite database and stubbed ERP identity responses, plus the frontend
+request adapter. They never read or modify your real inbox or user accounts.
+
+After deployment, submit a test contact inquiry and verify it under Super Admin >
+Inquiries, including a status change. This verifies the running ERP, inquiry service,
+and nginx connection together.

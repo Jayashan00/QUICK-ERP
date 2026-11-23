@@ -7,6 +7,7 @@ import { PLATFORM_PERMISSIONS } from '@/core/permissions';
 import { lazyPage } from './lazyPage';
 
 const ProfilePage = lazyPage(() => import('@/features/auth/pages/ProfilePage').then(({ ProfilePage }) => ({ default: ProfilePage })));
+const InquiryAdminPage = lazyPage(() => import('@/features/inquiry-admin/InquiryAdminPage').then(({ InquiryAdminPage }) => ({ default: InquiryAdminPage })));
 
 const platformPage = <K extends keyof typeof import('@/features/platform')>(name: K) =>
   lazyPage(() => import('@/features/platform').then((module) => ({ default: module[name] as ComponentType })));
@@ -28,6 +29,7 @@ export const superAdminRoutes: RouteObject = {
   element: <SuperAdminLayout />,
   children: [
     { path: 'profile', element: <ProfilePage /> },
+    { path: 'inquiries', element: <InquiryAdminPage /> },
     { index: true, element: <Navigate to="/super-admin/dashboard" replace /> },
     { path: 'dashboard', element: <RequirePermission permission={PLATFORM_PERMISSIONS.SUPER_ADMIN.DASHBOARD_VIEW}><PlatformDashboardPage /></RequirePermission> },
     { path: 'tenants', element: <RequirePermission permission={PLATFORM_PERMISSIONS.SUPER_ADMIN.TENANTS_VIEW}><TenantsPage /></RequirePermission> },

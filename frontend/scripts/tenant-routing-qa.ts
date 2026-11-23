@@ -44,6 +44,8 @@ assert.equal(resolvePostLoginPath(hrManager, '/xyz/hr-manager/hr-manager/dashboa
 assert.equal(resolvePostLoginPath(hrManager, '/acme/inventory-manager/hr-manager/dashboard'), '/acme/hr-manager/hr-manager/dashboard');
 assert.equal(resolvePostLoginPath(hrManager, '/acme/hr-manager/another-user/dashboard'), '/acme/hr-manager/hr-manager/dashboard');
 assert.equal(resolvePostLoginPath(superAdmin), '/super-admin/dashboard');
+assert.equal(resolvePostLoginPath(superAdmin, '/super-admin/inquiries'), '/super-admin/inquiries');
+assert.equal(resolvePostLoginPath(admin, '/super-admin/inquiries'), '/acme/admin/admin-user/dashboard');
 assert.equal(getTenantRouteIdentity(auditViewer)?.roleSlug, getTenantRouteIdentity(inactiveViewer)?.roleSlug);
 assert.notEqual(getTenantRouteIdentity(auditViewer)?.userSlug, getTenantRouteIdentity(inactiveViewer)?.userSlug);
 assert.notEqual(buildUserTenantPath(auditViewer), buildUserTenantPath(inactiveViewer));

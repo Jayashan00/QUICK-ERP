@@ -50,7 +50,7 @@ export function buildUserTenantPath(user: User, path = '/dashboard', tenant?: Te
 }
 
 export function resolvePostLoginPath(user: User, requestedPath?: string): string {
-  if (user.isSuperAdmin) return '/super-admin/dashboard';
+  if (user.isSuperAdmin) return requestedPath === '/super-admin/inquiries' ? requestedPath : '/super-admin/dashboard';
   const identity = getTenantRouteIdentity(user);
   if (!identity) return '/unauthorized';
   if (requestedPath && isTenantPathForIdentity(requestedPath, identity)) return requestedPath;

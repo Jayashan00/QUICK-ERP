@@ -1,4 +1,4 @@
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 
 import { AppShell } from '@/app/components/layout/AppShell';
 import { Breadcrumbs } from '@/shared/components/layout/Breadcrumbs';
@@ -9,6 +9,7 @@ import { AiAssistantDrawer } from '@/features/ai-assistant';
 
 export function SuperAdminLayout() {
   const { user, isAuthenticated, isLoading } = useAuth();
+  const location = useLocation();
 
   if (isLoading) {
     return (
@@ -18,7 +19,7 @@ export function SuperAdminLayout() {
     );
   }
 
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location.pathname }} replace />;
 
   if (!user?.isSuperAdmin) {
     return <PermissionDenied message="You don't have permission to access the platform administration area." />;

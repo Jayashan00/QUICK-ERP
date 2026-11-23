@@ -21,6 +21,7 @@ import {
   Activity,
   HeartPulse,
   Headphones,
+  Inbox,
   ScrollText,
   CloudCog,
 } from "lucide-react";
@@ -622,6 +623,11 @@ export const SUPER_ADMIN_NAVIGATION_SECTIONS: NavigationSectionConfig[] = [
         path: "/super-admin/support",
         icon: Headphones,
         permission: "platform.support.view",
+      },
+      {
+        label: "Inquiries",
+        path: "/super-admin/inquiries",
+        icon: Inbox,
       },
     ],
   },
