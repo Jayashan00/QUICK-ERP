@@ -75,7 +75,7 @@ public final class SalesInvoicePdfService {
                 + " attached as a PDF.\nAmount due: " + display.money(invoice.outstanding())
                 + "\nDue date: " + invoice.dueDate() + "\n\nRegards,\n" + invoice.companyName();
         try {
-            mailer.sendWithAttachment(invoice.recipientEmail(), subject, body, fileName, "application/pdf", pdf);
+            mailer.sendWithAttachment(invoice.recipientEmail(), subject, body, fileName, "application/pdf", pdf, Mailer.Sender.company(invoice.company()));
         } catch (RuntimeException error) {
             throw ApiException.serviceUnavailable("email_delivery_failed",
                     "The invoice email could not be delivered. Check the SMTP settings and try again.");

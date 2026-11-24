@@ -76,7 +76,7 @@ public final class QuotationDeliveryService {
                     + "Please find quotation " + prepared.reference() + " attached as a PDF.\n"
                     + "The quotation is valid until " + prepared.expiryDate() + ".\n\n"
                     + "Regards,\n" + prepared.companyName();
-            mailer.sendWithAttachment(prepared.recipientEmail(), subject, body, fileName, "application/pdf", pdf);
+            mailer.sendWithAttachment(prepared.recipientEmail(), subject, body, fileName, "application/pdf", pdf, Mailer.Sender.company(prepared.company()));
         } catch (RuntimeException error) {
             markFailed(principal, quotationId.trim(), requestId, error.getMessage());
             if (error instanceof ApiException api) throw api;

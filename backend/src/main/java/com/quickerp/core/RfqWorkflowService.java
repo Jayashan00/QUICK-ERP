@@ -105,6 +105,7 @@ public final class RfqWorkflowService {
             save(connection, principal.tenantId(), REQUESTS, body.purchaseRequestId().trim(), request, principal.userId());
 
             ArrayNode invitations = mapper.createArrayNode();
+            Mailer.Sender companySender = Mailer.Sender.company(CompanyPdfBranding.load(connection, principal.tenantId(), mapper));
             LinkedHashSet<String> uniqueSupplierIds = new LinkedHashSet<>(body.supplierIds());
             for (String supplierId : uniqueSupplierIds) {
                 ObjectNode supplier = record(connection, principal.tenantId(), SUPPLIERS, supplierId);
@@ -133,7 +134,7 @@ public final class RfqWorkflowService {
                                     + "You have been invited to respond to RFQ " + reference + ".\n"
                                     + "Required delivery date: " + body.requiredDeliveryDate() + "\n\n"
                                     + "Open the secure supplier response page:\n" + link
-                                    + "\n\nThis link expires on " + expiresAt + ".");
+                                    + "\n\nThis link expires on " + expiresAt + ".", companySender);
                     invitation.put("emailStatus", "sent").put("sentAt", Instant.now().toString());
                 } catch (RuntimeException error) {
                     invitation.put("emailStatus", "failed").put("emailError",

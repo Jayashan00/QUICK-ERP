@@ -45,7 +45,7 @@ public final class PasswordResetService {
         mailer.send(target[0], "Reset your Quick ERP password",
                 "A password reset was requested for your Quick ERP account.\n\n"
                         + "Open this link within " + TOKEN_MINUTES + " minutes to choose a new password:\n" + link + "\n\n"
-                        + "If you did not request this, you can ignore this email.");
+                        + "If you did not request this, you can ignore this email.", Mailer.Sender.PLATFORM);
     }
 
     private static final int WELCOME_HOURS = 72;
@@ -75,7 +75,7 @@ public final class PasswordResetService {
                 "Your company \"" + companyName + "\" now has access to Vyro ERP, and you are its administrator.\n\n"
                         + "1. Open this one-time link within " + WELCOME_HOURS + " hours to choose your password:\n" + link + "\n\n"
                         + "2. Then sign in at " + signIn + " with this email address (" + target[0] + ").\n\n"
-                        + "If you were not expecting this, contact the Vyro ERP team.");
+                        + "If you were not expecting this, contact the Vyro ERP team.", Mailer.Sender.PLATFORM);
         return true;
     }
 
@@ -98,7 +98,7 @@ public final class PasswordResetService {
         mailer.send(target[0], "Set up your Quick ERP password",
                 "A Quick ERP platform account was created for you.\n\n"
                         + "Open this one-time link within " + TOKEN_MINUTES + " minutes to choose your password:\n" + link + "\n\n"
-                        + "If you were not expecting this account, contact your platform administrator.");
+                        + "If you were not expecting this account, contact your platform administrator.", Mailer.Sender.PLATFORM);
     }
 
     public void confirm(String token, String newPassword) {

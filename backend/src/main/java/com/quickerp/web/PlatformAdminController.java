@@ -996,7 +996,9 @@ public class PlatformAdminController {
                 });
             }
         } catch (RuntimeException error) {
-            // The company is active; the email can be resent with "Forgot password" by the administrator.
+            // The company is active; the administrator can still use "Forgot password" or the temporary password.
+            org.slf4j.LoggerFactory.getLogger(PlatformAdminController.class)
+                    .warn("Could not email the password setup link for company {} to {}", tenantId, provisioned.ownerEmail(), error);
         }
     }
 
