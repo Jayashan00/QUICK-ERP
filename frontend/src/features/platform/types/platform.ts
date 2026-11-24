@@ -88,6 +88,8 @@ export interface TenantOnboarding {
   email?: TenantInvoiceEmail;
   payment?: TenantPaymentRecord;
   invitation?: TenantInvitation;
+  /** Set by the server when the administrator was emailed a password setup link at activation. */
+  accessEmail?: { sentTo: string; sentAt: string };
 }
 
 export interface PlatformTenant {

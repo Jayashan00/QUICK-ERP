@@ -974,7 +974,30 @@ public class PlatformAdminController {
             return new ProvisioningService.ProvisionRequest(name, ownerName, ownerEmail, body.ownerPassword(), null);
         });
         provisioningService.provision(principal, tenantId, provisionRequest);
+        emailAccessToAdministrator(tenantId, provisionRequest);
         return getTenant(tenantId, request);
+    }
+
+    /**
+     * Emails the new company administrator a password setup link and records it in the company's onboarding
+     * (accessEmail), so the Super Admin sees that it was sent. Activation itself never fails because of email:
+     * the Super Admin still has the temporary password on screen.
+     */
+    private void emailAccessToAdministrator(String tenantId, ProvisioningService.ProvisionRequest provisioned) {
+        try {
+            String ownerId = db.snapshot(conn -> Sql.queryString(conn,
+                    "SELECT id FROM app_users WHERE tenant_id = ? AND lower(email) = lower(?)", tenantId, provisioned.ownerEmail()));
+            if (ownerId != null && passwordResetService.inviteCompanyAdministrator(ownerId, provisioned.name())) {
+                db.tx(conn -> {
+                    Sql.update(conn, "UPDATE tenants SET profile = jsonb_set(profile, '{onboarding,accessEmail}', "
+                            + "jsonb_build_object('sentTo', CAST(? AS text), 'sentAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')), true) "
+                            + "WHERE id = ? AND jsonb_typeof(profile -> 'onboarding') = 'object'", provisioned.ownerEmail(), tenantId);
+                    return null;
+                });
+            }
+        } catch (RuntimeException error) {
+            // The company is active; the email can be resent with "Forgot password" by the administrator.
+        }
     }
 
     // ---------------------------------------------------------------- PUT /platform/tenants/{tenantId}/status

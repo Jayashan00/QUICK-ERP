@@ -101,7 +101,7 @@ function replaceTenantFromApi(row: PlatformTenantApiResponse): PlatformTenant {
 }
 
 /** Sign-in details of a new company's administrator, shown once to the Super Admin after activation. */
-export interface IssuedAccessCredentials { email: string; temporaryPassword: string }
+export interface IssuedAccessCredentials { email: string; temporaryPassword: string; emailedTo?: string }
 
 /** 16 random characters without look-alikes (0/O, 1/l/I), easy to read out to the company administrator. */
 function generateTemporaryPassword(): string {
@@ -127,7 +127,7 @@ async function activateCompanyOnServer(tenant: { id: string; ownerEmail: string;
     );
     return {
       tenant: replaceTenantFromApi(data),
-      accessCredentials: { email, temporaryPassword },
+      accessCredentials: { email, temporaryPassword, emailedTo: data.onboarding?.accessEmail?.sentTo },
     };
   } catch (error) {
     throw new Error(error instanceof Error && error.message ? error.message : 'The company could not be activated on the server.');

@@ -460,7 +460,9 @@ export function TenantDetailPage() {
       setActivateConfirmModal(false);
       if (activated.accessCredentials) {
         setIssuedCredentials(activated.accessCredentials);
-        appToast.success('Company activated. Give the administrator the sign-in details shown.');
+        appToast.success(activated.accessCredentials.emailedTo
+          ? `Company activated. A password setup link was emailed to ${activated.accessCredentials.emailedTo}.`
+          : 'Company activated. Give the administrator the sign-in details shown.');
       } else {
         appToast.success('Tenant access activated! Secure invitation setup link generated.');
       }
@@ -1551,6 +1553,12 @@ export function TenantDetailPage() {
       <Modal isOpen={issuedCredentials !== null} title="Company administrator sign-in" onClose={() => setIssuedCredentials(null)}>
         {issuedCredentials && (
           <div className="space-y-4">
+            {issuedCredentials.emailedTo && (
+              <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                A password setup link was emailed to <strong>{issuedCredentials.emailedTo}</strong> (valid 72 hours).
+                The details below are a backup if the email does not arrive.
+              </p>
+            )}
             <p className="text-sm text-slate-600">
               The company was created with all default roles. Give these details to its administrator. The password is shown
               <strong> only once</strong>; ask the administrator to change it after the first sign-in (Security page).

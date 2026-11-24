@@ -145,4 +145,40 @@ class ProductionSeedIntegrationTest {
             return null;
         });
     }
+
+    /** A newly activated company's administrator is emailed a 72-hour password setup link; without email nothing is sent. */
+    @Test
+    void theCompanyAdministratorIsEmailedAPasswordSetupLink() throws Exception {
+        Principal superAdmin = auth.authenticate(auth.login("superadmin@vyroerp.com", PASSWORD, "10.0.0.5").token());
+        provisioning.provision(superAdmin, "tenant-cd34ef56",
+                new ProvisioningService.ProvisionRequest("Galle Hardware", "Kamal Silva", "kamal.galle@gmail.com", "Owner#Pass2026", null));
+        String ownerId = db.tx(c -> Sql.queryString(c, "SELECT id FROM app_users WHERE tenant_id = 'tenant-cd34ef56'"));
+        List<String[]> sent = new java.util.ArrayList<>();
+        boolean[] configured = {false};
+        Mailer mailer = new Mailer() {
+            @Override public boolean configured() { return configured[0]; }
+            @Override public void send(String to, String subject, String body) { sent.add(new String[] {to, subject, body}); }
+            @Override public void sendWithAttachment(String to, String subject, String body, String name, String type, byte[] data) { }
+        };
+        CoreSettings settings = new CoreSettings("integration-test-secret-that-is-long-enough", 24, "", 10, 15,
+                5_242_880, 1000, true, Set.of(), Set.of(), Set.of(), 1000, List.of(), "https://vyroerp.com/reset-password", 20_971_520);
+        PasswordResetService resets = new PasswordResetService(db, hasher, mailer, settings);
+
+        // Email not configured: nothing is sent and activation is not disturbed.
+        assertFalse(resets.inviteCompanyAdministrator(ownerId, "Galle Hardware"));
+        assertTrue(sent.isEmpty());
+
+        // Email configured: one welcome email to the administrator's own address, with a link valid for 72 hours.
+        configured[0] = true;
+        assertTrue(resets.inviteCompanyAdministrator(ownerId, "Galle Hardware"));
+        assertEquals(1, sent.size());
+        assertEquals("kamal.galle@gmail.com", sent.get(0)[0]);
+        assertTrue(sent.get(0)[1].contains("set up your password"));
+        assertTrue(sent.get(0)[2].contains("https://vyroerp.com/reset-password?token="));
+        assertTrue(sent.get(0)[2].contains("https://vyroerp.com/login"));
+        assertTrue(sent.get(0)[2].contains("Galle Hardware"));
+        long hours = db.tx(c -> Sql.queryLong(c, "SELECT EXTRACT(EPOCH FROM (expires_at - now())) / 3600 FROM password_reset_tokens "
+                + "WHERE user_id = ? AND used_at IS NULL", ownerId));
+        assertTrue(hours >= 71 && hours <= 72, "link valid for 72 hours, was " + hours);
+    }
 }
