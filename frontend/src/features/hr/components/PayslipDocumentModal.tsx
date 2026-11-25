@@ -24,13 +24,35 @@ export interface PayslipItem {
   net: number;
 }
 
+function safeLogoUrl(value?: string): string | undefined {
+  const url = value?.trim();
+  if (!url) return undefined;
+  return /^(?:https?:\/\/|data:image\/(?:png|jpe?g|webp);base64,)/i.test(url) ? url : undefined;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character] ?? character);
+}
+
 export function generatePayslipHtml(options: {
   payslip: PayslipItem;
   employee?: Employee;
   companyName?: string;
+  companyLogoUrl?: string;
   formatMoney: (amount: number) => string;
 }): string {
-  const { payslip, employee, companyName = 'Acme Corporation', formatMoney } = options;
+  const { payslip, employee, formatMoney } = options;
+  const companyName = escapeHtml(options.companyName?.trim() || 'Company');
+  const companyLogoUrl = safeLogoUrl(options.companyLogoUrl);
+  const companyLogo = companyLogoUrl
+    ? `<img class="company-logo" src="${escapeHtml(companyLogoUrl)}" alt="${companyName} logo">`
+    : '';
   const employeeName = employee ? `${employee.firstName} ${employee.lastName}` : payslip.employeeId;
   const totalDeductions = payslip.deduction + payslip.employeeEpf + payslip.loanRecovery;
 
@@ -71,6 +93,17 @@ export function generatePayslipHtml(options: {
       font-weight: 700;
       color: #0f172a;
       letter-spacing: -0.5px;
+    }
+    .company-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .company-logo {
+      width: 58px;
+      height: 58px;
+      object-fit: contain;
+      flex: 0 0 auto;
     }
     .company-subtitle {
       color: #64748b;
@@ -233,9 +266,12 @@ export function generatePayslipHtml(options: {
 <body>
   <div class="payslip-container">
     <div class="header">
-      <div>
-        <div class="company-title">${companyName}</div>
-        <div class="company-subtitle">Enterprise Human Resources & Payroll · Branch: ${employee?.branchId ?? payslip.branchId}</div>
+      <div class="company-brand">
+        ${companyLogo}
+        <div>
+          <div class="company-title">${companyName}</div>
+          <div class="company-subtitle">Enterprise Human Resources & Payroll · Branch: ${employee?.branchId ?? payslip.branchId}</div>
+        </div>
       </div>
       <div class="payslip-badge">
         <h2>Payslip</h2>
@@ -374,6 +410,7 @@ export function printPayslipHtml(options: {
   payslip: PayslipItem;
   employee?: Employee;
   companyName?: string;
+  companyLogoUrl?: string;
   formatMoney: (amount: number) => string;
 }) {
   const html = generatePayslipHtml(options);
@@ -392,6 +429,7 @@ export function downloadPayslipHtml(options: {
   payslip: PayslipItem;
   employee?: Employee;
   companyName?: string;
+  companyLogoUrl?: string;
   formatMoney: (amount: number) => string;
 }) {
   const html = generatePayslipHtml(options);
@@ -414,6 +452,7 @@ export function PayslipDocumentModal({
   payslip,
   employee,
   companyName,
+  companyLogoUrl,
   formatMoney,
   onShareEmail,
 }: {
@@ -422,6 +461,7 @@ export function PayslipDocumentModal({
   payslip: PayslipItem | null;
   employee?: Employee;
   companyName?: string;
+  companyLogoUrl?: string;
   formatMoney: (amount: number) => string;
   onShareEmail?: (payslip: PayslipItem, employee?: Employee) => void;
 }) {
@@ -431,11 +471,11 @@ export function PayslipDocumentModal({
   const totalDeductions = payslip.deduction + payslip.employeeEpf + payslip.loanRecovery;
 
   const handlePrint = () => {
-    printPayslipHtml({ payslip, employee, companyName, formatMoney });
+    printPayslipHtml({ payslip, employee, companyName, companyLogoUrl, formatMoney });
   };
 
   const handleDownload = () => {
-    downloadPayslipHtml({ payslip, employee, companyName, formatMoney });
+    downloadPayslipHtml({ payslip, employee, companyName, companyLogoUrl, formatMoney });
   };
 
   const handleShare = () => {
@@ -477,11 +517,14 @@ export function PayslipDocumentModal({
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           {/* Header */}
           <div className="flex flex-wrap items-start justify-between border-b border-slate-200 pb-5">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900">{companyName ?? 'Acme Corporation'}</h1>
-              <p className="mt-1 text-xs text-slate-500">
-                Enterprise Human Resources & Payroll · Branch: {employee?.branchId ?? payslip.branchId}
-              </p>
+            <div className="flex items-center gap-3">
+              {safeLogoUrl(companyLogoUrl) && <img src={safeLogoUrl(companyLogoUrl)} alt={`${companyName || 'Company'} logo`} className="size-14 shrink-0 object-contain" />}
+              <div>
+                <h1 className="text-2xl font-bold text-slate-900">{companyName?.trim() || 'Company'}</h1>
+                <p className="mt-1 text-xs text-slate-500">
+                  Enterprise Human Resources & Payroll · Branch: {employee?.branchId ?? payslip.branchId}
+                </p>
+              </div>
             </div>
             <div className="text-right">
               <span className="inline-block rounded-md bg-blue-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-blue-800">
@@ -615,7 +658,7 @@ export function PayslipDocumentModal({
           </div>
 
           <div className="mt-6 border-t border-slate-100 pt-3 text-center text-[11px] text-slate-400">
-            This is a computer-generated payslip from {companyName ?? 'Acme Corporation'} HR & Payroll System.
+            This is a computer-generated payslip from {companyName?.trim() || 'Company'} HR & Payroll System.
           </div>
         </div>
 
