@@ -22,7 +22,7 @@ import { LoadingSpinner } from '@/shared/components/feedback/LoadingSpinner';
 import { getErrorMessage, getLocalDateInputValue } from '@/shared/validation';
 import { OPPORTUNITY_STAGES, OPPORTUNITY_STATUSES } from '@/features/crm/opportunities/types/opportunity';
 import { useUserOptions } from '@/features/settings/users/hooks/useUserOptions';
-import { mockCustomers } from '@/features/customers/mocks';
+import { useCustomers } from '@/features/customers/hooks/useCustomers';
 import { mockLeads } from '@/features/crm/leads/mocks';
 import { useTenantCurrency } from '@/features/settings/finance/currency';
 import { resolveCrmValueCurrency } from '@/features/crm/valueCurrency';
@@ -43,7 +43,6 @@ const lostReasonOptions = [
 ];
 
 
-const customerOptions = mockCustomers.map((c) => ({ value: c.id, label: c.name }));
 const leadOptions = mockLeads.map((lead) => ({
   value: lead.id,
   label: `${lead.firstName} ${lead.lastName}${lead.company ? ` - ${lead.company}` : ''}`,
@@ -55,8 +54,16 @@ export function OpportunityFormPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { users } = useUserOptions({ includeInactive: true });
+  const { customers, isLoading: areCustomersLoading } = useCustomers({
+    status: 'active',
+    pageSize: 100,
+  });
   const { currencyCode, supportedCurrencies, isLoading: isCurrencyLoading } = useTenantCurrency();
   const currencyOptions = supportedCurrencies.map((code) => ({ value: code, label: code }));
+  const customerOptions = customers.map((customer) => ({
+    value: customer.id,
+    label: customer.name,
+  }));
   const salesOwnerOptions = users.map(user => ({ value: user.id, label: user.name }));
   const initialOwner = users.find(user => user.id === searchParams.get('ownerId'));
 
@@ -137,7 +144,7 @@ export function OpportunityFormPage() {
   }, [currencyCode, opportunity, reset]);
 
   const onCustomerChange = (customerId: string) => {
-    const cust = mockCustomers.find((c) => c.id === customerId);
+    const cust = customers.find((customer) => customer.id === customerId);
     setValue('customerId', customerId, { shouldDirty: true });
     setValue('customerName', cust ? cust.name : '', { shouldDirty: true, shouldValidate: true });
   };
@@ -222,7 +229,8 @@ export function OpportunityFormPage() {
                   render={({ field }) => (
                     <Select
                       options={customerOptions}
-                      placeholder="Select customer..."
+                      placeholder={areCustomersLoading ? 'Loading customers...' : 'Select customer...'}
+                      disabled={areCustomersLoading}
                       value={field.value ?? ''}
                       onChange={(e) => onCustomerChange(e.target.value)}
                     />
