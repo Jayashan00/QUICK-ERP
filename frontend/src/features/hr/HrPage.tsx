@@ -10,6 +10,7 @@ import { TENANT_PERMISSIONS as P } from '@/core/permissions';
 import { departmentService } from '@/features/settings/organization/services/departmentService';
 import { designationService } from '@/features/settings/organization/services/designationService';
 import { useTenantCurrency } from '@/features/settings/finance/currency';
+import { useCompany } from '@/features/settings/company';
 import { Button } from '@/shared/components/common/Button';
 import { Card } from '@/shared/components/common/Card';
 import { Modal } from '@/shared/components/common/Modal';
@@ -37,7 +38,7 @@ function Status({ value }: { value: string }) { return <span className="rounded-
 
 function HrPageWorkspace({ section }: { section: string }) {
   const { id: employeeId } = useParams();
-  const { tenantId } = useTenant(); const { branchId, branches } = useBranch(); const { user } = useAuth(); const { hasPermission, permissions } = usePermissions(); const { formatMoney } = useTenantCurrency(); const client = useQueryClient();
+  const { tenantId, currentTenant } = useTenant(); const { branchId, branches } = useBranch(); const { user } = useAuth(); const { hasPermission, permissions } = usePermissions(); const { formatMoney } = useTenantCurrency(); const { company } = useCompany(); const client = useQueryClient();
   const [branchFilter, setBranchFilter] = useState(''); const [departmentFilter, setDepartmentFilter] = useState('');
   const [rosterView, setRosterView] = useState<'day' | 'week'>('week'); const [rosterDate, setRosterDate] = useState(new Date().toISOString().slice(0, 10));
   const [modal, setModal] = useState<OperationKind | 'employee' | null>(null); const [editing, setEditing] = useState<Employee | undefined>();
@@ -50,6 +51,8 @@ function HrPageWorkspace({ section }: { section: string }) {
   const organization = useQuery({ queryKey: ['hr-organization', tenantId], queryFn: async () => ({ departments: await departmentService.getAllDepartments(tenantId!), designations: await designationService.getAllDesignations(tenantId!) }), enabled: Boolean(tenantId) });
   const query = useQuery({ queryKey: ['hr', section, tenantId, branchId, branchFilter, departmentFilter], queryFn: async () => { await new Promise((resolve) => setTimeout(resolve, 120)); return true; }, enabled: Boolean(tenantId && branchId) });
   const departments = organization.data?.departments ?? []; const designations = organization.data?.designations ?? [];
+  const companyName = company?.name.trim() || currentTenant?.name || 'Company';
+  const companyLogoUrl = company?.logoUrl?.trim() || undefined;
   const refresh = () => client.invalidateQueries({ queryKey: ['hr'] });
   const run = async (action: () => unknown | Promise<unknown>, success = 'Saved.') => { try { await action(); await refresh(); setModal(null); setConfirm(null); appToast.success(success); } catch (error) { appToast.error(error instanceof Error ? error.message : 'Unable to save HR record.'); } };
   const can = (permission: string) => hasPermission(permission);
@@ -210,7 +213,8 @@ function HrPageWorkspace({ section }: { section: string }) {
                       printPayslipHtml({
                         payslip: row,
                         employee: worker,
-                        companyName: 'Acme Corporation',
+                        companyName,
+                        companyLogoUrl,
                         formatMoney,
                       })
                     }
@@ -235,7 +239,8 @@ function HrPageWorkspace({ section }: { section: string }) {
           onClose={() => setViewingPayslip(null)}
           payslip={viewingPayslip}
           employee={viewingPayslip ? hrService.employees(scope).find((e) => e.id === viewingPayslip.employeeId) : undefined}
-          companyName="Acme Corporation"
+          companyName={companyName}
+          companyLogoUrl={companyLogoUrl}
           formatMoney={formatMoney}
           onShareEmail={(slip, worker) => handleShareEmail(slip, worker)}
         />

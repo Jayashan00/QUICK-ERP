@@ -5,6 +5,7 @@ import { designationService } from '../src/features/settings/organization/servic
 import { TENANT_PERMISSIONS } from '../src/core/permissions/tenantPermissionConstants';
 import { hasPermission } from '../src/core/permissions/permissionUtils';
 import { salesService } from '../src/features/sales/services/salesService';
+import { generatePayslipHtml } from '../src/features/hr/components/PayslipDocumentModal';
 import '../src/core/auth/userService';
 
 const scope: HrScope = { tenantId: 'tenant-001', branchId: 'branch-001', permittedBranchIds: ['branch-001'] };
@@ -17,6 +18,26 @@ assert.equal(hrService.employees(scope).some((row) => /\badmin(?:istrator)?\b/i.
 const linkedManager = hrService.employees(scope).find((row) => row.userId === 'usr-002');
 assert.equal(linkedManager?.roleName, 'Sales Manager');
 assert.match(linkedManager?.employeeCode ?? '', /^EMP-\d{4}$/);
+assert.ok(linkedManager);
+const linkedManagerWithSalary = await hrService.saveEmployee(scope, actor, {
+  ...linkedManager,
+  departmentId: 'dept-001',
+  designationId: 'des-005',
+  salary: 125000,
+});
+assert.equal(linkedManagerWithSalary.salary, 125000);
+assert.equal(linkedManagerWithSalary.userId, 'usr-002');
+assert.equal(hrService.employee(scope, linkedManager.id).salary, 125000);
+assert.equal(hrService.employees(scope).filter((row) => row.userId === 'usr-002').length, 1);
+const linkedManagerUpdated = await hrService.saveEmployee(scope, actor, {
+  ...linkedManagerWithSalary,
+  firstName: 'Tampered',
+  email: 'tampered@example.test',
+  salary: 130000,
+});
+assert.equal(linkedManagerUpdated.firstName, linkedManager.firstName);
+assert.equal(linkedManagerUpdated.email, linkedManager.email);
+assert.equal(linkedManagerUpdated.salary, 130000);
 assert.equal(new Set(hrService.employees(scope).map((row) => row.employeeCode)).size, hrService.employees(scope).length);
 assert.ok(hrService.employees({ ...scope, branchId: 'branch-002', permittedBranchIds: ['branch-002'] }).every((row) => row.branchId === 'branch-002'));
 assert.ok((await departmentService.getDepartmentById(scope.tenantId, 'dept-001')));
@@ -88,6 +109,16 @@ assert.equal(nightShift.name, 'Night shift');
 const allWorkers = hrService.employees(scope);
 const allSlips = hrService.payslips(scope);
 assert.ok(allWorkers.every((w) => allSlips.some((s) => s.employeeId === w.id)));
+const brandedPayslipHtml = generatePayslipHtml({
+  payslip: allSlips[0],
+  employee: allWorkers.find((row) => row.id === allSlips[0].employeeId),
+  companyName: 'Quick & Solutions',
+  companyLogoUrl: 'data:image/png;base64,AAAA',
+  formatMoney: (amount) => `LKR ${amount.toFixed(2)}`,
+});
+assert.match(brandedPayslipHtml, /Quick &amp; Solutions/);
+assert.match(brandedPayslipHtml, /data:image\/png;base64,AAAA/);
+assert.equal(brandedPayslipHtml.includes('Acme Corporation'), false);
 
 // Validate send payslip email
 const emailResult = hrService.sendPayslipEmail(scope, actor, allSlips[0].id);
