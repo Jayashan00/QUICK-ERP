@@ -173,6 +173,28 @@ export function expandModuleDependencies(modules: TenantModule[]): TenantModule[
   return TENANT_MODULES.filter((module) => result.has(module));
 }
 
+export function getDependentModules(target: TenantModule, currentlyEnabled: readonly TenantModule[]): TenantModule[] {
+  const toRemove = new Set<TenantModule>([target]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const def of TENANT_MODULE_CATALOG) {
+      if (currentlyEnabled.includes(def.id) && !toRemove.has(def.id)) {
+        if (def.dependencies?.some((dep) => toRemove.has(dep))) {
+          toRemove.add(def.id);
+          changed = true;
+        }
+      }
+    }
+  }
+  toRemove.delete(target);
+  return TENANT_MODULES.filter((m) => toRemove.has(m) && currentlyEnabled.includes(m));
+}
+
+export function getModuleLabel(moduleId: TenantModule): string {
+  return TENANT_MODULE_CATALOG.find((m) => m.id === moduleId)?.label ?? moduleId;
+}
+
 export function computeSubscriptionStatus(subscription?: TenantSubscriptionInfo): 'active' | 'suspended' | 'expired' | 'pending' {
   if (!subscription) return 'active';
   if (subscription.status === 'pending') return 'pending';

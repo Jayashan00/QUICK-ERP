@@ -184,19 +184,29 @@ export const hrService = {
     if (/[a-zA-Z]/.test(input.phone)) throw new Error('Phone number cannot contain letters or alphanumeric characters.');
     if (!input.firstName.trim() || !input.lastName.trim() || !/^\S+@\S+\.\S+$/.test(input.email) || input.phone.replace(/\D/g, '').length < 7 || !input.dateOfJoining || input.salary < 0) throw new Error('Complete the required employee fields with valid contact and salary details.');
     if (input.exitDate && input.exitDate < input.dateOfJoining) throw new Error('Exit date cannot precede joining date.');
-    const previous = input.id ? employees.find((row) => row.id === input.id && row.tenantId === scope.tenantId && permitted(scope, row.branchId)) : undefined;
+    const previous = input.id ? allEmployees().find((row) => row.id === input.id && row.tenantId === scope.tenantId && permitted(scope, row.branchId)) : undefined;
     if (input.id && !previous) throw new Error('Employee not found in permitted branches.');
-    const employeeCode = previous?.employeeCode ?? (input.employeeCode?.trim() || nextEmployeeCode(scope.tenantId));
+    const employeeInput = previous?.userId ? {
+      ...input,
+      firstName: previous.firstName,
+      lastName: previous.lastName,
+      email: previous.email,
+      phone: previous.phone,
+      branchId: previous.branchId,
+      departmentId: previous.departmentId || input.departmentId,
+      designationId: previous.designationId || input.designationId,
+    } : input;
+    const employeeCode = previous?.employeeCode ?? (employeeInput.employeeCode?.trim() || nextEmployeeCode(scope.tenantId));
     if (employees.some((row) => row.tenantId === scope.tenantId && row.employeeCode === employeeCode && row.id !== input.id)) throw new Error('Employee code already exists.');
-    const department = await departmentService.getDepartmentById(scope.tenantId, input.departmentId);
-    const designation = await designationService.getDesignationById(scope.tenantId, input.designationId);
+    const department = await departmentService.getDepartmentById(scope.tenantId, employeeInput.departmentId);
+    const designation = await designationService.getDesignationById(scope.tenantId, employeeInput.designationId);
     if (!department || !designation || designation.departmentId !== department.id) throw new Error('Choose a valid department and its designation.');
     if (input.reportingManagerId && input.reportingManagerId === input.id) throw new Error('Employee cannot report to themselves.');
     if (input.reportingManagerId) employee(scope, input.reportingManagerId);
     const now = new Date().toISOString();
-    const item: Employee = { ...input, employeeCode, id: input.id ?? uid('emp'), tenantId: scope.tenantId, departmentName: department.name, designationName: designation.name, createdAt: previous?.createdAt ?? now, updatedAt: now };
+    const item: Employee = { ...previous, ...employeeInput, employeeCode, id: input.id ?? uid('emp'), tenantId: scope.tenantId, departmentName: department.name, designationName: designation.name, createdAt: previous?.createdAt ?? now, updatedAt: now };
     employees = [item, ...employees.filter((row) => row.id !== item.id)];
-    audit({ ...scope, branchId: input.branchId }, actor, previous ? 'Employee updated' : 'Employee created', item.employeeCode, item.id);
+    audit({ ...scope, branchId: employeeInput.branchId }, actor, previous ? 'Employee updated' : 'Employee created', item.employeeCode, item.id);
     return item;
   },
   shifts: (scope: HrScope, branchId?: string) => visible(shifts, scope, branchId),

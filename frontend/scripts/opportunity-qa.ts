@@ -109,6 +109,10 @@ const opportunityDetailPage = readFileSync(
   'src/features/crm/opportunities/pages/OpportunityDetailPage.tsx',
   'utf8',
 );
+const opportunityFormPage = readFileSync(
+  'src/features/crm/opportunities/pages/OpportunityFormPage.tsx',
+  'utf8',
+);
 const pipelineSummary = readFileSync(
   'src/features/crm/opportunities/components/PipelineSummary.tsx',
   'utf8',
@@ -118,6 +122,9 @@ assert.equal(opportunityDetailPage.includes('OpportunityFormModal'), false);
 assert.match(opportunitiesPage, /\/crm\/opportunities\/new/);
 assert.match(opportunitiesPage, /\/crm\/opportunities\/\$\{opp\.id\}\/edit/);
 assert.match(opportunityDetailPage, /\/crm\/opportunities\/\$\{opportunity\.id\}\/edit/);
+assert.match(opportunityFormPage, /useCustomers\(\{/);
+assert.match(opportunityFormPage, /status: 'active'/);
+assert.equal(opportunityFormPage.includes('mockCustomers'), false);
 assert.match(pipelineSummary, /convertToBaseAmount/);
 assert.equal(pipelineSummary.includes('totalsByCurrency'), false);
 assert.match(pipelineSummary, /Rate unavailable/);

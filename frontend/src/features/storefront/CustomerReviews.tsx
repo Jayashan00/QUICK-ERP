@@ -18,7 +18,7 @@ export function CustomerReviews({ scope, order, token }: { scope: TenantBranchSc
   const form = useForm<ReviewInput>({ resolver: zodResolver(reviewSchema), defaultValues: { target: 'product', productId: order.items[0]?.productId ?? '', rating: 5, comment: '' } });
   const submitted = reviewService.forOrder(scope, order.id, token);
   const target = form.watch('target');
-  const save = form.handleSubmit(value => { try { reviewService.submit(scope, order.id, token, value); form.reset({ target: 'product', productId: order.items[0]?.productId ?? '', rating: 5, comment: '' }); refresh(n => n + 1); appToast.success('Review submitted for approval.'); } catch (error) { appToast.error(error instanceof Error ? error.message : 'Unable to submit review.'); } });
+  const save = form.handleSubmit(async value => { try { await reviewService.submit(scope, order.id, token, value); form.reset({ target: 'product', productId: order.items[0]?.productId ?? '', rating: 5, comment: '' }); refresh(n => n + 1); appToast.success('Review submitted for approval.'); } catch (error) { appToast.error(error instanceof Error ? error.message : 'Unable to submit review.'); } });
   void revision;
   if (order.status !== 'completed') return null;
   return <section className="mt-6 border-t pt-5"><h2 className="text-lg font-semibold">Review this order</h2><p className="mt-1 text-sm text-slate-600">You can leave one review for the order and one for each purchased product. Reviews appear in the shop after approval.</p>

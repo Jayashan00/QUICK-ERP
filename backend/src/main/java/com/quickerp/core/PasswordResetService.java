@@ -45,7 +45,60 @@ public final class PasswordResetService {
         mailer.send(target[0], "Reset your Quick ERP password",
                 "A password reset was requested for your Quick ERP account.\n\n"
                         + "Open this link within " + TOKEN_MINUTES + " minutes to choose a new password:\n" + link + "\n\n"
-                        + "If you did not request this, you can ignore this email.");
+                        + "If you did not request this, you can ignore this email.", Mailer.Sender.PLATFORM);
+    }
+
+    private static final int WELCOME_HOURS = 72;
+
+    /**
+     * Emails a newly activated company's administrator a welcome message with a one-time link (valid 72 hours)
+     * to choose their password. Returns false, without sending anything, when email is not configured.
+     */
+    public boolean inviteCompanyAdministrator(String userId, String companyName) {
+        if (userId == null || userId.isBlank() || !mailer.configured()) return false;
+        String[] target = db.tx(connection -> {
+            String email = Sql.queryString(connection,
+                    "SELECT u.email FROM app_users u JOIN tenants t ON t.id = u.tenant_id "
+                            + "WHERE u.id = ? AND u.status = 'active' AND t.status = 'active'",
+                    userId);
+            if (email == null) throw ApiException.badRequest("Only an active user can receive a password setup email.");
+            String token = Hashing.randomToken(32);
+            Sql.update(connection, "UPDATE password_reset_tokens SET used_at = now() WHERE user_id = ? AND used_at IS NULL", userId);
+            Sql.update(connection, "INSERT INTO password_reset_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                    Hashing.sha256(token), userId, OffsetDateTime.now(ZoneOffset.UTC).plusHours(WELCOME_HOURS));
+            return new String[] {email, token};
+        });
+        String resetUrl = settings.passwordResetUrl();
+        String link = resetUrl + (resetUrl.contains("?") ? "&" : "?") + "token=" + target[1];
+        String signIn = resetUrl.replaceFirst("/reset-password.*$", "/login");
+        mailer.send(target[0], "Welcome to Vyro ERP: set up your password",
+                "Your company \"" + companyName + "\" now has access to Vyro ERP, and you are its administrator.\n\n"
+                        + "1. Open this one-time link within " + WELCOME_HOURS + " hours to choose your password:\n" + link + "\n\n"
+                        + "2. Then sign in at " + signIn + " with this email address (" + target[0] + ").\n\n"
+                        + "If you were not expecting this, contact the Vyro ERP team.", Mailer.Sender.PLATFORM);
+        return true;
+    }
+
+    /** Sends a one-time password setup link for a newly-created account. */
+    public void invite(String userId) {
+        if (userId == null || userId.isBlank()) throw ApiException.notFound("User not found.");
+        String[] target = db.tx(connection -> {
+            String email = Sql.queryString(connection,
+                    "SELECT u.email FROM app_users u JOIN tenants t ON t.id = u.tenant_id "
+                            + "WHERE u.id = ? AND u.status = 'active' AND t.status = 'active'",
+                    userId);
+            if (email == null) throw ApiException.badRequest("Only an active user can receive a password setup email.");
+            String token = Hashing.randomToken(32);
+            Sql.update(connection, "UPDATE password_reset_tokens SET used_at = now() WHERE user_id = ? AND used_at IS NULL", userId);
+            Sql.update(connection, "INSERT INTO password_reset_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                    Hashing.sha256(token), userId, OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(TOKEN_MINUTES));
+            return new String[] {email, token};
+        });
+        String link = settings.passwordResetUrl() + (settings.passwordResetUrl().contains("?") ? "&" : "?") + "token=" + target[1];
+        mailer.send(target[0], "Set up your Quick ERP password",
+                "A Quick ERP platform account was created for you.\n\n"
+                        + "Open this one-time link within " + TOKEN_MINUTES + " minutes to choose your password:\n" + link + "\n\n"
+                        + "If you were not expecting this account, contact your platform administrator.", Mailer.Sender.PLATFORM);
     }
 
     public void confirm(String token, String newPassword) {

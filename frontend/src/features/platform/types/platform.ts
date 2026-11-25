@@ -88,6 +88,8 @@ export interface TenantOnboarding {
   email?: TenantInvoiceEmail;
   payment?: TenantPaymentRecord;
   invitation?: TenantInvitation;
+  /** Set by the server when the administrator was emailed a password setup link at activation. */
+  accessEmail?: { sentTo: string; sentAt: string };
 }
 
 export interface PlatformTenant {
@@ -121,6 +123,7 @@ export interface PlatformUserRecord {
   status: 'active' | 'inactive';
   lastActiveAt: string;
   isSeed?: boolean;
+  invitationSent?: boolean;
 }
 
 export interface PlatformHealthCheck { id: string; service: string; status: 'operational' | 'degraded' | 'offline'; latencyMs: number; checkedAt: string; note: string }

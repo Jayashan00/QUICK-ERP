@@ -8,6 +8,8 @@ import { money, priceCart } from '@/features/pos/posPricing';
 import { flashSaleService } from '@/features/sales/services/flashSaleService';
 import { registerList, replaceArray } from '@/core/persistence/stateRegistry';
 import { tenantEntitlementService } from '@/core/tenant/tenantEntitlements';
+import { apiClient } from '@/core/api';
+import { isBackendEnabled } from '@/core/persistence/backendSession';
 
 export const checkoutSchema = z.object({
   name: z.string().trim().min(2), email: z.email(), phone: z.string().trim().min(7),
@@ -47,6 +49,17 @@ export const storefrontService = {
     const quote = await this.quote(scope, cart);
     const now = new Date().toISOString();
     const order: StoreOrder = { id: crypto.randomUUID(), trackingToken: crypto.randomUUID(), scope: { ...scope }, customer, items: quote.lines.map(line => ({ productId: line.product.id, name: line.product.name, quantity: line.quantity, unitPrice: line.unitPrice, regularUnitPrice: line.regularUnitPrice, promotionId: line.promotionId, taxCode: line.taxCode, taxPercent: line.taxPercent, tax: line.tax, total: money(line.lineTotal + (line.product.pricesIncludeTax ? 0 : line.tax)) })), subtotal: quote.subtotal, tax: quote.tax, total: quote.total, status: 'new', paymentStatus: 'pending', createdAt: now, updatedAt: now };
+    if (isBackendEnabled()) {
+      const { data } = await apiClient.post<{ rejected: Array<{ message: string }> }>(
+        `/public/shop/${encodeURIComponent(scope.tenantId)}/batch`,
+        {
+          clientId: `storefront:${crypto.randomUUID()}`,
+          changes: [{ collection: 'storefront.orders', recordId: order.id, data: order, deleted: false }],
+          seeded: [],
+        },
+      );
+      if (data.rejected?.length) throw new Error(data.rejected[0]!.message);
+    }
     orders.unshift(order);
     quote.lines.forEach(line => { if (line.promotionId) flashSaleService.recordRedemption(line.promotionId, line.quantity); });
     return order;

@@ -40,7 +40,7 @@ const emptyTenant: PlatformTenantInput = {
   subdomain: '',
   ownerEmail: '',
   contactName: '',
-  country: 'LK',
+  country: 'Sri Lanka',
   adminName: '',
   adminEmail: '',
 };

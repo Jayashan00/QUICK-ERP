@@ -271,7 +271,8 @@ public class MaintenanceService {
             obj.set("maintenance", maintNode);
 
             Sql.update(conn,
-                    "UPDATE erp_records SET data = CAST(? AS jsonb), change_seq = nextval('erp_change_seq'), updated_at = now() " +
+                    "UPDATE erp_records SET data = CAST(? AS jsonb), version = version + 1, change_seq = nextval('erp_change_seq'), " +
+                            "updated_at = now(), updated_by = 'server:maintenance', client_id = 'server:maintenance' " +
                             "WHERE tenant_id = 'platform' AND collection = 'platform.foundation' AND record_id = '__value__'",
                     Sql.writeJson(mapper, obj));
         } catch (Exception e) {

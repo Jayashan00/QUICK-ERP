@@ -47,7 +47,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.env.Environment;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.core.io.ByteArrayResource;
@@ -172,6 +171,22 @@ public class CoreConfig {
 
             @Override
             public void send(String to, String subject, String body) {
+                send(to, subject, body, Mailer.Sender.PLATFORM);
+            }
+
+            /** The platform address (MAIL_FROM) with the sender's display name, and Reply-To when given. */
+            private void applySender(MimeMessageHelper helper, Mailer.Sender from) throws MessagingException {
+                Mailer.Sender who = from == null ? Mailer.Sender.PLATFORM : from;
+                try {
+                    helper.setFrom(properties.getMail().getFrom(), who.displayName());
+                } catch (java.io.UnsupportedEncodingException error) {
+                    helper.setFrom(properties.getMail().getFrom());
+                }
+                if (who.replyTo() != null) helper.setReplyTo(who.replyTo());
+            }
+
+            @Override
+            public void send(String to, String subject, String body, Mailer.Sender from) {
                 JavaMailSender sender = sender();
                 if (!configured() || sender == null) {
                     if (properties.isProduction()) {
@@ -182,17 +197,28 @@ public class CoreConfig {
                     }
                     return;
                 }
-                SimpleMailMessage message = new SimpleMailMessage();
-                message.setFrom(properties.getMail().getFrom());
-                message.setTo(to);
-                message.setSubject(subject);
-                message.setText(body);
-                sender.send(message);
+                try {
+                    var message = sender.createMimeMessage();
+                    MimeMessageHelper helper = new MimeMessageHelper(message, false, StandardCharsets.UTF_8.name());
+                    applySender(helper, from);
+                    helper.setTo(to);
+                    helper.setSubject(subject);
+                    helper.setText(body, false);
+                    sender.send(message);
+                } catch (MessagingException error) {
+                    throw new IllegalStateException("The email could not be prepared.", error);
+                }
             }
 
             @Override
             public void sendWithAttachment(String to, String subject, String body, String attachmentName,
                                            String attachmentContentType, byte[] attachment) {
+                sendWithAttachment(to, subject, body, attachmentName, attachmentContentType, attachment, Mailer.Sender.PLATFORM);
+            }
+
+            @Override
+            public void sendWithAttachment(String to, String subject, String body, String attachmentName,
+                                           String attachmentContentType, byte[] attachment, Mailer.Sender from) {
                 JavaMailSender sender = sender();
                 if (!configured() || sender == null) {
                     throw new IllegalStateException("Email is not configured. Set SPRING_MAIL_HOST and SMTP credentials.");
@@ -200,7 +226,7 @@ public class CoreConfig {
                 try {
                     var message = sender.createMimeMessage();
                     MimeMessageHelper helper = new MimeMessageHelper(message, true, StandardCharsets.UTF_8.name());
-                    helper.setFrom(properties.getMail().getFrom());
+                    applySender(helper, from);
                     helper.setTo(to);
                     helper.setSubject(subject);
                     helper.setText(body, false);

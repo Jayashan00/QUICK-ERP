@@ -213,7 +213,12 @@ export async function changeBackendPassword(currentPassword: string, newPassword
   try {
     // The server signs out every other session and returns a new token for this browser.
     const { data } = await apiClient.post<{ token?: string; expiresAt?: string } | undefined>('/auth/change-password', { currentPassword, newPassword });
-    if (data?.token) localStorage.setItem(KEYS.AUTH_TOKEN, data.token);
+    if (data?.token) {
+      const target = localStorage.getItem(KEYS.AUTH_TOKEN) ? localStorage : sessionStorage;
+      const other = target === localStorage ? sessionStorage : localStorage;
+      target.setItem(KEYS.AUTH_TOKEN, data.token);
+      other.removeItem(KEYS.AUTH_TOKEN);
+    }
   } catch (error) {
     if (error instanceof ApiError) throw new Error(error.message || 'The password could not be changed.');
     throw new Error(UNREACHABLE);
