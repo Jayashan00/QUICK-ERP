@@ -90,12 +90,72 @@ public class AppProperties {
         private String geminiApiKey = "";
         private String geminiModel = "gemini-3.5-flash-lite";
         private int maxHistoryMessages = 12;
+        private int userRequestsPerMinute = 20;
+        private int tenantRequestsPerHour = 500;
+        private int providerTimeoutSeconds = 30;
+        private int maxInputCharacters = 2000;
+        private int maxOutputTokens = 500;
+        private int conversationRetentionDays = 90;
+        private int queryMaxRows = 100;
+        private int queryDefaultRows = 25;
+        private int queryTimeoutMs = 3000;
+        private int queryMaxFilters = 10;
+        private int queryMaxAggregationGroups = 100;
+        private int maxToolRounds = 5;
+        private int maxToolCalls = 12;
+        private int maxParallelTools = 3;
+        private int maxResponseDataBytes = 100000;
+        private int totalRequestTimeoutMs = 60000;
+        private int maxContextCharacters = 24000;
+        private String toolTransport = "direct";
+        private boolean mcpEnabled = false;
+        private String mcpUrl = "http://127.0.0.1:8000/api/v1/mcp";
         public String getGeminiApiKey() { return geminiApiKey; }
         public void setGeminiApiKey(String geminiApiKey) { this.geminiApiKey = geminiApiKey; }
         public String getGeminiModel() { return geminiModel; }
         public void setGeminiModel(String geminiModel) { this.geminiModel = geminiModel; }
         public int getMaxHistoryMessages() { return maxHistoryMessages; }
         public void setMaxHistoryMessages(int maxHistoryMessages) { this.maxHistoryMessages = maxHistoryMessages; }
+        public int getUserRequestsPerMinute() { return userRequestsPerMinute; }
+        public void setUserRequestsPerMinute(int value) { userRequestsPerMinute = value; }
+        public int getTenantRequestsPerHour() { return tenantRequestsPerHour; }
+        public void setTenantRequestsPerHour(int value) { tenantRequestsPerHour = value; }
+        public int getProviderTimeoutSeconds() { return providerTimeoutSeconds; }
+        public void setProviderTimeoutSeconds(int value) { providerTimeoutSeconds = value; }
+        public int getMaxInputCharacters() { return maxInputCharacters; }
+        public void setMaxInputCharacters(int value) { maxInputCharacters = value; }
+        public int getMaxOutputTokens() { return maxOutputTokens; }
+        public void setMaxOutputTokens(int value) { maxOutputTokens = value; }
+        public int getConversationRetentionDays() { return conversationRetentionDays; }
+        public void setConversationRetentionDays(int value) { conversationRetentionDays = value; }
+        public int getQueryMaxRows() { return queryMaxRows; }
+        public void setQueryMaxRows(int value) { queryMaxRows = value; }
+        public int getQueryDefaultRows() { return queryDefaultRows; }
+        public void setQueryDefaultRows(int value) { queryDefaultRows = value; }
+        public int getQueryTimeoutMs() { return queryTimeoutMs; }
+        public void setQueryTimeoutMs(int value) { queryTimeoutMs = value; }
+        public int getQueryMaxFilters() { return queryMaxFilters; }
+        public void setQueryMaxFilters(int value) { queryMaxFilters = value; }
+        public int getQueryMaxAggregationGroups() { return queryMaxAggregationGroups; }
+        public void setQueryMaxAggregationGroups(int value) { queryMaxAggregationGroups = value; }
+        public int getMaxToolRounds() { return maxToolRounds; }
+        public void setMaxToolRounds(int value) { maxToolRounds = value; }
+        public int getMaxToolCalls() { return maxToolCalls; }
+        public void setMaxToolCalls(int value) { maxToolCalls = value; }
+        public int getMaxParallelTools() { return maxParallelTools; }
+        public void setMaxParallelTools(int value) { maxParallelTools = value; }
+        public int getMaxResponseDataBytes() { return maxResponseDataBytes; }
+        public void setMaxResponseDataBytes(int value) { maxResponseDataBytes = value; }
+        public int getTotalRequestTimeoutMs() { return totalRequestTimeoutMs; }
+        public void setTotalRequestTimeoutMs(int value) { totalRequestTimeoutMs = value; }
+        public int getMaxContextCharacters() { return maxContextCharacters; }
+        public void setMaxContextCharacters(int value) { maxContextCharacters = value; }
+        public String getToolTransport() { return toolTransport; }
+        public void setToolTransport(String value) { toolTransport = value; }
+        public boolean isMcpEnabled() { return mcpEnabled; }
+        public void setMcpEnabled(boolean value) { mcpEnabled = value; }
+        public String getMcpUrl() { return mcpUrl; }
+        public void setMcpUrl(String value) { mcpUrl = value; }
     }
 
     public static class Mail {

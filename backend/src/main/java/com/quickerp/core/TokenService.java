@@ -23,6 +23,7 @@ public final class TokenService {
     }
 
     private static final String ISSUER = "quick-erp";
+    private static final String AUDIENCE = "quick-erp-api";
     private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
     private static final Base64.Decoder DECODER = Base64.getUrlDecoder();
 
@@ -67,6 +68,16 @@ public final class TokenService {
     public Claims verify(String token) {
         return verify(token, ACCESS);
     }
+    /** MCP requires tokens minted for this API, including the explicit audience claim. */
+    public Claims verifyForMcp(String token) {
+        Claims claims = verify(token, ACCESS);
+        if (claims == null) return null;
+        try {
+            String[] parts = token.split("\\.");
+            JsonNode payload = mapper.readTree(DECODER.decode(parts[1]));
+            return AUDIENCE.equals(payload.path("aud").asText()) ? claims : null;
+        } catch (RuntimeException | java.io.IOException error) { return null; }
+    }
 
     /** Returns the claims of a valid, unexpired two-factor challenge token, or null. */
     public Claims verifyChallenge(String token) {
@@ -79,6 +90,7 @@ public final class TokenService {
         ObjectNode header = mapper.createObjectNode().put("alg", "HS256").put("typ", "JWT");
         ObjectNode payload = mapper.createObjectNode()
                 .put("iss", ISSUER)
+                .put("aud", AUDIENCE)
                 .put("sub", userId)
                 .put("tid", tenantId)
                 .put("sa", superAdmin)

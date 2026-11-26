@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '@/core/api/apiError';
 import { aiAssistantService } from '../services/aiAssistantService';
 import type { AiMessage } from '../types';
@@ -9,6 +9,16 @@ export function useAiAssistant(currentBranchId: string | null) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
+  const previousBranch = useRef(currentBranchId);
+
+  useEffect(() => {
+    if (previousBranch.current === currentBranchId) return;
+    previousBranch.current = currentBranchId;
+    setMessages([]);
+    setConversationId(null);
+    setLastQuestion(null);
+    setError(null);
+  }, [currentBranchId]);
 
   const send = useCallback(async (rawQuestion: string) => {
     const question = rawQuestion.trim();
@@ -20,14 +30,22 @@ export function useAiAssistant(currentBranchId: string | null) {
     setIsLoading(true);
     try {
       const response = await aiAssistantService.chat(question, conversationId, currentBranchId);
+      if (previousBranch.current !== currentBranchId) return;
       setConversationId(response.conversationId);
       setMessages((current) => [...current, {
         id: crypto.randomUUID(), role: 'assistant', content: response.message, data: response.data, source: response.source,
       }]);
     } catch (caught) {
+      if (previousBranch.current !== currentBranchId) return;
       const message = caught instanceof ApiError ? caught.message : 'VYRO Assistant is unavailable. Try again.';
       setError(message);
-      setMessages((current) => current.map((item) => item.id === userMessage.id ? { ...item, failed: true } : item));
+      if (caught instanceof ApiError && caught.code === 'conversation_scope_changed') {
+        setConversationId(null);
+        setMessages([]);
+        setLastQuestion(null);
+      } else {
+        setMessages((current) => current.map((item) => item.id === userMessage.id ? { ...item, failed: true } : item));
+      }
     } finally {
       setIsLoading(false);
     }

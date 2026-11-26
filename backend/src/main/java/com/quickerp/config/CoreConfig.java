@@ -4,8 +4,15 @@ import com.quickerp.ai.AiAccessService;
 import com.quickerp.ai.AiAssistantService;
 import com.quickerp.ai.AiAuditRepository;
 import com.quickerp.ai.AiConversationRepository;
-import com.quickerp.ai.AiDataTools;
-import com.quickerp.ai.AiIntentResolver;
+import com.quickerp.ai.AiExecutionGateway;
+import com.quickerp.ai.AiRateLimitService;
+import com.quickerp.ai.AiToolOrchestrator;
+import com.quickerp.ai.tools.AiToolRegistry;
+import com.quickerp.ai.tools.AiToolDispatcher;
+import com.quickerp.ai.mcp.QuickErpMcpClient;
+import com.quickerp.ai.data.ErpDataGateway;
+import com.quickerp.ai.data.ErpKnowledgeService;
+import com.quickerp.ai.data.ErpQueryEngine;
 import com.quickerp.ai.GeminiClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.quickerp.core.AccessPolicy;
@@ -288,13 +295,35 @@ public class CoreConfig {
     }
 
     @Bean
-    public AiAssistantService aiAssistantService(Db db, ObjectMapper mapper, AccessRules accessRules, AppProperties properties) {
-        AiAccessService access = new AiAccessService(db, mapper, accessRules);
-        AiDataTools tools = new AiDataTools(db, mapper);
+    public ErpDataGateway erpDataGateway(Db db, ObjectMapper mapper, AppProperties properties) {
+        return new ErpDataGateway(new ErpQueryEngine(db, mapper, properties.getAi()), new ErpKnowledgeService(mapper), mapper);
+    }
+    @Bean public AiAccessService aiAccessService(Db db, ObjectMapper mapper, AccessRules rules) {
+        return new AiAccessService(db, mapper, rules);
+    }
+    @Bean public AiToolRegistry aiToolRegistry(ErpDataGateway gateway, ObjectMapper mapper) {
+        return new AiToolRegistry(gateway, mapper);
+    }
+    @Bean public AiToolDispatcher aiToolDispatcher(AiToolRegistry registry, ErpDataGateway gateway,
+                                                   AiAccessService access, AuthService auth) {
+        return new AiToolDispatcher(registry, gateway, access, auth);
+    }
+    @Bean public QuickErpMcpClient quickErpMcpClient(AppProperties properties, ObjectMapper mapper, AiToolRegistry registry) {
+        return new QuickErpMcpClient(properties.getAi(), mapper, registry);
+    }
+
+    @Bean
+    public AiAssistantService aiAssistantService(Db db, ObjectMapper mapper, AiAccessService access, AppProperties properties,
+                                                  ErpDataGateway dataGateway, AiToolRegistry registry, AiToolDispatcher dispatcher,
+                                                  QuickErpMcpClient mcpClient) {
         AiConversationRepository conversations = new AiConversationRepository(db, mapper, properties.getAi().getMaxHistoryMessages());
         AiAuditRepository audit = new AiAuditRepository(db);
-        GeminiClient gemini = new GeminiClient(mapper, properties.getAi().getGeminiApiKey(), properties.getAi().getGeminiModel());
-        return new AiAssistantService(new AiIntentResolver(), access, tools, conversations, audit, gemini);
+        GeminiClient gemini = new GeminiClient(mapper, properties.getAi().getGeminiApiKey(), properties.getAi().getGeminiModel(),
+                properties.getAi().getProviderTimeoutSeconds(), properties.getAi().getMaxOutputTokens());
+        AiToolOrchestrator orchestrator = new AiToolOrchestrator(gemini, registry,
+                dispatcher, mcpClient, mapper, properties.getAi());
+        return new AiAssistantService(access, conversations, audit, new AiRateLimitService(db, properties.getAi()),
+                gemini, dataGateway, properties.getAi(), orchestrator);
     }
 
     @Bean
