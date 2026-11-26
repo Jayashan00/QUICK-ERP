@@ -22,6 +22,7 @@ class TokenServiceTest {
         assertEquals("usr-001", claims.userId());
         assertEquals("tenant-001", claims.tenantId());
         assertEquals(false, claims.superAdmin());
+        assertNotNull(tokens.verifyForMcp(issued.token()));
     }
 
     @Test
@@ -44,6 +45,7 @@ class TokenServiceTest {
     void challengeAndSessionTokensAreNotInterchangeable() {
         String challenge = tokens.issueChallenge("usr-001", "tenant-001", false).token();
         assertNull(tokens.verify(challenge));
+        assertNull(tokens.verifyForMcp(challenge));
         assertNotNull(tokens.verifyChallenge(challenge));
         assertNull(tokens.verifyChallenge(tokens.issue("usr-001", "tenant-001", false).token()));
     }
