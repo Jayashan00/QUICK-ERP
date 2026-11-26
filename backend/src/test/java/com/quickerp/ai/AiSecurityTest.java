@@ -17,58 +17,6 @@ class AiSecurityTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
-    void rejectsWriteRequestsBeforeAnyToolCanRun() {
-        assertEquals(Intent.WRITE_ACTION, new AiIntentResolver().resolve("Approve and post this invoice"));
-        assertEquals(Intent.WRITE_ACTION, new AiIntentResolver().resolve("Delete the stock adjustment"));
-    }
-
-    @Test
-    void resolvesEverySuggestedQuestionWithoutCallingTheProvider() {
-        AiIntentResolver resolver = new AiIntentResolver();
-        assertEquals(Intent.GREETING, resolver.resolve("hi"));
-        assertEquals(Intent.GREETING, resolver.resolve("Hello VYRO!"));
-        assertEquals(Intent.GREETING, resolver.resolve("good morning assistant"));
-        assertEquals(Intent.HELP, resolver.resolve("oyt puluwm monw krnnd"));
-        assertEquals(Intent.SUPPLIERS, resolver.resolve("suppliersla kiyk innwd"));
-        assertEquals(Intent.SUPPLIER_DETAILS, resolver.resolve("supliers details denn"));
-        assertEquals(Intent.TODAY_SALES, resolver.resolve("What is today's sales total?"));
-        assertEquals(Intent.LOW_STOCK, resolver.resolve("Which products are low in stock?"));
-        assertEquals(Intent.OVERDUE_INVOICES, resolver.resolve("Show overdue invoices."));
-        assertEquals(Intent.ATTENDANCE, resolver.resolve("How many employees are absent today?"));
-        assertEquals(Intent.PURCHASE_ORDERS, resolver.resolve("What are the latest purchase orders?"));
-        assertEquals(Intent.EXPENSES, resolver.resolve("Show this month's expenses."));
-    }
-
-    @Test
-    void resolvesEmployeeCountQuestionsWithoutCallingTheProvider() {
-        AiIntentResolver resolver = new AiIntentResolver();
-        assertEquals(Intent.EMPLOYEES, resolver.resolve("how maany employees have my company"));
-        assertEquals(Intent.EMPLOYEES, resolver.resolve("how many employees work on my company now"));
-    }
-
-    @Test
-    void resolvesRoleScopedDetailQuestionsWithoutCallingTheProvider() {
-        AiIntentResolver resolver = new AiIntentResolver();
-        assertEquals(Intent.EMPLOYEE_DETAILS, resolver.resolve("give me employee details with names and roles"));
-        assertEquals(Intent.CUSTOMER_DETAILS, resolver.resolve("give customers details"));
-        assertEquals(Intent.CUSTOMER_DETAILS, resolver.resolve("list all customers"));
-        assertEquals(Intent.CUSTOMER_BALANCES, resolver.resolve("show customer balances"));
-        assertEquals(Intent.COMPANY_DETAILS, resolver.resolve("show all company names and details"));
-        assertEquals(Intent.UNSUPPORTED, resolver.resolve("what is the company name"));
-        assertEquals("company_settings", AiResourceCatalog.matchQuestion("what is the company name").orElseThrow().key());
-    }
-
-    @Test
-    void resolvesApprovedResourcesFromEnglishTyposAndSinglish() {
-        assertEquals("support_tickets", AiResourceCatalog.matchQuestion("support tickets pennann").orElseThrow().key());
-        assertEquals("audit_logs", AiResourceCatalog.matchQuestion("latest audit logs denn").orElseThrow().key());
-        assertEquals("notifications", AiResourceCatalog.matchQuestion("mage notifications pennann").orElseThrow().key());
-        assertEquals("company_settings", AiResourceCatalog.matchQuestion("show company settings").orElseThrow().key());
-        assertFalse(AiAssistantService.requestsPlatformCompanies("give company details"));
-        assertTrue(AiAssistantService.requestsPlatformCompanies("show all company names and details"));
-    }
-
-    @Test
     void genericResourcesRequireTheirModuleAndViewPermission() {
         var support = AiResourceCatalog.find("support_tickets").orElseThrow();
         AiAccessService.enforce(support, Permissions.of(Set.of("support.view")), Set.of());

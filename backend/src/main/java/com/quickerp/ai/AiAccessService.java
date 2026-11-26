@@ -34,8 +34,10 @@ public final class AiAccessService {
     }
 
     public AccessContext resolve(Principal principal, String requestedBranchId, Intent intent, Resource resource) {
+        if (principal == null) throw ApiException.unauthorized("Sign in to use the assistant.");
         enforceAudience(principal.superAdmin(), intent);
         if (principal.superAdmin()) {
+            if (requestedBranchId != null && !requestedBranchId.isBlank()) throw ApiException.forbidden("Platform AI has no tenant branch access.");
             return new AccessContext(Principal.PLATFORM_TENANT, principal.userId(), principal.roleId(), Set.of("*"),
                     Set.of("platform"), List.of(), null);
         }
@@ -43,17 +45,23 @@ public final class AiAccessService {
             JsonNode userProfile;
             JsonNode tenantProfile;
             try (PreparedStatement statement = connection.prepareStatement(
-                    "SELECT u.profile, t.profile FROM app_users u JOIN tenants t ON t.id=u.tenant_id WHERE u.id=? AND u.tenant_id=?")) {
+                    "SELECT u.profile, t.profile, u.role_id FROM app_users u JOIN tenants t ON t.id=u.tenant_id "
+                    + "WHERE u.id=? AND u.tenant_id=? AND u.status='active' AND t.status='active'")) {
                 statement.setString(1, principal.userId());
                 statement.setString(2, principal.tenantId());
                 try (ResultSet rows = statement.executeQuery()) {
                     if (!rows.next()) throw ApiException.unauthorized("Your session is no longer valid. Sign in again.");
+                    if (!java.util.Objects.equals(rows.getString(3), principal.roleId()))
+                        throw ApiException.unauthorized("Your role changed. Sign in again.");
                     userProfile = mapper.readTree(rows.getString(1));
                     tenantProfile = mapper.readTree(rows.getString(2));
                 }
             }
             Permissions permissions = accessRules.permissions(connection, principal);
             Set<String> enabledModules = TenantEntitlementPolicy.enabledModules(tenantProfile);
+            if (!enabledModules.contains("chatbot")) {
+                throw new ApiException(403, "chatbot_disabled", "The AI assistant is not enabled for your company.");
+            }
             List<String> allowedBranches = new ArrayList<>(strings(userProfile.path("allowedBranchIds")));
             if (allowedBranches.isEmpty()) allowedBranches.addAll(strings(userProfile.path("branchIds")));
             String branchId = requestedBranchId == null || requestedBranchId.isBlank() ? text(userProfile, "defaultBranchId") : requestedBranchId.trim();
