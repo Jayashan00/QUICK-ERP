@@ -21,7 +21,10 @@ public class AiController {
 
     @PostMapping("/chat")
     public ChatResponse chat(@RequestBody ChatRequest body, HttpServletRequest request) {
-        return assistant.chat(AuthInterceptor.principal(request), body.message(), body.conversationId(), body.currentBranchId());
+        String bearer = request.getHeader("Authorization");
+        return bearer == null
+                ? assistant.chat(AuthInterceptor.principal(request), body.message(), body.conversationId(), body.currentBranchId())
+                : assistant.chat(AuthInterceptor.principal(request), body.message(), body.conversationId(), body.currentBranchId(), bearer);
     }
 
     @DeleteMapping("/conversations/{conversationId}")

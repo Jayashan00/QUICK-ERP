@@ -79,6 +79,26 @@ app:
     gemini-api-key: ${GEMINI_API_KEY:}
     gemini-model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
     max-history-messages: ${AI_MAX_HISTORY_MESSAGES:12}
+    user-requests-per-minute: ${AI_USER_REQUESTS_PER_MINUTE:20}
+    tenant-requests-per-hour: ${AI_TENANT_REQUESTS_PER_HOUR:500}
+    provider-timeout-seconds: ${AI_PROVIDER_TIMEOUT_SECONDS:30}
+    max-input-characters: ${AI_MAX_INPUT_CHARACTERS:2000}
+    max-output-tokens: ${AI_MAX_OUTPUT_TOKENS:1024}
+    max-tool-rounds: ${AI_MAX_TOOL_ROUNDS:5}
+    max-tool-calls: ${AI_MAX_TOOL_CALLS:12}
+    max-parallel-tools: ${AI_MAX_PARALLEL_TOOLS:3}
+    max-response-data-bytes: ${AI_MAX_RESPONSE_DATA_BYTES:100000}
+    total-request-timeout-ms: ${AI_TOTAL_REQUEST_TIMEOUT_MS:60000}
+    max-context-characters: ${AI_MAX_CONTEXT_CHARACTERS:24000}
+    tool-transport: ${AI_TOOL_TRANSPORT:direct}
+    mcp-enabled: ${AI_MCP_ENABLED:false}
+    mcp-url: ${AI_MCP_URL:http://127.0.0.1:8000/api/v1/mcp}
+    conversation-retention-days: ${AI_CONVERSATION_RETENTION_DAYS:90}
+    query-max-rows: ${AI_QUERY_MAX_ROWS:100}
+    query-default-rows: ${AI_QUERY_DEFAULT_ROWS:25}
+    query-timeout-ms: ${AI_QUERY_TIMEOUT_MS:3000}
+    query-max-filters: ${AI_QUERY_MAX_FILTERS:10}
+    query-max-aggregation-groups: ${AI_QUERY_MAX_AGGREGATION_GROUPS:100}
   limits:
     # Largest JSON request body (bytes). The frontend sends at most about 3 MB per batch.
     max-json-bytes: ${MAX_JSON_BYTES:16777216}
