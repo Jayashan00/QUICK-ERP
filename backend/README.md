@@ -1,5 +1,63 @@
 # Quick ERP Backend (Spring Boot + PostgreSQL)
 
+## AI assistant backend (Version 2, Steps 1 through 3)
+
+`POST /api/v1/ai/chat` retains the `{message, conversationId, currentBranchId}` request and
+`{message, conversationId, data, source}` response. The authenticated Spring Boot service validates
+input, resolves current tenant entitlements, role permissions and branch scope, reserves PostgreSQL
+request quota, loads scope-checked recent history, and lets Gemini select registered read-only
+operations. The backend validates and executes each function call through the Step 2 engine, then
+returns structured results for answer generation. The provider never receives credentials or direct
+database access. See [AI_DATA_ENGINE.md](AI_DATA_ENGINE.md) for resource coverage and
+[AI_FUNCTION_CALLING.md](AI_FUNCTION_CALLING.md) for the Gemini and MCP workflow. The former
+keyword/intent resolver remains unused legacy code.
+
+Tenant users need the `chatbot` entitlement. Their current role, modules and branches are resolved
+server-side on every turn. Platform users have no automatic access to tenant business records.
+Conversations belong to one tenant and user and store a SHA-256 fingerprint of role, permissions,
+modules and branches plus the selected branch. Reusing a conversation after a scope change returns
+`conversation_scope_changed` (409); the drawer clears old displayed messages and starts fresh.
+Pre-migration conversations have no trustworthy fingerprint and cannot be resumed, but owners may
+delete them. `DELETE /api/v1/ai/conversations/{id}` remains owner-scoped. Message history is limited
+by `AI_MAX_HISTORY_MESSAGES` and is sent only after scope validation. Tool results are no longer
+stored as message metadata. AI audit rows contain metadata only, never prompts or ERP records.
+
+The AI settings are server-side environment variables:
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `GEMINI_API_KEY` | empty | Backend provider credential |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Provider model |
+| `AI_MAX_HISTORY_MESSAGES` | 12 | Recent messages sent to the provider (capped at 30) |
+| `AI_USER_REQUESTS_PER_MINUTE` | 20 | Per-user shared-database request quota |
+| `AI_TENANT_REQUESTS_PER_HOUR` | 500 | Per-tenant shared-database request quota |
+| `AI_PROVIDER_TIMEOUT_SECONDS` | 30 | Provider HTTP request timeout |
+| `AI_MAX_INPUT_CHARACTERS` | 2000 | Message length limit |
+| `AI_MAX_OUTPUT_TOKENS` | 1024 | Provider output token limit |
+| `AI_MAX_TOOL_ROUNDS` / `AI_MAX_TOOL_CALLS` | 5 / 12 | Tool loop limits |
+| `AI_MAX_PARALLEL_TOOLS` | 3 | Maximum independent calls per round |
+| `AI_TOTAL_REQUEST_TIMEOUT_MS` | 60000 | Whole tool request deadline |
+| `AI_MAX_RESPONSE_DATA_BYTES` | 100000 | Tool result budget |
+| `AI_MAX_CONTEXT_CHARACTERS` | 24000 | Recent history character budget |
+| `AI_TOOL_TRANSPORT` | `direct` | `direct` or `mcp` |
+| `AI_MCP_ENABLED` | false | Enable private MCP servlet |
+| `AI_MCP_URL` | loopback `/api/v1/mcp` | SDK client endpoint in `mcp` mode |
+| `AI_CONVERSATION_RETENTION_DAYS` | 90 | Inactive conversation lifetime |
+| `AI_QUERY_MAX_ROWS` / `AI_QUERY_DEFAULT_ROWS` | 100 / 25 | Structured query page limits |
+| `AI_QUERY_TIMEOUT_MS` | 3000 | PostgreSQL query timeout |
+| `AI_QUERY_MAX_FILTERS` | 10 | Maximum filter conditions |
+| `AI_QUERY_MAX_AGGREGATION_GROUPS` | 100 | Maximum grouped results |
+
+PostgreSQL counters atomically enforce the user and tenant limits across backend instances and
+return HTTP 429 before any provider call. A scheduled cleanup deletes conversations inactive longer
+than the retention period; messages cascade. It also removes old quota buckets. Existing audit
+retention remains managed by `AuditRetentionService` (three months). Migration V11 adds conversation
+scope, minimal audit and quota columns/tables; applied migrations V1 through V10 are unchanged.
+
+Step 2 provides authorized, parameterized reads behind `AiExecutionGateway` for verified resources.
+Step 3 connects those operations to Gemini function calling and the official Java MCP SDK. The
+legacy read-only intent tools remain unused.
+
 Backend for the Quick ERP React frontend. It provides sign-in, tenant-isolated storage of all ERP data in
 PostgreSQL, multi-user synchronisation, the public web-shop API and tenant provisioning.
 
@@ -128,8 +186,8 @@ java -jar target/quick-erp-backend.jar
 | `MAIL_FROM` | `no-reply@quickerp.local` | Sender address of reset emails and quotation emails |
 | `SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `SPRING_MAIL_USERNAME`, `SPRING_MAIL_PASSWORD`, `SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=true`, `SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true` | not set | SMTP server for reset emails and approved quotation PDF delivery. **Without it, reset emails are written to the backend log and quotation delivery is rejected without changing its status** |
 | `GEMINI_API_KEY` | not set | Backend-only Google Gemini credential used by the read-only ERP assistant. Never put this in a `VITE_*` variable |
-| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used to summarize authorized tool results |
-| `AI_MAX_HISTORY_MESSAGES` | `12` | Maximum prior tenant/user-scoped messages sent as conversation context (capped at 30) |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used for request interpretation and general explanations |
+| `AI_MAX_HISTORY_MESSAGES` | `12` | Maximum prior scope-checked messages sent as conversation context (capped at 30) |
 
 More settings, such as the public shop collections and the provisioning template, are in `src/main/resources/application.yml`.
 
