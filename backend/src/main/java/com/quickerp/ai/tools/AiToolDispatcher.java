@@ -27,7 +27,8 @@ public final class AiToolDispatcher {
         return gateway.executeStructured(name, arguments, scope);
     }
     public JsonNode execute(String name, JsonNode arguments, AccessContext original, Principal principal, String bearer) {
-        if (access == null || principal == null) return execute(name, arguments, original);
+        if (access == null) return execute(name, arguments, original);
+        if (principal == null) throw ApiException.unauthorized("AI authentication is required.");
         Principal authenticated = principal;
         if (auth != null) {
             if (bearer == null || !bearer.startsWith("Bearer ")) throw ApiException.unauthorized("AI authentication is required.");

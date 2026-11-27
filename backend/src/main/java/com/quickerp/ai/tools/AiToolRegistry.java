@@ -65,6 +65,21 @@ public final class AiToolRegistry {
                 string(properties, "targetResource", "Verified target resource key"); integer(properties, "limit");
                 required(out, "sourceResource", "sourceId", "targetResource");
             }
+            case "prepare_sales_quotation" -> {
+                string(properties, "customerId", "Authorized customer ID found through ERP query tools");
+                string(properties, "productId", "Authorized product ID found through ERP query tools");
+                number(properties, "quantity"); required(out, "customerId", "productId", "quantity");
+            }
+            case "prepare_purchase_request" -> {
+                string(properties, "productId", "Authorized product ID found through ERP query tools");
+                number(properties, "quantity"); required(out, "productId", "quantity");
+            }
+            case "prepare_crm_followup" -> {
+                string(properties, "leadId", "Authorized lead ID found through ERP query tools");
+                string(properties, "date", "ISO follow-up date after resolving the user's requested period");
+                string(properties, "summary", "Short follow-up subject, not a customer message");
+                required(out, "leadId", "date", "summary");
+            }
             default -> { }
         }
         return out;
@@ -91,6 +106,7 @@ public final class AiToolRegistry {
         properties.putObject(name).put("type", "string").put("description", description);
     }
     private void integer(ObjectNode properties, String name) { properties.putObject(name).put("type", "integer"); }
+    private void number(ObjectNode properties, String name) { properties.putObject(name).put("type", "number"); }
     private ObjectNode array(String itemType) {
         ObjectNode node = mapper.createObjectNode().put("type", "array"); node.putObject("items").put("type", itemType); return node;
     }
