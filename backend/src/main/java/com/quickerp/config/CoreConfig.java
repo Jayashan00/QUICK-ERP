@@ -298,8 +298,8 @@ public class CoreConfig {
     public ErpDataGateway erpDataGateway(Db db, ObjectMapper mapper, AppProperties properties) {
         return new ErpDataGateway(new ErpQueryEngine(db, mapper, properties.getAi()), new ErpKnowledgeService(mapper), mapper);
     }
-    @Bean public AiAccessService aiAccessService(Db db, ObjectMapper mapper, AccessRules rules) {
-        return new AiAccessService(db, mapper, rules);
+    @Bean public AiAccessService aiAccessService(Db db, ObjectMapper mapper, AccessRules rules, AppProperties properties) {
+        return new AiAccessService(db, mapper, rules, properties.getAi().isEnabled());
     }
     @Bean public AiToolRegistry aiToolRegistry(ErpDataGateway gateway, ObjectMapper mapper) {
         return new AiToolRegistry(gateway, mapper);

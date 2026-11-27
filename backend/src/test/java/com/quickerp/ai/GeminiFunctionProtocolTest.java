@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.quickerp.ai.data.ErpDataGateway;
 import com.quickerp.ai.tools.AiToolRegistry;
+import com.quickerp.core.ApiException;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -16,6 +17,26 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GeminiFunctionProtocolTest {
     private final ObjectMapper mapper = new ObjectMapper();
+    @Test void oversizedProviderResponseIsRejectedBeforeJsonParsing() throws Exception {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/generate", exchange -> {
+            try {
+                byte[] body = ("x".repeat(256_001)).getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            } finally { exchange.close(); }
+        });
+        server.start();
+        try {
+            var client = new GeminiClient(mapper, "fixture-key", "gemini-3.5-flash-lite", 5, 512,
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/generate"), HttpClient.newHttpClient());
+            var registry = new AiToolRegistry(new ErpDataGateway(null, null, mapper), mapper);
+            ApiException error = assertThrows(ApiException.class, () -> client.next("Sales", List.of(),
+                    List.of(mapper.readTree("{\"role\":\"user\",\"parts\":[{\"text\":\"Sales\"}]}")),
+                    registry, "Trusted scope", System.currentTimeMillis() + 5000));
+            assertEquals("ai_provider_invalid_response", error.getCode());
+        } finally { server.stop(0); }
+    }
     @Test void rawFunctionCallAndSignatureArePreservedInTheNextProviderRequest() throws Exception {
         List<JsonNode> requests = new ArrayList<>();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

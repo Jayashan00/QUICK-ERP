@@ -76,6 +76,7 @@ app:
   files:
     max-bytes: 20971520
   ai:
+    enabled: ${AI_ENABLED:true}
     gemini-api-key: ${GEMINI_API_KEY:}
     gemini-model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
     max-history-messages: ${AI_MAX_HISTORY_MESSAGES:12}

@@ -87,6 +87,7 @@ public class AppProperties {
     }
 
     public static class Ai {
+        private boolean enabled = true;
         private String geminiApiKey = "";
         private String geminiModel = "gemini-3.5-flash-lite";
         private int maxHistoryMessages = 12;
@@ -110,6 +111,8 @@ public class AppProperties {
         private String toolTransport = "direct";
         private boolean mcpEnabled = false;
         private String mcpUrl = "http://127.0.0.1:8000/api/v1/mcp";
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
         public String getGeminiApiKey() { return geminiApiKey; }
         public void setGeminiApiKey(String geminiApiKey) { this.geminiApiKey = geminiApiKey; }
         public String getGeminiModel() { return geminiModel; }
