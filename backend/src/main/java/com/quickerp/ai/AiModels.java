@@ -10,6 +10,9 @@ public final class AiModels {
 
     public record ChatRequest(String message, String conversationId, String currentBranchId) {}
     public record ChatResponse(String message, String conversationId, JsonNode data, Source source) {}
+    public record ConversationSummary(String id, String title, Instant createdAt, Instant updatedAt) {}
+    public record ConversationMessage(long id, String role, String content, Instant createdAt) {}
+    public record ConversationDetail(ConversationSummary conversation, List<ConversationMessage> messages, boolean hasOlderMessages) {}
     public record Source(String module, String tool, Instant generatedAt) {}
     public record HistoryMessage(String role, String content) {}
     public record ToolResult(JsonNode data, String fallbackAnswer) {}
