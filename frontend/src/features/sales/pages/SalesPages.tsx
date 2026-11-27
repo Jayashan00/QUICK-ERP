@@ -971,6 +971,11 @@ function QuotationConversion({
 export function SalesQuotationsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialOpportunityId = searchParams.get("opportunityId") ?? "";
+  const aiCustomerId = searchParams.get("aiCustomerId") ?? "";
+  const aiProductId = searchParams.get("aiProductId") ?? "";
+  const aiQuantity = Number(searchParams.get("aiQuantity") ?? "1");
+  const validAiDraft = /^[A-Za-z0-9_-]{1,100}$/.test(aiCustomerId) && /^[A-Za-z0-9_-]{1,100}$/.test(aiProductId)
+    && Number.isFinite(aiQuantity) && aiQuantity > 0 && aiQuantity <= 1_000_000;
   const filters = useFilters(),
     query = useSalesQuotations(filters.params),
     customers = useSalesCustomerOptions(),
@@ -989,10 +994,10 @@ export function SalesQuotationsPage() {
     canApprove = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_APPROVE),
     canPrint = usePermission(PERMISSIONS.SALES_WORKFLOW.QUOTATION_PRINT);
   useEffect(() => {
-    if (!initialOpportunityId || !canCreate) return;
+    if ((!initialOpportunityId && !validAiDraft) || !canCreate) return;
     setEditing(null);
     setOpen(true);
-  }, [canCreate, initialOpportunityId]);
+  }, [canCreate, initialOpportunityId, validAiDraft]);
 
   useEffect(
     () => () => {
@@ -1146,11 +1151,12 @@ export function SalesQuotationsPage() {
   const close = () => {
     setOpen(false);
     setEditing(null);
-    if (initialOpportunityId) {
+    if (initialOpportunityId || validAiDraft) {
       setSearchParams((current) => {
         const next = new URLSearchParams(current);
         next.delete("opportunityId");
         next.delete("customerId");
+        next.delete("aiCustomerId"); next.delete("aiProductId"); next.delete("aiQuantity");
         return next;
       }, { replace: true });
     }
@@ -1186,6 +1192,9 @@ export function SalesQuotationsPage() {
         isOpen={open}
         quotation={editing}
         initialOpportunityId={initialOpportunityId}
+        initialAiCustomerId={validAiDraft ? aiCustomerId : ""}
+        initialAiProductId={validAiDraft ? aiProductId : ""}
+        initialAiQuantity={validAiDraft ? aiQuantity : 1}
         onClose={close}
       />
       <Modal

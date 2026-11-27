@@ -18,6 +18,8 @@ interface LeadActivityFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: LeadActivityFormValues) => Promise<void>;
+  initialValues?: Partial<LeadActivityFormValues>;
+  suggestedTime?: boolean;
 }
 
 const FORM_ID = 'lead-activity-form';
@@ -30,7 +32,7 @@ const defaultValues: LeadActivityFormValues = {
   assignedTo: '',
 };
 
-export function LeadActivityFormModal({ isOpen, onClose, onSubmit }: LeadActivityFormModalProps) {
+export function LeadActivityFormModal({ isOpen, onClose, onSubmit, initialValues, suggestedTime = false }: LeadActivityFormModalProps) {
   const { users } = useUserOptions();
   const {
     handleSubmit,
@@ -43,8 +45,8 @@ export function LeadActivityFormModal({ isOpen, onClose, onSubmit }: LeadActivit
   });
 
   useEffect(() => {
-    if (isOpen) reset(defaultValues);
-  }, [isOpen, reset]);
+    if (isOpen) reset({ ...defaultValues, ...initialValues });
+  }, [isOpen, reset, initialValues]);
 
   const submitForm = async (data: LeadActivityFormValues) => {
     try {
@@ -70,6 +72,7 @@ export function LeadActivityFormModal({ isOpen, onClose, onSubmit }: LeadActivit
       }
     >
       <form id={FORM_ID} className="space-y-4" noValidate onSubmit={handleSubmit(submitForm)}>
+        {suggestedTime && <p className="rounded-lg bg-amber-50 p-2 text-sm text-amber-900">The assistant suggested the date. Review the 09:00 time and all fields before saving.</p>}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FormField label="Activity Type" htmlFor="activity-type" required error={errors.type?.message}>
             <Select id="activity-type" required error={Boolean(errors.type)} aria-describedby={errors.type ? 'activity-type-error' : undefined} options={[{ value: 'call', label: 'Call' }, { value: 'email', label: 'Email' }, { value: 'meeting', label: 'Meeting' }, { value: 'task', label: 'Task' }, { value: 'note', label: 'Note' }]} {...register('type')} />

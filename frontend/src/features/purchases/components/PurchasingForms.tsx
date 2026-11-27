@@ -59,6 +59,8 @@ interface Props {
 }
 interface PurchaseRequestProps extends Props {
   request?: PurchaseRequest | null;
+  initialAiProductId?: string;
+  initialAiQuantity?: number;
   initialReorder?: {
     balanceId: string;
     productId: string;
@@ -331,6 +333,8 @@ export function PurchaseRequestFormModal({
   onClose,
   request,
   initialReorder,
+  initialAiProductId = "",
+  initialAiQuantity = 1,
 }: PurchaseRequestProps) {
   const { branches, branchId } = useBranch();
   const { tenantId } = useTenant();
@@ -431,11 +435,11 @@ export function PurchaseRequestFormModal({
               discountPercent: 0,
               taxCode: "",
               taxPercent: 0,
-            }] : [blankLine()],
+            }] : [{ ...blankLine(), productId: initialAiProductId, quantity: initialAiQuantity }],
             sourceReorder: initialReorder,
           },
     );
-  }, [branchId, costCenters, form, isOpen, request, initialReorder]);
+  }, [branchId, costCenters, form, isOpen, request, initialReorder, initialAiProductId, initialAiQuantity]);
   const submit = form.handleSubmit(async (values) => {
     try {
       if (request) await mutations.updateRequest(request.id, values);

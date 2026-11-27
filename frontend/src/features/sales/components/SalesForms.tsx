@@ -59,6 +59,9 @@ interface Props {
 interface QuotationProps extends Props {
   quotation?: SalesQuotation | null;
   initialOpportunityId?: string;
+  initialAiCustomerId?: string;
+  initialAiProductId?: string;
+  initialAiQuantity?: number;
 }
 interface OrderProps extends Props {
   order?: SalesOrder | null;
@@ -368,6 +371,9 @@ export function SalesQuotationFormModal({
   onClose,
   quotation,
   initialOpportunityId = "",
+  initialAiCustomerId = "",
+  initialAiProductId = "",
+  initialAiQuantity = 1,
 }: QuotationProps) {
   const { branches, branchId } = useBranch();
   const customers = useSalesCustomerOptions(),
@@ -414,7 +420,7 @@ export function SalesQuotationFormModal({
             })),
           }
         : {
-            customerId: "",
+            customerId: initialAiCustomerId,
             branchId: branchId ?? "",
             salespersonId: "",
             opportunityId: initialOpportunityId,
@@ -422,10 +428,10 @@ export function SalesQuotationFormModal({
             expiryDate: future(30),
             terms: "Prices valid until the expiry date.",
             notes: "",
-            items: [blankLine()],
+            items: [{ ...blankLine(), productId: initialAiProductId, quantity: initialAiQuantity }],
           },
     );
-  }, [branchId, form, initialOpportunityId, isOpen, quotation]);
+  }, [branchId, form, initialOpportunityId, initialAiCustomerId, initialAiProductId, initialAiQuantity, isOpen, quotation]);
   useEffect(() => {
     if (!isOpen || quotation || !initialOpportunityId) return;
     const opportunity = opportunities.data?.find(

@@ -1,4 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useLocation } from 'react-router-dom';
+import { z } from 'zod';
 
 import { Button } from "@/shared/components/common/Button";
 import { Modal } from "@/shared/components/common/Modal";
@@ -113,6 +115,16 @@ export function LeadDetailModal({
   canCreateOpportunity = false,
   onCreateOpportunity,
 }: LeadDetailModalProps) {
+  const location = useLocation();
+  const aiFollowup = useMemo(() => z.object({ aiFollowup: z.object({
+    leadId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/),
+    date: z.iso.date(),
+    summary: z.string().trim().min(1).max(200),
+  }) }).safeParse(location.state), [location.state]);
+  const aiFollowupValues = useMemo(() => aiFollowup.success && aiFollowup.data.aiFollowup.leadId === lead?.id
+    ? { type: 'task' as const, status: 'planned' as const, subject: aiFollowup.data.aiFollowup.summary,
+      scheduledAt: `${aiFollowup.data.aiFollowup.date}T09:00` }
+    : undefined, [aiFollowup, lead?.id]);
   const { tenantId } = useTenant();
   const { formatWholeMoneyInCurrency } = useTenantCurrency();
   const { branchId } = useBranch();
@@ -136,6 +148,9 @@ export function LeadDetailModal({
     isActivityFormOpen,
     setIsActivityFormOpen,
   ] = useState(false);
+  useEffect(() => {
+    if (isOpen && canManageActivities && aiFollowupValues) setIsActivityFormOpen(true);
+  }, [isOpen, canManageActivities, aiFollowupValues]);
 
   const [
     deletingActivity,
@@ -396,6 +411,8 @@ export function LeadDetailModal({
       {/* Add Activity */}
       {canManageActivities && <LeadActivityFormModal
         isOpen={isActivityFormOpen}
+        initialValues={aiFollowupValues}
+        suggestedTime={Boolean(aiFollowupValues)}
         onClose={() =>
           setIsActivityFormOpen(false)
         }
