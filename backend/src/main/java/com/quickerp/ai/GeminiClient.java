@@ -12,12 +12,14 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
 /** Backend-only provider adapter. Interpretation never grants access. */
 public final class GeminiClient implements AiToolCallingProvider {
+    private static final int MAX_PROVIDER_RESPONSE_BYTES = 256_000;
     private final ObjectMapper mapper;
     private final HttpClient http;
     private final String apiKey;
@@ -139,11 +141,15 @@ public final class GeminiClient implements AiToolCallingProvider {
             HttpRequest request = HttpRequest.newBuilder(endpoint)
                     .timeout(Duration.ofMillis(Math.min(remaining, timeoutSeconds * 1000L))).header("Content-Type", "application/json")
                     .header("x-goog-api-key", apiKey).POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build();
-            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() == 429) throw new ApiException(429, "ai_provider_rate_limited", "The AI provider is busy. Try again shortly.");
-            if (response.statusCode() < 200 || response.statusCode() >= 300)
-                throw ApiException.serviceUnavailable("ai_provider_unavailable", "The AI provider is temporarily unavailable.");
-            return mapper.readTree(response.body());
+            HttpResponse<java.io.InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            try (var stream = response.body()) {
+                if (response.statusCode() == 429) throw new ApiException(429, "ai_provider_rate_limited", "The AI provider is busy. Try again shortly.");
+                if (response.statusCode() < 200 || response.statusCode() >= 300)
+                    throw ApiException.serviceUnavailable("ai_provider_unavailable", "The AI provider is temporarily unavailable.");
+                byte[] bytes = stream.readNBytes(MAX_PROVIDER_RESPONSE_BYTES + 1);
+                if (bytes.length > MAX_PROVIDER_RESPONSE_BYTES) throw invalidResponse();
+                return mapper.readTree(new String(bytes, StandardCharsets.UTF_8));
+            }
         } catch (ApiException error) { throw error; }
         catch (HttpTimeoutException error) { throw ApiException.serviceUnavailable("ai_provider_timeout", "The AI provider timed out. Try again."); }
         catch (InterruptedException error) { Thread.currentThread().interrupt(); throw ApiException.serviceUnavailable("ai_provider_unavailable", "The AI request was interrupted."); }

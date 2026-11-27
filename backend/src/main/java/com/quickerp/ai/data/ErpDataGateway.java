@@ -25,12 +25,17 @@ public final class ErpDataGateway implements AiExecutionGateway {
             new Operation("aggregate_erp_data", "Calculate an approved metric and grouping", "Aggregate"),
             new Operation("compare_erp_data", "Compare the same metric across explicit date periods", "Compare"),
             new Operation("get_related_erp_records", "Follow one verified relationship", "Related"),
-            new Operation("search_erp_knowledge", "Find verified ERP model and workflow facts", "search"));
+            new Operation("search_erp_knowledge", "Find verified ERP model and workflow facts", "search"),
+            new Operation("prepare_sales_quotation", "Prepare a review-only quotation draft from permitted customer and product IDs; never save it", "quotationDraft"),
+            new Operation("prepare_purchase_request", "Prepare a review-only purchase request from a permitted product ID; never save it", "purchaseDraft"),
+            new Operation("prepare_crm_followup", "Prepare a review-only CRM lead follow-up; never save or send it", "followupDraft"));
     private final ErpQueryEngine engine;
     private final ErpKnowledgeService knowledge;
     private final ObjectMapper mapper;
+    private final AiDraftPreparationService drafts;
     public ErpDataGateway(ErpQueryEngine engine, ErpKnowledgeService knowledge, ObjectMapper mapper) {
         this.engine = engine; this.knowledge = knowledge; this.mapper = mapper;
+        this.drafts = new AiDraftPreparationService(engine, mapper);
     }
     public List<Operation> operations() { return OPERATIONS; }
     @Override public Result execute(AiRequestUnderstanding request, AccessContext scope) {
@@ -53,6 +58,9 @@ public final class ErpDataGateway implements AiExecutionGateway {
             case "compare_erp_data" -> Set.of("aggregate","dateField","periods");
             case "get_related_erp_records" -> Set.of("sourceResource","sourceId","targetResource","limit");
             case "search_erp_knowledge" -> Set.of("search");
+            case "prepare_sales_quotation" -> Set.of("customerId", "productId", "quantity");
+            case "prepare_purchase_request" -> Set.of("productId", "quantity");
+            case "prepare_crm_followup" -> Set.of("leadId", "date", "summary");
             default -> Set.of();
         });
         if ("compare_erp_data".equals(operation)) {
@@ -79,6 +87,7 @@ public final class ErpDataGateway implements AiExecutionGateway {
                 case "compare_erp_data" -> engine.compare(mapper.treeToValue(args, ErpQueryRequest.Compare.class), scope);
                 case "get_related_erp_records" -> engine.related(mapper.treeToValue(args, ErpQueryRequest.Related.class), scope);
                 case "search_erp_knowledge" -> knowledge.search(requiredText(args, "search"), scope);
+                case "prepare_sales_quotation", "prepare_purchase_request", "prepare_crm_followup" -> drafts.prepare(operation, args, scope);
                 default -> throw ApiException.validation("operation", "Unknown AI data operation.");
             };
         } catch (ApiException error) { throw error; }

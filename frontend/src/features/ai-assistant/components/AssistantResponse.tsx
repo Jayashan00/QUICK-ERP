@@ -1,5 +1,7 @@
 import { Bot, Database } from 'lucide-react';
 import type { AiSource } from '../types';
+import { AiStructuredResult } from './AiStructuredResult';
+import { AiActionPreview } from './AiActionPreview';
 
 type JsonRecord = Record<string, unknown>;
 type AnswerBlock = { type: 'text'; content: string } | { type: 'list'; items: string[] };
@@ -158,6 +160,7 @@ interface AssistantResponseProps {
 
 export function AssistantResponse({ content, source, data, suggestions = [], onSuggestion }: AssistantResponseProps) {
   const structured = isRecord(data) ? data : null;
+  const verifiedStructured = structured && typeof structured.operation === 'string';
   const items = structured && Array.isArray(structured.items) ? structured.items.filter(isRecord) : [];
   const isIntroduction = source?.tool === 'greeting' || source?.tool === 'capabilities';
   const title = isIntroduction ? 'VYRO Assistant' : source ? humanize(source.tool) : 'Assistant Response';
@@ -175,7 +178,10 @@ export function AssistantResponse({ content, source, data, suggestions = [], onS
       </div>
 
       <div className="space-y-3 p-4">
-        {items.length > 0 ? (
+        {verifiedStructured ? (
+          <><PlainAnswer content={content} />{structured?.handoffOnly === true
+            ? <AiActionPreview value={structured} /> : <AiStructuredResult value={structured} />}</>
+        ) : items.length > 0 ? (
           <>
             <p className="text-xs leading-5 text-slate-500">{items.length} record{items.length === 1 ? '' : 's'} found in your permitted scope.</p>
             <div className="space-y-2.5">{items.map((item, index) => <RecordCard key={String(item.id ?? item.reference ?? index)} record={item} index={index} />)}</div>

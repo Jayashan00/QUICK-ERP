@@ -85,4 +85,17 @@ class AiOrchestrationTest {
                 () -> service().chat(principal, "Sales", null, "branch-a")).getCode());
         verify(conversations, never()).appendExchange(anyString(), any(), anyString(), anyString(), any());
     }
+
+    @Test void revokedAccessBeforeResponseCannotPersistOrReturnAssistantData() {
+        var subject = service();
+        var revoked = new AccessContext(scope.tenantId(), scope.userId(), scope.roleId(), Set.of(),
+                scope.enabledModules(), scope.allowedBranchIds(), scope.branchId());
+        when(access.resolve(principal, "branch-a", AiModels.Intent.UNSUPPORTED)).thenReturn(scope, revoked);
+        when(provider.understand(anyString(), anyList())).thenReturn(
+                new AiRequestUnderstanding("Explain", List.of(), false, true, false, false, "", "", false));
+        when(provider.explain(anyString(), anyList())).thenReturn("Sensitive answer");
+        assertEquals("conversation_scope_changed", assertThrows(ApiException.class,
+                () -> subject.chat(principal, "Explain", null, "branch-a")).getCode());
+        verify(conversations, never()).appendExchange(anyString(), any(), anyString(), anyString(), any());
+    }
 }

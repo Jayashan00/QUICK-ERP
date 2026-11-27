@@ -6,6 +6,7 @@ import com.quickerp.ai.AiModels.ChatResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -33,5 +34,27 @@ public class AiController {
                                       HttpServletRequest request) {
         assistant.clear(AuthInterceptor.principal(request), conversationId, currentBranchId);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/conversations")
+    public java.util.List<com.quickerp.ai.AiModels.ConversationSummary> conversations(
+            @RequestParam(required = false) String currentBranchId,
+            @RequestParam(defaultValue = "20") int limit, @RequestParam(defaultValue = "0") int offset,
+            HttpServletRequest request) {
+        return assistant.listConversations(AuthInterceptor.principal(request), currentBranchId, limit, offset);
+    }
+
+    @GetMapping("/conversations/{conversationId}")
+    public com.quickerp.ai.AiModels.ConversationDetail conversation(@PathVariable String conversationId,
+            @RequestParam(required = false) String currentBranchId,
+            @RequestParam(defaultValue = "50") int limit, @RequestParam(required = false) Long beforeId,
+            HttpServletRequest request) {
+        return assistant.conversation(AuthInterceptor.principal(request), currentBranchId, conversationId, limit, beforeId);
+    }
+
+    @PostMapping("/conversations")
+    public java.util.Map<String, String> createConversation(@RequestParam(required = false) String currentBranchId,
+            HttpServletRequest request) {
+        return java.util.Map.of("conversationId", assistant.createConversation(AuthInterceptor.principal(request), currentBranchId));
     }
 }

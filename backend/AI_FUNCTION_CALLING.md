@@ -35,9 +35,11 @@ question templates. The final response and the last sanitized tool result use th
 response contract. The conversation ID and scope fingerprint prevent history reuse after a role,
 module or branch change. Every chat request resolves current permissions again.
 
-The ten tools are `discover_erp_resources`, `get_resource_schema`, `resolve_erp_branch`,
+The ten data tools are `discover_erp_resources`, `get_resource_schema`, `resolve_erp_branch`,
 `resolve_erp_period`, `query_erp_records`, `search_erp_records`, `aggregate_erp_data`,
-`compare_erp_data`, `get_related_erp_records`, and `search_erp_knowledge`. The first two expose
+`compare_erp_data`, `get_related_erp_records`, and `search_erp_knowledge`. Step 4 adds three
+read-only preparation tools: `prepare_sales_quotation`, `prepare_purchase_request`, and
+`prepare_crm_followup`. They produce review-only form handoffs, never ERP writes. The first two data tools expose
 only authorized resources and fields. The tool registry takes operation names and descriptions
 from `ErpDataGateway.operations()`. One schema adapter supplies both Gemini declarations and MCP
 input schemas. The Step 2 gateway remains the only query implementation and checks all arguments

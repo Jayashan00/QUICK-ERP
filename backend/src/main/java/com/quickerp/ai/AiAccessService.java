@@ -22,11 +22,16 @@ public final class AiAccessService {
     private final Db db;
     private final ObjectMapper mapper;
     private final AccessRules accessRules;
+    private final boolean enabled;
 
     public AiAccessService(Db db, ObjectMapper mapper, AccessRules accessRules) {
+        this(db, mapper, accessRules, true);
+    }
+    public AiAccessService(Db db, ObjectMapper mapper, AccessRules accessRules, boolean enabled) {
         this.db = db;
         this.mapper = mapper;
         this.accessRules = accessRules;
+        this.enabled = enabled;
     }
 
     public AccessContext resolve(Principal principal, String requestedBranchId, Intent intent) {
@@ -35,6 +40,7 @@ public final class AiAccessService {
 
     public AccessContext resolve(Principal principal, String requestedBranchId, Intent intent, Resource resource) {
         if (principal == null) throw ApiException.unauthorized("Sign in to use the assistant.");
+        if (!enabled) throw new ApiException(403, "chatbot_disabled", "The AI assistant is temporarily unavailable.");
         enforceAudience(principal.superAdmin(), intent);
         if (principal.superAdmin()) {
             if (requestedBranchId != null && !requestedBranchId.isBlank()) throw ApiException.forbidden("Platform AI has no tenant branch access.");

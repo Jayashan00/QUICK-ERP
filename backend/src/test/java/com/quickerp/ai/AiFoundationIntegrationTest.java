@@ -69,8 +69,35 @@ class AiFoundationIntegrationTest {
         AccessContext revoked = new AccessContext("tenant-a", "user-a", "role-a", Set.of("other.view"), Set.of("chatbot", "settings"), List.of("branch-a"), "branch-a");
         assertEquals("conversation_scope_changed", assertThrows(ApiException.class, () -> conversations.resolveId(id, revoked)).getCode());
         assertEquals("conversation_scope_changed", assertThrows(ApiException.class, () -> conversations.appendExchange(id, revoked, "x", "y", null)).getCode());
-        conversations.clear(id, revoked);
+        assertEquals("conversation_scope_changed", assertThrows(ApiException.class, () -> conversations.clear(id, revoked)).getCode());
+        assertEquals(id, conversations.resolveId(id, scope));
+        conversations.clear(id, scope);
         assertEquals(404, assertThrows(ApiException.class, () -> conversations.resolveId(id, scope)).getStatus());
+    }
+
+    @Test void historyEndpointsUseCurrentOwnerAndScope() {
+        String id = conversations.create(scope);
+        assertEquals(id, conversations.list(scope, 20, 0).stream().filter(item -> item.id().equals(id)).findFirst().orElseThrow().id());
+        conversations.appendExchange(id, scope, "Stock", "Twelve available", null);
+        var detail = conversations.detail(id, scope, 50);
+        assertEquals(2, detail.messages().size());
+        assertEquals("Stock", detail.messages().get(0).content());
+        assertFalse(detail.hasOlderMessages());
+        conversations.appendExchange(id, scope, "Sales", "No available total", null);
+        var latest = conversations.detail(id, scope, 2);
+        assertTrue(latest.hasOlderMessages());
+        assertEquals("Sales", latest.messages().get(0).content());
+        var earlier = conversations.detail(id, scope, 2, latest.messages().get(0).id());
+        assertEquals("Stock", earlier.messages().get(0).content());
+        assertFalse(earlier.hasOlderMessages());
+        var other = new AccessContext("tenant-b", "user-b", "role-b", Set.of(), Set.of("chatbot"), List.of(), null);
+        assertTrue(conversations.list(other, 20, 0).stream().noneMatch(item -> item.id().equals(id)));
+        assertEquals(404, assertThrows(ApiException.class, () -> conversations.detail(id, other, 50)).getStatus());
+        var changed = new AccessContext("tenant-a", "user-a", "role-a", Set.of("sales.view"),
+                Set.of("chatbot", "settings"), List.of("branch-a"), "branch-a");
+        assertTrue(conversations.list(changed, 20, 0).stream().noneMatch(item -> item.id().equals(id)));
+        assertEquals("conversation_scope_changed", assertThrows(ApiException.class, () -> conversations.detail(id, changed, 50)).getCode());
+        assertEquals(422, assertThrows(ApiException.class, () -> conversations.list(scope, 1000, 0)).getStatus());
     }
 
     @Test void chatbotEntitlementIsEnforcedBeforeProvider() {

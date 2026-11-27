@@ -3,6 +3,8 @@ package com.quickerp.ai;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.quickerp.core.ApiException;
 import com.quickerp.core.Permissions;
+import com.quickerp.ai.data.ErpDataGateway;
+import com.quickerp.ai.tools.AiToolRegistry;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -15,6 +17,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AiSecurityTest {
     private final ObjectMapper mapper = new ObjectMapper();
+
+    @Test void globalKillSwitchStopsBothTenantAndPlatformAiBeforeTools() {
+        var disabled = new AiAccessService(null, mapper, null, false);
+        var tenant = new com.quickerp.core.Principal("user-a", "tenant-a", false, "role-a", "a@example.test");
+        var platform = new com.quickerp.core.Principal("admin", "platform", true, "superadmin", "admin@example.test");
+        assertEquals("chatbot_disabled", assertThrows(ApiException.class,
+                () -> disabled.resolve(tenant, null, Intent.UNSUPPORTED)).getCode());
+        assertEquals("chatbot_disabled", assertThrows(ApiException.class,
+                () -> disabled.resolve(platform, null, Intent.UNSUPPORTED)).getCode());
+    }
+
+    @Test void modelToolCatalogHasNoBusinessMutationOrConfirmationTool() {
+        var registry = new AiToolRegistry(new ErpDataGateway(null, null, mapper), mapper);
+        assertTrue(registry.all().keySet().stream().filter(name -> name.startsWith("prepare_"))
+                .allMatch(name -> Set.of("prepare_sales_quotation", "prepare_purchase_request", "prepare_crm_followup").contains(name)));
+        for (String unsafe : List.of("confirm_action", "execute_any_action", "approve_purchase_order",
+                "post_payroll", "pay_supplier", "execute_sql", "delete_record"))
+            assertThrows(ApiException.class, () -> registry.require(unsafe));
+    }
 
     @Test
     void genericResourcesRequireTheirModuleAndViewPermission() {

@@ -24,7 +24,7 @@ class ErpDataGatewayTest {
         assertEquals(coverage.catalogResources(),coverage.validated()+coverage.unsupported());
         assertTrue(coverage.unsupportedReasons().containsKey("sales_payments"));
         ErpDataGateway gateway = new ErpDataGateway(new ErpQueryEngine(null,mapper,new AppProperties.Ai()),new ErpKnowledgeService(mapper),mapper);
-        assertEquals(10,gateway.operations().size());
+        assertEquals(13,gateway.operations().size());
         assertEquals(2,gateway.executeStructured("discover_erp_resources",mapper.createObjectNode(),scope).path("data").size());
         assertEquals("SUCCESS",gateway.executeStructured("search_erp_knowledge",mapper.createObjectNode().put("search","GRN"),scope).path("status").asText());
         assertEquals(404,assertThrows(ApiException.class,()->gateway.executeStructured("get_resource_schema",mapper.createObjectNode().put("resource","employees"),scope)).getStatus());

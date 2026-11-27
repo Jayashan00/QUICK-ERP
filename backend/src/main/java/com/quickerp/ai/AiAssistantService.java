@@ -96,6 +96,12 @@ public final class AiAssistantService {
             }
             if (answer == null || answer.isBlank() || answer.length() > 12000)
                 throw ApiException.serviceUnavailable("ai_provider_invalid_response", "The AI provider returned an invalid response.");
+            if (!AiGroundingGuard.monetaryClaimsSupported(answer, data)) {
+                answer = "I could not verify a monetary figure in the response. Review the verified ERP result below.";
+                operation = "grounding_guard";
+            }
+            if (!scope.equals(access.resolve(principal, currentBranchId, Intent.UNSUPPORTED)))
+                throw new ApiException(409, "conversation_scope_changed", "Your AI access changed. Start a new conversation.");
             outputLength = answer.length();
             conversations.appendExchange(conversationId, scope, question, answer, data);
             auditAttempted = true;
@@ -116,6 +122,18 @@ public final class AiAssistantService {
     public void clear(Principal principal, String conversationId, String currentBranchId) {
         var scope = access.resolve(principal, currentBranchId, Intent.UNSUPPORTED);
         conversations.clear(conversationId, scope);
+    }
+    public String createConversation(Principal principal, String currentBranchId) {
+        return conversations.create(access.resolve(principal, currentBranchId, Intent.UNSUPPORTED));
+    }
+    public List<AiModels.ConversationSummary> listConversations(Principal principal, String currentBranchId, int limit, int offset) {
+        return conversations.list(access.resolve(principal, currentBranchId, Intent.UNSUPPORTED), limit, offset);
+    }
+    public AiModels.ConversationDetail conversation(Principal principal, String currentBranchId, String id, int limit) {
+        return conversation(principal, currentBranchId, id, limit, null);
+    }
+    public AiModels.ConversationDetail conversation(Principal principal, String currentBranchId, String id, int limit, Long beforeId) {
+        return conversations.detail(id, access.resolve(principal, currentBranchId, Intent.UNSUPPORTED), limit, beforeId);
     }
     private static long elapsed(long started) { return (System.nanoTime() - started) / 1_000_000; }
 }

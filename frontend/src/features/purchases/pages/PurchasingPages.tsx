@@ -688,6 +688,11 @@ export function PurchasingDashboardPage() {
 }
 
 export function PurchaseRequestsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const aiProductId = searchParams.get('aiProductId') ?? '';
+  const aiQuantity = Number(searchParams.get('aiQuantity') ?? '1');
+  const validAiDraft = /^[A-Za-z0-9_-]{1,100}$/.test(aiProductId) && Number.isFinite(aiQuantity)
+    && aiQuantity > 0 && aiQuantity <= 1_000_000;
   const filters = useFilters(),
     query = usePurchaseRequests(filters.params),
     mutations = usePurchasingMutations(),
@@ -701,6 +706,7 @@ export function PurchaseRequestsPage() {
     canReturn = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.REQUEST_RETURN),
     canCancel = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.REQUEST_CANCEL),
     canCreateRfq = usePermission(PERMISSIONS.PURCHASE_WORKFLOW.RFQ_CREATE);
+  useEffect(() => { if (validAiDraft && canCreate) { setEditing(null); setOpen(true); } }, [canCreate, validAiDraft]);
   const actions = (row: PurchaseRequest) =>
     ["draft", "returned"].includes(row.status) ? (
       <div className="flex flex-wrap gap-2">
@@ -757,6 +763,8 @@ export function PurchaseRequestsPage() {
   const close = () => {
     setOpen(false);
     setEditing(null);
+    if (validAiDraft) setSearchParams(current => { const next = new URLSearchParams(current);
+      next.delete('aiProductId'); next.delete('aiQuantity'); return next; }, { replace: true });
   };
   return (
     <>
@@ -778,6 +786,8 @@ export function PurchaseRequestsPage() {
       <PurchaseRequestFormModal
         isOpen={open}
         request={editing}
+        initialAiProductId={validAiDraft ? aiProductId : ''}
+        initialAiQuantity={validAiDraft ? aiQuantity : 1}
         onClose={close}
       />
       <RfqFormModal isOpen={Boolean(rfqRequestId)} initialRequestId={rfqRequestId ?? undefined} onClose={() => setRfqRequestId(null)} />

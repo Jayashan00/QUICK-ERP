@@ -63,6 +63,7 @@ public final class AiToolOrchestrator {
         active.add(content("user", question));
         Map<String, Integer> repeated = new HashMap<>();
         JsonNode lastData = NullNode.instance;
+        JsonNode draftData = NullNode.instance;
         int calls = 0, bytes = 0, inputTokens = 0, outputTokens = 0;
         for (int round = 0; round < maxRounds; round++) {
             if (System.currentTimeMillis() >= deadline) return limited(lastData, calls, inputTokens, outputTokens, "time");
@@ -79,7 +80,14 @@ public final class AiToolOrchestrator {
                 if (calls > 0 && lastData.isNull())
                     return new Answer("I could not verify that ERP information with the available authorized tools.",
                             NullNode.instance, "tool_unavailable", calls, inputTokens, outputTokens);
-                return new Answer(turn.text(), lastData, calls == 0 ? "explanation" : "erp_tools", calls, inputTokens, outputTokens);
+                String grounded = !AiGroundingGuard.monetaryClaimsSupported(turn.text(), lastData)
+                        ? "I could not verify a monetary figure in the response. Review the verified ERP result below."
+                        : turn.text();
+                return new Answer(draftData.isNull() ? grounded
+                        : "I prepared a review-only draft from permitted ERP records. Review it and continue in the normal ERP form. No record was saved.",
+                        draftData.isNull() ? lastData : draftData,
+                        !draftData.isNull() ? "action_preview" : calls == 0 ? "explanation" : "erp_tools",
+                        calls, inputTokens, outputTokens);
             }
             ObjectNode responses = mapper.createObjectNode().put("role", "user");
             var parts = responses.putArray("parts");
@@ -100,6 +108,8 @@ public final class AiToolOrchestrator {
                     return limited(lastData, calls, inputTokens, outputTokens, "tool data size");
                 bytes += encoded.length; calls++;
                 if (!"ERROR".equals(result.path("status").asText())) lastData = result;
+                if (result.path("operation").asText().startsWith("prepare_") && result.path("handoffOnly").asBoolean())
+                    draftData = result;
                 ObjectNode functionResponse = parts.addObject().putObject("functionResponse");
                 functionResponse.put("name", call.name());
                 if (call.id() != null && !call.id().isBlank()) functionResponse.put("id", call.id());

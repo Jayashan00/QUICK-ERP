@@ -9,6 +9,8 @@ import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.time.OffsetDateTime;
+import java.time.Instant;
 import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
@@ -24,6 +26,84 @@ public final class AiConversationRepository {
         this.db = db;
         this.mapper = mapper;
         this.maxHistory = Math.max(0, Math.min(maxHistory, 30));
+    }
+
+    public String create(AccessContext scope) {
+        String id = UUID.randomUUID().toString();
+        db.tx(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO ai_conversations(id,tenant_id,user_id,branch_id,scope_fingerprint) VALUES(?,?,?,?,?)")) {
+                statement.setString(1, id); statement.setString(2, scope.tenantId()); statement.setString(3, scope.userId());
+                statement.setString(4, scope.branchId()); statement.setString(5, fingerprint(scope));
+                statement.executeUpdate();
+            }
+            return null;
+        });
+        return id;
+    }
+
+    public List<AiModels.ConversationSummary> list(AccessContext scope, int limit, int offset) {
+        if (limit < 1 || limit > 30 || offset < 0 || offset > 300)
+            throw ApiException.validation("pagination", "Conversation page is out of range.");
+        return db.snapshot(connection -> {
+            List<AiModels.ConversationSummary> items = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT id,created_at,updated_at FROM ai_conversations WHERE tenant_id=? AND user_id=? "
+                    + "AND branch_id IS NOT DISTINCT FROM ? AND scope_fingerprint=? "
+                    + "ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?")) {
+                statement.setString(1, scope.tenantId()); statement.setString(2, scope.userId());
+                statement.setString(3, scope.branchId()); statement.setString(4, fingerprint(scope));
+                statement.setInt(5, limit); statement.setInt(6, offset);
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) items.add(new AiModels.ConversationSummary(rows.getString(1),
+                            "Conversation · " + rows.getObject(2, OffsetDateTime.class).toLocalDate(),
+                            rows.getObject(2, OffsetDateTime.class).toInstant(),
+                            rows.getObject(3, OffsetDateTime.class).toInstant()));
+                }
+            }
+            return items;
+        });
+    }
+
+    public AiModels.ConversationDetail detail(String id, AccessContext scope, int limit) {
+        return detail(id, scope, limit, null);
+    }
+    public AiModels.ConversationDetail detail(String id, AccessContext scope, int limit, Long beforeId) {
+        if (limit < 1 || limit > 100) throw ApiException.validation("limit", "Message page is out of range.");
+        if (beforeId != null && beforeId < 1) throw ApiException.validation("beforeId", "Invalid message cursor.");
+        resolveId(id, scope);
+        return db.snapshot(connection -> {
+            AiModels.ConversationSummary summary;
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT created_at,updated_at FROM ai_conversations WHERE id=? AND tenant_id=? AND user_id=? "
+                    + "AND branch_id IS NOT DISTINCT FROM ? AND scope_fingerprint=?")) {
+                statement.setString(1, id); statement.setString(2, scope.tenantId()); statement.setString(3, scope.userId());
+                statement.setString(4, scope.branchId()); statement.setString(5, fingerprint(scope));
+                try (ResultSet rows = statement.executeQuery()) {
+                    if (!rows.next()) throw ApiException.notFound("Conversation not found.");
+                    OffsetDateTime created = rows.getObject(1, OffsetDateTime.class);
+                    summary = new AiModels.ConversationSummary(id, "Conversation · " + created.toLocalDate(),
+                            created.toInstant(), rows.getObject(2, OffsetDateTime.class).toInstant());
+                }
+            }
+            List<AiModels.ConversationMessage> reversed = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT id,role,content,created_at FROM ai_messages WHERE conversation_id=? "
+                    + "AND (?::bigint IS NULL OR id < ?) ORDER BY id DESC LIMIT ?")) {
+                statement.setString(1, id);
+                if (beforeId == null) { statement.setNull(2, java.sql.Types.BIGINT); statement.setNull(3, java.sql.Types.BIGINT); }
+                else { statement.setLong(2, beforeId); statement.setLong(3, beforeId); }
+                statement.setInt(4, limit + 1);
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) reversed.add(new AiModels.ConversationMessage(rows.getLong(1),
+                            rows.getString(2), rows.getString(3), rows.getObject(4, OffsetDateTime.class).toInstant()));
+                }
+            }
+            boolean older = reversed.size() > limit;
+            if (older) reversed.remove(reversed.size() - 1);
+            java.util.Collections.reverse(reversed);
+            return new AiModels.ConversationDetail(summary, List.copyOf(reversed), older);
+        });
     }
 
     public String resolveId(String requestedId, AccessContext scope) {
@@ -95,9 +175,11 @@ public final class AiConversationRepository {
 
     public void clear(String conversationId, AccessContext scope) {
         if (!validId(conversationId)) throw ApiException.validation("conversationId", "Invalid conversation ID.");
+        resolveId(conversationId, scope);
         int deleted = db.tx(connection -> {
-            try (PreparedStatement statement = connection.prepareStatement("DELETE FROM ai_conversations WHERE id=? AND tenant_id=? AND user_id=?")) {
-                statement.setString(1, conversationId); statement.setString(2, scope.tenantId()); statement.setString(3, scope.userId()); return statement.executeUpdate();
+            try (PreparedStatement statement = connection.prepareStatement("DELETE FROM ai_conversations WHERE id=? AND tenant_id=? AND user_id=? AND branch_id IS NOT DISTINCT FROM ? AND scope_fingerprint=?")) {
+                statement.setString(1, conversationId); statement.setString(2, scope.tenantId()); statement.setString(3, scope.userId());
+                statement.setString(4, scope.branchId()); statement.setString(5, fingerprint(scope)); return statement.executeUpdate();
             }
         });
         if (deleted == 0) throw ApiException.notFound("Conversation not found.");

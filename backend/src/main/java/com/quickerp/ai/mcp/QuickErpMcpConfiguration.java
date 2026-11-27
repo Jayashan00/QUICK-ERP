@@ -9,6 +9,7 @@ import com.quickerp.ai.tools.AiToolRegistry;
 import com.quickerp.config.AppProperties;
 import com.quickerp.core.ApiException;
 import com.quickerp.core.AuthService;
+import com.quickerp.core.Principal;
 import com.quickerp.core.TokenService;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
@@ -34,6 +35,8 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty(name = "app.ai.mcp-enabled", havingValue = "true")
 public class QuickErpMcpConfiguration {
     private static final String SCOPE = QuickErpMcpConfiguration.class.getName() + ".scope";
+    private static final String PRINCIPAL = QuickErpMcpConfiguration.class.getName() + ".principal";
+    private static final String BEARER = QuickErpMcpConfiguration.class.getName() + ".bearer";
 
     @Bean public FilterRegistrationBean<Filter> quickErpMcpAuthentication(AuthService auth, TokenService tokens,
             AiAccessService access) {
@@ -50,10 +53,13 @@ public class QuickErpMcpConfiguration {
                     throw ApiException.unauthorized("MCP authentication is required.");
                 if (tokens.verifyForMcp(header.substring(7).trim()) == null)
                     throw ApiException.unauthorized("MCP requires a current API access token.");
-                AccessContext scope = access.resolve(auth.authenticate(header.substring(7).trim()),
+                Principal principal = auth.authenticate(header.substring(7).trim());
+                AccessContext scope = access.resolve(principal,
                         http.getHeader("X-ERP-Branch"), Intent.UNSUPPORTED);
                 if ("platform".equals(scope.tenantId())) throw ApiException.forbidden("MCP tenant data is unavailable to platform users.");
                 http.setAttribute(SCOPE, scope);
+                http.setAttribute(PRINCIPAL, principal);
+                http.setAttribute(BEARER, header);
                 chain.doFilter(request, response);
             } catch (ApiException error) {
                 output.setStatus(error.getStatus()); output.setContentType("application/json");
@@ -70,7 +76,11 @@ public class QuickErpMcpConfiguration {
                 .contextExtractor(request -> {
                     Object value = request.getAttribute(SCOPE);
                     if (!(value instanceof AccessContext scope)) throw ApiException.unauthorized("MCP authentication is required.");
-                    return McpTransportContext.create(Map.of("scope", scope));
+                    Object principal = request.getAttribute(PRINCIPAL);
+                    Object bearer = request.getAttribute(BEARER);
+                    if (!(principal instanceof Principal) || !(bearer instanceof String))
+                        throw ApiException.unauthorized("MCP authentication is required.");
+                    return McpTransportContext.create(Map.of("scope", scope, "principal", principal, "bearer", bearer));
                 }).maxRequestSize(120000).build();
     }
 
@@ -90,12 +100,15 @@ public class QuickErpMcpConfiguration {
                     mapper.convertValue(entry.inputSchema(), Map.class)).description(entry.description()).build();
             tools.add(McpServerFeatures.SyncToolSpecification.builder().tool(tool).callHandler((exchange, request) -> {
                 Object value = exchange.transportContext().get("scope");
-                if (!(value instanceof AccessContext scope))
+                Object principal = exchange.transportContext().get("principal");
+                Object bearer = exchange.transportContext().get("bearer");
+                if (!(value instanceof AccessContext scope) || !(principal instanceof Principal actor)
+                        || !(bearer instanceof String token))
                     return McpSchema.CallToolResult.builder().isError(true).addTextContent("MCP authentication required.").build();
                 try {
-                    var result = dispatcher.execute(request.name(), mapper.valueToTree(request.arguments()), scope);
+                    var result = dispatcher.execute(request.name(), mapper.valueToTree(request.arguments()), scope, actor, token);
                     return McpSchema.CallToolResult.builder().structuredContent(mapper.convertValue(result, Map.class))
-                            .addTextContent(result.toString()).build();
+                            .addTextContent("Structured ERP result available.").build();
                 } catch (ApiException error) {
                     return McpSchema.CallToolResult.builder().isError(true)
                             .addTextContent("ERP operation unavailable or invalid in this scope.").build();
