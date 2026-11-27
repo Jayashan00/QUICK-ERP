@@ -1,6 +1,12 @@
 # Quick ERP Backend (Spring Boot + PostgreSQL)
 
-## AI assistant backend (Version 2, Steps 1 through 3)
+## AI assistant (Version 2, Steps 1 through 5)
+
+Step 4 adds scoped conversation history, verified-result tables/KPIs/charts, and review-only
+quotation, purchase-request, and CRM follow-up draft handoffs. See
+[AI_FRONTEND_WORKFLOWS.md](AI_FRONTEND_WORKFLOWS.md) for the UI and action safety contract.
+See [AI_RELEASE_READINESS.md](AI_RELEASE_READINESS.md) for the Step 5 audit, evaluation corpus,
+verification limits, release blockers, and rollout and rollback runbook.
 
 `POST /api/v1/ai/chat` retains the `{message, conversationId, currentBranchId}` request and
 `{message, conversationId, data, source}` response. The authenticated Spring Boot service validates

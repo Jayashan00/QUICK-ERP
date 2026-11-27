@@ -2,8 +2,8 @@
 
 The engine is a server-side, read-only library. It is registered as `ErpDataGateway` behind
 `AiExecutionGateway.executeStructured(operation, arguments, accessContext)`. It does not add a
-public data-query REST endpoint. Step 3 uses the ten operation descriptors from
-`ErpDataGateway.operations()` and their typed input records in `ErpQueryRequest`. The existing
+public data-query REST endpoint. Step 3 uses the ten data operations; Step 4 adds three
+preparation-only draft operations to `ErpDataGateway.operations()`. The existing
 chat and conversation REST contracts remain unchanged. Function calling is documented in
 `AI_FUNCTION_CALLING.md`.
 
